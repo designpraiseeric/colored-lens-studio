@@ -51,7 +51,7 @@ async function effectsOn(item) {
 /** Every enabled clip under the playhead, top track first, with what kind of thing it is. */
 const layersAt = (seq, t) => allLayers(seq, t);
 /** Every enabled video clip in the sequence (or only those under time `t`), top track first. */
-async function allLayers(seq, t = null) {
+async function allLayers(seq, t = null, depth = 0) {
   const n = await seq.getVideoTrackCount(), layers = [];
   for (let i = n - 1; i >= 0; i--) {
     let track; try { track = await seq.getVideoTrack(i); } catch { continue; }
@@ -60,7 +60,7 @@ async function allLayers(seq, t = null) {
     for (const it of items) {
       const s0 = (await it.getStartTime()).seconds, e0 = (await it.getEndTime()).seconds; if (t != null && (t < s0 || t >= e0)) continue;
       let disabled = false; try { disabled = await it.isDisabled(); } catch {} if (disabled) continue;
-      let kind = 'video', path = '', inputLUT = '', nested = false;
+      let kind = 'video', path = '', inputLUT = '', nested = false, inner = null, empty = false;
       try { if (await it.isAdjustmentLayer()) kind = 'adjustment'; } catch {}
       if (kind !== 'adjustment') try {
         const pi = await it.getProjectItem(), clip = ppro.ClipProjectItem.cast(pi);
@@ -68,9 +68,16 @@ async function allLayers(seq, t = null) {
         try { path = await clip.getMediaFilePath(); } catch {}
         try { inputLUT = await clip.getInputLUTID(); } catch {}
         kind = nested ? 'nested' : !path || GRAPHIC_EXT.test(path) ? 'graphic' : 'video';
+        // a nested sequence: look inside at this moment. Wrapper nests (B-roll layers and the like) are often
+        // empty for long stretches; an empty stretch adds nothing to the picture and is not the shot.
+        if (nested && t != null && depth < 2) try {
+          const ns = await clip.getSequence(), local = t - s0 + (await it.getInPoint()).seconds, lay = await allLayers(ns, local, depth + 1);
+          empty = !lay.some(l => l.kind !== 'adjustment' && !l.empty); const sub = subjectOf(lay);
+          if (sub) inner = { name: sub.name, track: sub.track, kind: sub.kind };
+        } catch (e) { console.warn('nested', e); }
       } catch {}
       let selected = false; try { selected = await it.getIsSelected(); } catch {}
-      layers.push({ item: it, track: i + 1, name: await it.getName(), kind, path, inputLUT: inputLUT && !/^0+(-0+)*$/.test(inputLUT) ? inputLUT : '', selected, start: s0, end: e0, ...(await effectsOn(it)) });
+      layers.push({ item: it, track: i + 1, name: await it.getName(), kind, path, inner, empty, inputLUT: inputLUT && !/^0+(-0+)*$/.test(inputLUT) ? inputLUT : '', selected, start: s0, end: e0, ...(await effectsOn(it)) });
     }
   }
   return layers;
@@ -98,7 +105,8 @@ async function scenesOf(seq) {
   const starts = list.filter(m => /^\s*(scene|sc[\s\d._-])/i.test(m.name));
   return starts.map((m, i) => ({ name: m.name, start: m.start, end: starts[i + 1] ? starts[i + 1].start : end }));
 }
-const subjectOf = layers => layers.find(l => l.selected && l.kind !== 'adjustment') || layers.find(l => l.kind === 'video' || l.kind === 'nested') || layers.find(l => l.kind !== 'adjustment') || null;
+const subjectOf = layers => { const L = layers.filter(l => !l.empty);
+  return L.find(l => l.selected && l.kind !== 'adjustment') || L.find(l => l.kind === 'video' || l.kind === 'nested') || L.find(l => l.kind !== 'adjustment') || null; };
 
 const host = {
   name: 'premiere', label: 'Premiere Pro', version: pkg.version, os, preferCcx: false,
@@ -152,12 +160,14 @@ const host = {
     let before = null, after = null;
     if (subject) { const same = all.filter(l => l.track === subject.track && footage(l)).sort((a, b) => a.start - b.start), i = same.findIndex(l => l.start === subject.start);
       before = i > 0 ? same[i - 1] : null; after = i >= 0 && i < same.length - 1 ? same[i + 1] : null; }
-    const inScene = l => scene && l.start < scene.end && l.end > scene.start;
+    // a scene's clips: footage overlapping it, and nested sequences only when they sit inside it (a wrapper nest
+    // that runs the length of the timeline belongs to every scene, so it is not this scene's to recolour)
+    const inScene = l => scene && l.start < scene.end && l.end > scene.start && (l.kind !== 'nested' || (l.start >= scene.start - 0.05 && l.end <= scene.end + 0.05));
     const counts = { clip: subject ? 1 : 0, source: subject && subject.path ? all.filter(l => l.path === subject.path).length : 0,
       scene: scene ? all.filter(l => footage(l) && inScene(l)).length : 0, adjust: layers.filter(l => l.kind === 'adjustment').length };
     const mid = l => l && { name: l.name, track: l.track, seconds: (l.start + l.end) / 2 };
     return { sequenceId: String(seq.guid || seq.name), sequenceName: seq.name, seconds: t, layers: layers.map(plain), subject: plain(subject),
-      above: subject ? layers.filter(l => l.track > subject.track).map(plain) : [], scene, scenes: scenes.length, before: mid(before), after: mid(after), counts };
+      above: subject ? layers.filter(l => l.track > subject.track && !l.empty).map(plain) : [], emptyAbove: subject ? layers.filter(l => l.track > subject.track && l.empty).map(plain) : [], scene, scenes: scenes.length, before: mid(before), after: mid(after), counts };
   },
 
   async addMarker({ seconds, name, note }) {
@@ -185,7 +195,7 @@ const host = {
         items = all.filter(l => l.path === subject.path).map(l => l.item); fallback = ` (every clip from ${subject.path.split(/[\\/]/).pop()})`; }
       if (scope === 'scene') { const sc = (await scenesOf(seq)).find(x => t >= x.start && t < x.end);
         if (!sc) return { ok: false, message: 'No scene here. Mark scenes with range markers, or markers named “Scene …”.' };
-        items = all.filter(l => footage(l) && l.start < sc.end && l.end > sc.start).map(l => l.item); fallback = ` (scene “${sc.name}”)`; }
+        items = all.filter(l => footage(l) && l.start < sc.end && l.end > sc.start && (l.kind !== 'nested' || (l.start >= sc.start - 0.05 && l.end <= sc.end + 0.05))).map(l => l.item); fallback = ` (scene “${sc.name}”)`; }
       if (scope === 'adjust') { const adj = here.find(l => l.kind === 'adjustment');
         if (!adj) return { ok: false, message: 'There is no adjustment layer under the playhead. Put one over the scene, then apply to it.' };
         items = [adj.item]; fallback = ` (adjustment layer on V${adj.track}, colouring every track beneath it)`; }

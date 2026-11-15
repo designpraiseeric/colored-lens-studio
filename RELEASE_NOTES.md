@@ -1,6 +1,11 @@
 # Release notes
 Each `## <version>` block becomes the text of the in-app update banner and the GitHub Release.
 
+## 0.2.5
+Nested sequences, found in a real edit.
+- Colored Lens looks inside nested sequences: a wrapper nest (a B-roll layer, say) that is empty at the playhead is no longer mistaken for the shot, and a nest with content is named with the clip showing inside it.
+- "Whole scene" no longer recolours a nest that runs the length of the timeline; only nests that sit inside the scene.
+
 ## 0.2.4
 Scenes, the shots around a shot, and where a look goes.
 - True readings of graded shots: if a clip already has Lukuluku Look, Colored Lens switches it off for the moment of the reading and back on (two steps in your undo history), so it reads the shot, not its own look. The effect gains a Bypass setting for this.

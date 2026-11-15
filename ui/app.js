@@ -243,7 +243,8 @@ export async function startApp(host, root) {
     const sub = c.subject, kinds = { video: 'footage', nested: 'nested sequence', graphic: 'graphic / title', adjustment: 'adjustment layer' };
     if (!sub) return `<div class="card ctx"><p class="small">No clip under the playhead on an enabled video track.</p></div>`;
     const lines = [], tips = [];
-    lines.push(`Reading <b>V${sub.track} · ${esc(sub.name)}</b> (${kinds[sub.kind]})${sub.selected ? ', selected' : ', under the playhead'}.`);
+    lines.push(`Reading <b>V${sub.track} · ${esc(sub.name)}</b> (${kinds[sub.kind]}${sub.inner ? `, showing V${sub.inner.track} · ${esc(sub.inner.name)} inside` : ''})${sub.selected ? ', selected' : ', under the playhead'}.`);
+    if (c.emptyAbove && c.emptyAbove.length) lines.push(`<span class="dim">${c.emptyAbove.map(l => `V${l.track} “${esc(l.name)}”`).join(', ')} ${c.emptyAbove.length === 1 ? 'is' : 'are'} empty at this moment, so not part of the picture.</span>`);
     if (c.above.length) lines.push(`Also in the picture above it: ${c.above.map(l => `V${l.track} ${esc(kinds[l.kind])} “${esc(l.name)}”`).join(', ')}. The reading includes ${c.above.length === 1 ? 'it' : 'them'}.`);
     if (sub.lumetri) lines.push('This clip already has a Lumetri grade, so the reading is of the graded image.');
     if (sub.look) lines.push(S.meta && S.meta.withoutLook ? 'This clip already has Lukuluku Look. It was switched off for a moment so the reading is of the shot itself (two steps in your undo history), and Apply will update it rather than add a second one.'

@@ -48,7 +48,7 @@ test('Premiere panel: grab, mark, read markers, apply the effect, update', { ski
     assert.match(await page.innerText('#body'), /A001_C003 00:00:12:12/);
     // timeline context: the selected V1 clip is the shot, the V3 title above it is named
     const ctx = await page.innerText('.card.ctx'); assert.match(ctx, /V1 · A001_C003/); assert.match(ctx, /V3 graphic \/ title “Lower third”/);
-    assert.match(ctx, /Scene “Scene 2 — kitchen”/, 'scene from a marker'); assert.match(ctx, /shots either side/, 'continuity with the neighbours');
+    assert.match(ctx, /Scene “Scene 2 — kitchen”/, 'scene from a marker'); assert.match(ctx, /V4 “BROLL LAYER” is empty at this moment/, 'an empty nest on top is not the shot'); assert.match(ctx, /shots either side/, 'continuity with the neighbours');
     // two answers per question
     await page.click('[data-intent="feeling:tender"]'); await page.waitForTimeout(300);
     // the loop: answer what the shot is for, get directions, preview one, apply it, save it as a preset
