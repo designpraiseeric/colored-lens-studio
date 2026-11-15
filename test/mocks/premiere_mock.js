@@ -8,15 +8,18 @@
   const mkComp = () => { const params = labels.map(p => ({ displayName: p.label, createKeyframe: v => ({ v }), createSetValueAction: kf => ({ type: 'set', label: p.label, v: kf.v }) }));
     return { getMatchName: async () => 'AE.DesignPraise Lukuluku Look', getParamCount: () => params.length, getParam: i => params[i] }; };
   const chain = { comps: [{ getMatchName: async () => 'AE.ADBE Motion' }], getComponentCount() { return this.comps.length; }, getComponentAtIndex(i) { return this.comps[i]; },
-    createAppendComponentAction(c) { return { type: 'append', c }; } };
+    createAppendComponentAction(c) { return { type: 'append', c, chain }; } };
   const T = v => ({ seconds: v });
   const projItem = path => ({ path });
   const clip = { getName: async () => 'A001_C003', getComponentChain: async () => chain, createAddVideoTransitionAction() {}, getStartTime: async () => T(10), getEndTime: async () => T(20),
     isDisabled: async () => false, isAdjustmentLayer: async () => false, getProjectItem: async () => projItem('/media/A001_C003.mov'), getIsSelected: async () => true };
   const title = { getName: async () => 'Lower third', getComponentChain: async () => ({ getComponentCount: () => 0 }), getStartTime: async () => T(11), getEndTime: async () => T(14),
     isDisabled: async () => false, isAdjustmentLayer: async () => false, getProjectItem: async () => projItem(''), getIsSelected: async () => false };
-  const tracks = [{ isMuted: async () => false, getTrackItems: () => [clip] }, { isMuted: async () => false, getTrackItems: () => [] }, { isMuted: async () => false, getTrackItems: () => [title] }];
-  const markersObj = { createAddMarkerAction: (name, type, start, dur, comments) => ({ type: 'marker', name, start, comments }), getMarkers: () => log.markers.map(m => ({ getStart: () => m.start, getName: () => m.name, getComments: () => m.comments })) };
+  const mkChain = () => ({ comps: [], getComponentCount() { return this.comps.length; }, getComponentAtIndex(i) { return this.comps[i]; }, createAppendComponentAction(c) { return { type: 'append', c, chain: this }; } });
+  const other = (name, a, b) => ({ chain: mkChain(), getName: async () => name, async getComponentChain() { return this.chain; }, getStartTime: async () => T(a), getEndTime: async () => T(b),
+    isDisabled: async () => false, isAdjustmentLayer: async () => false, getProjectItem: async () => projItem('/media/' + name + '.mov'), getIsSelected: async () => false, createAddVideoTransitionAction() {} });
+  const tracks = [{ isMuted: async () => false, getTrackItems: () => [other('A001_C002', 0, 10), clip, other('A001_C004', 20, 30)] }, { isMuted: async () => false, getTrackItems: () => [] }, { isMuted: async () => false, getTrackItems: () => [title] }];
+  const markersObj = { createAddMarkerAction: (name, type, start, dur, comments) => ({ type: 'marker', name, start, comments }), getMarkers: () => [{ start: T(8), name: 'Scene 2 — kitchen', comments: '' }, ...log.markers].map(m => ({ getStart: () => m.start, getName: () => m.name, getComments: () => m.comments, getDuration: () => T(0) })) };
   const seq = { name: 'Main edit', getPlayerPosition: async () => TickTime.createWithSeconds(12.5), getFrameSize: async () => ({ width: 1920, height: 1080 }), getTimebase: async () => String(254016000000 / 24),
     getEndTime: async () => TickTime.createWithSeconds(30), getSelection: async () => ({ getTrackItems: async () => [clip] }), guid: 'seq-guid-1',
     getVideoTrackCount: async () => tracks.length, getVideoTrack: async i => tracks[i] };
@@ -24,7 +27,7 @@
     executeTransaction(build, label) { const ca = { addAction: a => {
       log.calls.push(label);
       if (a.type === 'marker') log.markers.push(a);
-      if (a.type === 'append') chain.comps.push(mkComp());
+      if (a.type === 'append') (a.chain || chain).comps.push(mkComp());
       if (a.type === 'set') log.params[a.label] = a.v; } }; build(ca); return true; } };
   const files = {};
   const folder = (name) => ({ nativePath: '/tmp/' + name, name,

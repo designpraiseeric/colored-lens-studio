@@ -19,8 +19,12 @@ if [ -n "${MAC_APP_IDENTITY:-}" ]; then
   find "$STAGE" \( -name "*.ofx.bundle" -o -name "*.plugin" \) -maxdepth 8 -print0 | xargs -0 -I{} codesign --force --deep --options runtime --timestamp --sign "$MAC_APP_IDENTITY" "{}"
 fi
 pkgbuild --root "$STAGE" --identifier com.designpraise.coloredlensstudio --version "$VERSION" --scripts installer/mac/scripts --install-location / "$OUT/component.pkg"
-productbuild --identifier com.designpraise.coloredlensstudio --version "$VERSION" --package "$OUT/component.pkg" ${SIGN_ARGS[@]+"${SIGN_ARGS[@]}"} "$OUT/ColoredLensStudio-$VERSION-mac.pkg"
-rm "$OUT/component.pkg"
+# A distribution file gives the installer its title ("Welcome to the Colored Lens Studio Installer").
+productbuild --synthesize --package "$OUT/component.pkg" "$OUT/distribution.xml"
+sed -i '' -e 's#<installer-gui-script minSpecVersion="[0-9]*">#&\
+    <title>Colored Lens Studio '"$VERSION"'</title>#' "$OUT/distribution.xml"
+productbuild --distribution "$OUT/distribution.xml" --package-path "$OUT" --identifier com.designpraise.coloredlensstudio --version "$VERSION" ${SIGN_ARGS[@]+"${SIGN_ARGS[@]}"} "$OUT/ColoredLensStudio-$VERSION-mac.pkg"
+rm "$OUT/component.pkg" "$OUT/distribution.xml"
 if [ -n "${APPLE_ID:-}" ] && [ -n "${MAC_INSTALLER_IDENTITY:-}" ]; then
   xcrun notarytool submit "$OUT/ColoredLensStudio-$VERSION-mac.pkg" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" --wait
   xcrun stapler staple "$OUT/ColoredLensStudio-$VERSION-mac.pkg"

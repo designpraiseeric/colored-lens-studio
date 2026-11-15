@@ -10,7 +10,7 @@ import { shotRecord, encodeShot, decodeShot, readSequence, scriptCSV } from '../
 import { parseCode, parseLookInput, formatCode, shareLink, bakeCube, lutFromBin, computeMatch, matchStats, makePixelFn } from '../core/look.js';
 import { cmpVersion, Updater } from '../core/updates.js';
 import { hexToRgb } from '../core/color.js';
-import { pickDirections, answers, whyFor } from '../core/directions.js';
+import { pickDirections, answers, whyFor, continuity, pictureOf } from '../core/directions.js';
 import { savePreset, presetCode, importPresetCode, listPresets } from '../core/presets.js';
 
 const site = p => new URL('../site/content/' + p, import.meta.url);
@@ -103,6 +103,14 @@ test('several faces: each has its own reading, and the lead face drives the chec
   assert.equal(a.faces.length, 2); assert.ok(a.faces[0].ire > 45 && a.faces[1].ire < 30);
   assert.ok(!a.findings.some(x => /underexposed/.test(x.title))); assert.ok(b.findings.some(x => /underexposed/.test(x.title)));
   assert.ok(a.findings.some(x => /Face 2 \(\d+ IRE\) and face 1/.test(x.text)));
+});
+test('continuity: a look is judged against the shots either side', () => {
+  const r = readFrame(fixture, enc), me = pictureOf(r.stats);
+  const same = [{ side: 'before', name: 'a', pic: me }, { side: 'after', name: 'b', pic: me }];
+  assert.match(continuity(null, r, same), /Already sits in line with the shots either side/);
+  const warmFn = c => [Math.min(1, c[0] * 1.25 + 0.05), c[1], c[2] * 0.75], cool = [{ side: 'before', name: 'a', pic: { ...me, b: me.b - 0.03 } }];
+  assert.match(continuity(warmFn, r, cool), /warmer than the shot before/);
+  assert.equal(continuity(warmFn, r, []), '');
 });
 test('presets save, share as a code and import', () => {
   const p = savePreset({ name: 'Test look', look: parseCode('K1·C1·M2'), extra: { skinGuard: 0.5 }, intent: { feeling: 'tender' } });

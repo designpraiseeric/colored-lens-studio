@@ -1,6 +1,14 @@
 # Release notes
 Each `## <version>` block becomes the text of the in-app update banner and the GitHub Release.
 
+## 0.2.4
+Scenes, the shots around a shot, and where a look goes.
+- True readings of graded shots: if a clip already has Lukuluku Look, Colored Lens switches it off for the moment of the reading and back on (two steps in your undo history), so it reads the shot, not its own look. The effect gains a Bypass setting for this.
+- Scenes: range markers, or markers named "Scene …", mark scenes. Each scene keeps its own answers.
+- Continuity: Colored Lens reads the shots either side and says whether this shot, and each direction, sits in line with them or lands warmer, cooler, brighter or more colourful.
+- Apply to: this clip, every clip from the same source, the whole scene, or the adjustment layer over the shot.
+- The Mac installer now shows its name.
+
 ## 0.2.3
 Shots that are more than one thing, several faces, and the timeline around the shot.
 - Up to two answers per question (for example tender and tense, or commercial and documentary). The first leads; directions that serve both say so.

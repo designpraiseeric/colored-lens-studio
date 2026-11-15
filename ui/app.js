@@ -3,12 +3,12 @@
 //
 // The loop: read the frame -> say what it is for -> get directions -> preview them on the frame -> tweak live ->
 // apply to clips -> save as a preset -> apply the preset to other shots.
-import { readFrame } from '../core/analysis.js';
+import { readFrame, frameStats, labPixels } from '../core/analysis.js';
 import { checkSkin, vectorscope } from '../core/skin.js';
 import { pngDataUrl, encodePNG } from '../core/image.js';
 import { shotRecord, encodeShot, decodeShot, renderStrip, readSequence, scriptCSV } from '../core/script.js';
 import { parseLookInput, formatCode, fullGrade, makePixelFn, bakeCube, lookToEngineParams, shareLink, computeMatch, matchStats, hasCurves, GRADE0 } from '../core/look.js';
-import { GENRES, FEELINGS, ROLES, KIND_LABEL, pickDirections, describeEffect, whyFor, frameSummary, answers, isDark } from '../core/directions.js';
+import { GENRES, FEELINGS, ROLES, KIND_LABEL, pickDirections, describeEffect, whyFor, frameSummary, answers, isDark, continuity, pictureOf } from '../core/directions.js';
 import { previewer, wipe } from '../core/preview.js';
 import { listPresets, savePreset, deletePreset, duplicatePreset, presetCode, importPresetCode, settings } from '../core/presets.js';
 import { Updater } from '../core/updates.js';
@@ -28,7 +28,7 @@ const lookCode = (l, matte) => { const c = formatCode(l); return matte ? c : c.r
 
 export async function startApp(host, root) {
   const S = { tab: 'shot', back: 'shot', frame: null, meta: null, reading: null, skin: null, sample: null, shots: [],
-    intent: normIntent(settings.get('intent', {})), seqId: '', ctx: null, lead: 0, input: settings.get('input', 'rec709'),
+    intent: normIntent(settings.get('intent', {})), seqId: '', ctx: null, lead: 0, neigh: [], scope: settings.get('scope', 'clip'), input: settings.get('input', 'rec709'),
     directions: [], chosen: -1, look: NEUTRAL_LOOK(), extra: { ...XDEF }, matte: false, recipe: { name: '', presetId: null }, view: 'split', wipe: 0.5,
     refFrameStats: null, refName: '', adapt: settings.get('adapt', true), encQ: '', shownCode: '', confirmDel: '', busy: false, showSkin: false, showRefs: false };
   let PV = null;
@@ -98,9 +98,15 @@ export async function startApp(host, root) {
     if (m[id]) S.intent = normIntent(m[id]); else saveIntent();
   }
   async function grab() {
-    const g = await host.grabFrame(); S.frame = g.frame; S.meta = g; S.sample = null; S.chosen = -1; S.lead = 0;
-    useSequence(g.sequenceId); S.ctx = null;
+    S.ctx = null; S.neigh = [];
     if (host.clipContext) try { S.ctx = await host.clipContext(); } catch (e) { console.warn('timeline context', e); }
+    // a clean read: our own look on this shot is switched off for the moment of the export
+    const g = await host.grabFrame(undefined, { clean: true }); S.frame = g.frame; S.meta = g; S.sample = null; S.chosen = -1; S.lead = 0;
+    // answers belong to the scene (marker range) when there is one, otherwise to the sequence
+    useSequence(S.ctx && S.ctx.scene ? `${g.sequenceId}|${S.ctx.scene.start.toFixed(2)}` : g.sequenceId);
+    // the finished shots either side, for continuity
+    if (S.ctx) for (const [side, n] of [['before', S.ctx.before], ['after', S.ctx.after]]) if (n) try {
+      status(`Reading the shot ${side}…`); const f = (await host.grabFrame(n.seconds)).frame; S.neigh.push({ side, name: n.name, pic: pictureOf(frameStats(labPixels(f))) }); } catch (e) { console.warn('neighbour', e); }
     PV = previewer(S.frame, cat(), lutsFor); stageCache.key = '';
     S.reading = readFrame(S.frame, enc(), refs()); runSkin(); return g;
   }
@@ -111,7 +117,7 @@ export async function startApp(host, root) {
     const ds = pickDirections(S.intent, { reading: S.reading, skin: S.skin, input: S.input });
     for (const d of ds) {
       const fn = makePixelFn(d.look, cat(), await lutsFor(d.look), { input: S.input, keepExposure: true, extra: { ...XDEF, ...d.extra } });
-      d.effect = describeEffect(fn, S.reading, S.skin); d.why = whyFor(d, S.intent, enc());
+      d.effect = describeEffect(fn, S.reading, S.skin); d.why = whyFor(d, S.intent, enc()); d.cont = continuity(fn, S.reading, S.neigh);
       d.thumb = pngDataUrl(await PV.render(d.look, { ...XDEF, ...d.extra }, S.input, 200));
     }
     S.directions = ds; if (S.chosen >= ds.length) S.chosen = -1;
@@ -157,7 +163,7 @@ export async function startApp(host, root) {
   // ---------- applying ----------
   async function applyLookToClips(look, extra, input, matte) {
     const C = cat(), params = lookToEngineParams(look, C, { matte, params: { ...extra, input: input === 'logc3' ? 1 : 0 } });
-    const res = await host.applyLook({ params, look, makeCube: async () => bakeCube(look, C, await lutsFor(look), { input, keepExposure: true, extra }) });
+    const res = await host.applyLook({ params, look, scope: S.ctx ? S.scope : 'clip', makeCube: async () => bakeCube(look, C, await lutsFor(look), { input, keepExposure: true, extra }) });
     toast(res.message, 6000); return res;
   }
   async function saveCurrentAsPreset(name, asNew) {
@@ -186,7 +192,7 @@ export async function startApp(host, root) {
   function renderShot(body) {
     const r = S.reading, k = S.skin, I = S.intent;
     const hint = S.chosen >= 0 ? `Previewing <b>${esc(S.directions[S.chosen].name)}</b> (colour, grain and vignette; halation and glow show on the clip).
-        <div class="row wrap"><button class="primary" data-dapply="${S.chosen}">Apply to selected clips</button><button data-dtweak="${S.chosen}">Tweak</button><button data-dsave="${S.chosen}">Save as preset</button><button id="dclear">Back to the original</button></div>` : 'Click a face in the picture to check its skin. Pick a direction below to preview it here.';
+        ${scopeRow()}<div class="row wrap"><button class="primary" data-dapply="${S.chosen}">${S.scope === 'clip' ? 'Apply to selected clips' : 'Apply'}</button><button data-dtweak="${S.chosen}">Tweak</button><button data-dsave="${S.chosen}">Save as preset</button><button id="dclear">Back to the original</button></div>` : 'Click a face in the picture to check its skin. Pick a direction below to preview it here.';
     body.innerHTML = `
       <div class="row"><button id="grab" class="primary">${esc(host.grabLabel || 'Read the frame under the playhead')}</button>${S.frame ? `<span class="small dim">${esc(S.meta.clipName || '')} ${esc(S.meta.timecode || '')}</span>` : ''}</div>
       ${S.frame ? stageHTML(true, hint) : `<p class="dim">Park the playhead on a shot and read it. Colored Lens tells you what the frame is doing, asks what it is for, and suggests directions you can preview, tweak, apply and save.</p>`}
@@ -240,13 +246,26 @@ export async function startApp(host, root) {
     lines.push(`Reading <b>V${sub.track} · ${esc(sub.name)}</b> (${kinds[sub.kind]})${sub.selected ? ', selected' : ', under the playhead'}.`);
     if (c.above.length) lines.push(`Also in the picture above it: ${c.above.map(l => `V${l.track} ${esc(kinds[l.kind])} “${esc(l.name)}”`).join(', ')}. The reading includes ${c.above.length === 1 ? 'it' : 'them'}.`);
     if (sub.lumetri) lines.push('This clip already has a Lumetri grade, so the reading is of the graded image.');
-    if (sub.look) lines.push('This clip already has Lukuluku Look: Apply will update it rather than add a second one.');
+    if (sub.look) lines.push(S.meta && S.meta.withoutLook ? 'This clip already has Lukuluku Look. It was switched off for a moment so the reading is of the shot itself (two steps in your undo history), and Apply will update it rather than add a second one.'
+      : 'This clip already has Lukuluku Look: Apply will update it rather than add a second one. The reading includes it (update the effect to 0.2.4 or later for a clean read).');
+    if (c.scene) lines.push(`Scene <b>“${esc(c.scene.name)}”</b> (${fmtT(c.scene.start)}–${fmtT(c.scene.end)}): your answers below are kept for this scene.`);
+    else lines.push(c.scenes ? 'The playhead is outside the marked scenes; answers are kept for the whole sequence.' : 'No scenes marked, so answers are kept for the whole sequence. Range markers, or markers named “Scene …”, give each scene its own answers.');
+    const cont = continuity(null, S.reading, S.neigh); if (cont) lines.push(`${cont} <span class="dim">(${S.neigh.map(n => `${n.side}: ${esc(n.name)}`).join(' · ')})</span>`);
     if (sub.inputLUT && S.input === 'logc3') tips.push(['input:rec709', 'Premiere already converts this clip with an input LUT, so it plays as normal video.', 'Set footage to normal video']);
     if (sub.kind === 'graphic' && !answers(S.intent.role).includes('graphic')) tips.push(['role:graphic', `V${sub.track} holds a graphic or still, not camera footage.`, 'Mark this shot as title / graphic']);
     if (sub.kind === 'adjustment') lines.push('This is an adjustment layer: a look here colours every track beneath it.');
     return `<div class="card ctx"><div class="k">On the timeline</div>${lines.map(l => `<p class="small">${l}</p>`).join('')}
       ${tips.map(([key, why, label]) => `<div class="row wrap"><span class="small grow">${esc(why)}</span><button data-suggest="${key}">${esc(label)}</button></div>`).join('')}</div>`;
   }
+  const fmtT = sec => { const m = Math.floor(sec / 60), x = Math.floor(sec % 60); return `${m}:${String(x).padStart(2, '0')}`; };
+  // Where Apply puts the look. Counts come from the timeline; options with nothing to apply to are greyed out.
+  function scopeRow() {
+    const c = S.ctx && S.ctx.counts; if (!c) return '';
+    const opts = [['clip', 'This clip', 1], ['source', `Same source${c.source > 1 ? ` (${c.source})` : ''}`, c.source], ['scene', `Whole scene${c.scene ? ` (${c.scene})` : ''}`, c.scene], ['adjust', 'Adjustment layer', c.adjust]];
+    if (!opts.find(o => o[0] === S.scope && o[2])) S.scope = 'clip';
+    return `<div class="scope"><span class="small dim">Apply to</span>${opts.map(([id, n, k]) => `<div role="button" tabindex="0" class="chip ${S.scope === id ? 'on' : ''} ${k ? '' : 'off'}" data-scope="${id}" title="${k ? '' : id === 'scene' ? 'Mark scenes with range markers or markers named “Scene …”' : id === 'adjust' ? 'Put an adjustment layer over the shot' : 'Nothing to apply to'}">${S.scope === id ? '✓ ' : ''}${esc(n)}</div>`).join('')}</div>`;
+  }
+  root.addEventListener('click', e => { const b = e.target.closest('[data-scope]'); if (!b || b.classList.contains('off')) return; S.scope = b.dataset.scope; settings.set('scope', S.scope); render(); });
   function readingCard(r, k) {
     const e = enc(), named = r.hues.filter(h => h.entry && h.share >= 0.03).slice(0, 5), lead = r.lead;
     const skinLine = !k ? '' : k.mode === 'sampled' && k.found ? `<b>Face (sampled):</b> about ${k.ire} IRE${k.ire < 40 ? ', dark for a key-lit face (40–75)' : k.ire > 80 ? ', hot for a face (40–75)' : ', inside the usual 40–75'}.`
@@ -285,7 +304,7 @@ export async function startApp(host, root) {
         <img src="${d.thumb}"><div class="dtext">
           <div><b>${esc(d.name)}</b> <span class="badge ${d.kind}">${esc(KIND_LABEL[d.kind])}</span></div>
           <p class="small">${esc(d.why.lines[0])}</p>${d.why.lines[1] ? `<p class="small dim">${esc(d.why.lines[1])}</p>` : ''}
-          <p class="small">${esc([...d.effect, ...d.notes].join(' '))}</p>
+          <p class="small">${esc([...d.effect, ...d.notes].join(' '))}</p>${d.cont ? `<p class="small cont">${esc(d.cont)}</p>` : ''}
           <div class="small dim mono">${esc(lookCode(d.look, false))}</div>
           ${S.chosen === i ? `<div class="row wrap"><button class="primary" data-dapply="${i}">Apply to selected clips</button><button data-dtweak="${i}">Tweak</button><button data-dsave="${i}">Save as preset</button>${d.why.hue ? `<button data-more="${esc(d.why.hue.name.split(' / ')[0])}">About ${esc(d.why.hue.name.split(' / ')[0])}</button>` : ''}</div>` : ''}
         </div></div>`).join('')}`;
@@ -340,7 +359,7 @@ export async function startApp(host, root) {
       ${S.frame ? stageHTML(false, 'Live preview on your frame: colour, grain and vignette. Halation and diffusion glow show on the clip.') : '<p class="dim small">Read a frame in Shot to preview the look live while you adjust it.</p>'}
       <div class="row"><input id="rname" placeholder="Name this look" value="${esc(S.recipe.name)}"></div>
       ${editing ? `<p class="small dim">Editing preset “${esc(editing.name)}”.</p>` : ''}
-      <div class="row wrap"><button id="apply" class="primary">Apply to selected clips</button>${editing ? '<button id="update">Update preset</button>' : ''}<button id="saveNew">${editing ? 'Save as new preset' : 'Save as preset'}</button><button id="reset">Start from neutral</button></div>
+      ${scopeRow()}<div class="row wrap"><button id="apply" class="primary">${S.scope === 'clip' ? 'Apply to selected clips' : 'Apply'}</button>${editing ? '<button id="update">Update preset</button>' : ''}<button id="saveNew">${editing ? 'Save as new preset' : 'Save as preset'}</button><button id="reset">Start from neutral</button></div>
       <div class="cols">${sel('C', C.color)}${sel('M', C.medium)}${sel('K', C.lens)}${sel('D', C.diffusion)}
         <label>Footage is<select id="input"><option value="rec709" ${S.input === 'rec709' ? 'selected' : ''}>Normal video (Rec.709)</option><option value="logc3" ${S.input === 'logc3' ? 'selected' : ''}>Log (ARRI LogC3)</option></select></label>
         <label>Aspect matte<select id="matte"><option value="none" ${!S.matte ? 'selected' : ''}>No matte</option>${Object.keys(C.aspect).sort((a, b) => a - b).map(a => `<option value="${a}" ${S.matte && L.A === a ? 'selected' : ''}>${esc(C.aspect[a].name)}</option>`).join('')}</select></label></div>

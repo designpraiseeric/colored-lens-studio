@@ -276,6 +276,10 @@ void pixelOnly(const float in[3], float out[3], const Params& p) {
 
 void render(const ImageView& src, const ImageView& dst, const Params& p, const RenderInfo& info) {
   const int W = src.width, H = src.height; if (W <= 0 || H <= 0) return;
+  if (p[P_bypass] > 0.5) { // show the original (Colored Lens uses this to read the shot without its own look)
+    if (src.data != dst.data) for (int y = 0; y < H; y++) std::copy(src.row(y), src.row(y) + size_t(W) * 4, dst.row(y));
+    return;
+  }
   const Setup s = makeSetup(p); const MediumFx& M = *s.M; const LensFx& K = *s.K;
   const float sc = float((info.fullWidth > 0 ? info.fullWidth * info.renderScale : W) / 2048.0); // Lukuluku pixel sizes are at 2048 px
   const int T = info.threads;

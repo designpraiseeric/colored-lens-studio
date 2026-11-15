@@ -114,3 +114,8 @@ div.chip.on2 { background: #4a1822; border-color: var(--acc); color: #fff; font-
 .faces .face { display: flex; flex-direction: row; align-items: center; margin: 4px 0; padding: 3px 6px; border-radius: 6px; }
 .faces .face.on { background: #2a2124; border: 1px solid var(--acc); }
 .faces .face > * { margin-right: 6px; }
+/* 0.2.4: continuity, apply scope */
+.cont { color: #8fc1f0; }
+.scope { display: flex; flex-direction: row; flex-wrap: wrap; align-items: center; margin: 6px 0 2px; }
+.scope > span { margin-right: 8px; }
+div.chip.off { opacity: .4; cursor: default; }

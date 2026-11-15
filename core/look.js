@@ -243,7 +243,7 @@ export function lookToEngineParams(look, cat, extra = {}) {
     liftX: W.lift[0], liftY: W.lift[1], liftL: W.lift[2], liftS: W.lift[3], gammaX: W.gamma[0], gammaY: W.gamma[1], gammaL: W.gamma[2], gammaS: W.gamma[3],
     gainX: W.gain[0], gainY: W.gain[1], gainL: W.gain[2], gainS: W.gain[3], offX: W.offset[0], offY: W.offset[1], offL: W.offset[2], offS: W.offset[3],
     shX: LW.sh[0], shY: LW.sh[1], shL: LW.sh[2], shS: LW.sh[3], midX: LW.mid[0], midY: LW.mid[1], midL: LW.mid[2], midS: LW.mid[3], hiX: LW.hi[0], hiY: LW.hi[1], hiL: LW.hi[2], hiS: LW.hi[3],
-    skinGuard: 0, skinHue: 0.8, skinDensity: 0.7, skinLight: 0.5, matchAmt: 0, mLg: 1, mLo: 0, mA: 0, mB: 0, mCg: 1, grainAnim: 1,
+    skinGuard: 0, skinHue: 0.8, skinDensity: 0.7, skinLight: 0.5, matchAmt: 0, mLg: 1, mLo: 0, mA: 0, mB: 0, mCg: 1, grainAnim: 1, bypass: 0,
     ...extra.params,
   };
 }

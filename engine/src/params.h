@@ -53,7 +53,8 @@
   X(offX, F, "Offset X", -1, 1, 0, "Wheels") X(offY, F, "Offset Y", -1, 1, 0, "Wheels") X(offL, F, "Offset level", -1, 1, 0, "Wheels") X(offS, F, "Offset sat", 0, 2, 1, "Wheels") \
   X(shX, F, "Log shadow X", -1, 1, 0, "Wheels") X(shY, F, "Log shadow Y", -1, 1, 0, "Wheels") X(shL, F, "Log shadow level", -1, 1, 0, "Wheels") X(shS, F, "Log shadow sat", 0, 2, 1, "Wheels") \
   X(midX, F, "Log mid X", -1, 1, 0, "Wheels") X(midY, F, "Log mid Y", -1, 1, 0, "Wheels") X(midL, F, "Log mid level", -1, 1, 0, "Wheels") X(midS, F, "Log mid sat", 0, 2, 1, "Wheels") \
-  X(hiX, F, "Log high X", -1, 1, 0, "Wheels") X(hiY, F, "Log high Y", -1, 1, 0, "Wheels") X(hiL, F, "Log high level", -1, 1, 0, "Wheels") X(hiS, F, "Log high sat", 0, 2, 1, "Wheels")
+  X(hiX, F, "Log high X", -1, 1, 0, "Wheels") X(hiY, F, "Log high Y", -1, 1, 0, "Wheels") X(hiL, F, "Log high level", -1, 1, 0, "Wheels") X(hiS, F, "Log high sat", 0, 2, 1, "Wheels") \
+  X(bypass,     B, "Bypass (show the original)", 0, 1, 0, "Advanced")
 
 namespace lukuluku {
 enum ParamId {

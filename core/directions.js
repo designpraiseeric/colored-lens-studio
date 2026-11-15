@@ -159,6 +159,30 @@ export function describeEffect(fn, reading, skin) {
   }
   return out;
 }
+/** How a look moves the picture's warmth (Oklab b), colourfulness (chroma ratio) and lightness, on this frame's own colours. */
+export function effectDeltas(fn, reading) {
+  const sw = reading.swatches.filter(s => s.share > 0.03).slice(0, 6); if (!sw.length || !fn) return { db: 0, cr: 1, dL: 0 };
+  let dL = 0, cIn = 0, cOut = 0, db = 0, tot = 0;
+  for (const s of sw) { const o = srgbToOklab(...fn(hexRgb(s.hex))), i = s.lab, w = s.share; dL += (o[0] - i[0]) * w; cIn += Math.hypot(i[1], i[2]) * w; cOut += Math.hypot(o[1], o[2]) * w; db += (o[2] - i[2]) * w; tot += w; }
+  return { db: db / tot, cr: cOut / Math.max(cIn, 1e-4), dL: dL / tot };
+}
+/** The picture numbers continuity is judged on. */
+export const pictureOf = stats => ({ b: stats.meanB, C: stats.meanC, L: stats.p50 });
+/**
+ * Continuity with the shots either side: how this shot (with the look `fn`, or as it is when fn is null) will sit
+ * next to them. neighbours = [{ side: 'before' | 'after', name, pic }].
+ */
+export function continuity(fn, reading, neighbours) {
+  if (!reading || !neighbours || !neighbours.length) return '';
+  const d = effectDeltas(fn, reading), cur = pictureOf(reading.stats), n = neighbours.length;
+  const ref = { b: neighbours.reduce((a, x) => a + x.pic.b, 0) / n, C: neighbours.reduce((a, x) => a + x.pic.C, 0) / n, L: neighbours.reduce((a, x) => a + x.pic.L, 0) / n };
+  const pred = { b: cur.b + d.db, C: cur.C * d.cr, L: cur.L + d.dL }, parts = [];
+  if (pred.b - ref.b > 0.012) parts.push('warmer'); else if (pred.b - ref.b < -0.012) parts.push('cooler');
+  if (pred.C / Math.max(ref.C, 1e-4) > 1.3) parts.push('more colourful'); else if (pred.C / Math.max(ref.C, 1e-4) < 0.75) parts.push('more muted');
+  if (pred.L - ref.L > 0.07) parts.push('brighter'); else if (pred.L - ref.L < -0.07) parts.push('darker');
+  const who = n === 2 ? 'the shots either side' : `the shot ${neighbours[0].side}`;
+  return parts.length ? `${fn ? 'With this look it lands' : 'Right now it is'} ${joinAnd(parts)} than ${who}${fn ? '; fine for a deliberate change, otherwise apply it to the scene.' : '.'}` : `${fn ? 'Sits in line with' : 'Already sits in line with'} ${who}.`;
+}
 const joinAnd = a => a.length < 2 ? a.join('') : a.slice(0, -1).join(', ') + ' and ' + a[a.length - 1];
 function hexRgb(h) { const n = parseInt(h.slice(1), 16); return [(n >> 16 & 255) / 255, (n >> 8 & 255) / 255, (n & 255) / 255]; }
 const labToRgb = (L, a, b) => oklabToSrgb(L, a, b);

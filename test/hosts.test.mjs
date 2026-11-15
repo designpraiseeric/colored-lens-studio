@@ -48,6 +48,7 @@ test('Premiere panel: grab, mark, read markers, apply the effect, update', { ski
     assert.match(await page.innerText('#body'), /A001_C003 00:00:12:12/);
     // timeline context: the selected V1 clip is the shot, the V3 title above it is named
     const ctx = await page.innerText('.card.ctx'); assert.match(ctx, /V1 · A001_C003/); assert.match(ctx, /V3 graphic \/ title “Lower third”/);
+    assert.match(ctx, /Scene “Scene 2 — kitchen”/, 'scene from a marker'); assert.match(ctx, /shots either side/, 'continuity with the neighbours');
     // two answers per question
     await page.click('[data-intent="feeling:tender"]'); await page.waitForTimeout(300);
     // the loop: answer what the shot is for, get directions, preview one, apply it, save it as a preset
@@ -60,10 +61,18 @@ test('Premiere panel: grab, mark, read markers, apply the effect, update', { ski
     await page.click('[data-tab=presets]'); await page.waitForSelector('.preset');
     await page.click('[data-tab=scene]'); await page.fill('#tags', 'Ada'); await page.click('#add'); await page.waitForSelector('.shot');
     await page.click('#clear'); await page.click('#load'); await page.waitForSelector('.shot');
+    await page.click('[data-tab=tweak]'); await page.click('[data-scope="scene"]'); await page.click('#apply'); await page.waitForSelector('#toast:not([hidden])');
+    assert.match(await page.innerText('#toast'), /scene “Scene 2 — kitchen”/); await page.click('[data-scope="clip"]');
     await page.click('[data-tab=tweak]'); await page.selectOption('[data-axis=C]', 'C2'); await page.click('#apply'); await page.waitForTimeout(800);
     const pp = await page.evaluate(() => window.__pp);
     assert.ok(pp.calls.includes('Add Lukuluku Look'), 'effect appended');
     assert.equal(pp.params['Colour science'], 2, 'C2 is popup index 2: Premiere UXP popups are 0-based');
+    // a clean re-read: the shot now carries our look, so Bypass goes on for the export and off again
+    await page.click('[data-tab=shot]'); await page.click('#grab'); await page.waitForSelector('.card.ctx'); await page.waitForTimeout(500);
+    const calls = await page.evaluate(() => window.__pp.calls);
+    assert.ok(calls.includes('Colored Lens: read the shot without its look') && calls.includes('Colored Lens: look back on'), 'bypass toggled: ' + calls.join(', '));
+    assert.equal(await page.evaluate(() => window.__pp.params['Bypass (show the original)']), false, 'look switched back on');
+    assert.match(await page.innerText('.card.ctx'), /switched off for a moment/);
     assert.equal(pp.params['Animate grain'], true);
     assert.equal(pp.markers.length, 1); assert.match(pp.markers[0].comments, /^CLS1:/);
     await page.waitForSelector('#doUpdate'); await page.click('#doUpdate'); await page.waitForTimeout(800);
