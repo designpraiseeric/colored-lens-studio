@@ -5,7 +5,7 @@ on:
     paths: ['helper/**', '.github/workflows/helper.yml']
 jobs:
   build:
-    strategy: { fail-fast: false, matrix: { os: [macos-latest, macos-26] } }
+    strategy: { fail-fast: false, matrix: { os: [macos-26, macos-27] } }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5

@@ -10,7 +10,6 @@ import ImageIO
 
 let fm = FileManager.default
 let bridge = fm.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/ColoredLens/bridge", isDirectory: true)
-try? fm.createDirectory(at: bridge, withIntermediateDirectories: true)
 
 func log(_ s: String) { FileHandle.standardError.write((s + "\n").data(using: .utf8)!) }
 
@@ -45,6 +44,7 @@ func answer(_ req: [String: Any]) async -> [String: Any] {
 
 @MainActor enum Work { static var busy = Set<String>() }
 @MainActor func runLoop() async {
+  try? fm.createDirectory(at: bridge, withIntermediateDirectories: true)
   log("Colored Lens Helper \(helperVersion) (\(AppleAI.variant)) watching \(bridge.path)")
   while true {
     let files = (try? fm.contentsOfDirectory(at: bridge, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
