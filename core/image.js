@@ -1,15 +1,63 @@
 // Tiny image helpers that run anywhere (UXP has no canvas pixel access, so we decode ourselves).
 // A Frame is { w, h, data: Uint8ClampedArray (RGBA, 8-bit, display-referred sRGB/Rec.709) }.
+import { unzlibSync } from 'fflate';
+import jpegDecode from 'jpeg-js/lib/decoder.js';
 
 export function makeFrame(w, h, data) { return { w, h, data: data || new Uint8ClampedArray(w * h * 4) }; }
 
-/** Decode BMP (24/32-bit, uncompressed or BI_BITFIELDS), PPM (P6) or TGA (types 2 and 10). */
+/** Decode a frame grab, whatever the host wrote: PNG, JPEG, BMP, TGA or PPM (detected from the bytes, not the name). */
 export function decodeImage(buf) {
   const u8 = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+  if (u8.length < 16) throw new Error(`The frame file is empty or still being written (${u8.length} bytes)`);
+  if (u8[0] === 0x89 && u8[1] === 0x50 && u8[2] === 0x4e && u8[3] === 0x47) return decodePNG(u8);
+  if (u8[0] === 0xff && u8[1] === 0xd8) return decodeJPEG(u8);
   if (u8[0] === 0x42 && u8[1] === 0x4d) return decodeBMP(u8);
   if (u8[0] === 0x50 && u8[1] === 0x36) return decodePPM(u8);
-  if (u8[2] === 2 || u8[2] === 10) return decodeTGA(u8);
-  throw new Error('Unsupported frame format (expected BMP, PPM or TGA)');
+  if ((u8[2] === 2 || u8[2] === 10) && u8[1] === 0) return decodeTGA(u8);
+  const head = Array.from(u8.slice(0, 8), b => b.toString(16).padStart(2, '0')).join(' ');
+  throw new Error(`Unsupported frame format (first bytes ${head}, ${u8.length} bytes)`);
+}
+
+function decodeJPEG(u8) {
+  const r = jpegDecode(u8, { useTArray: true, formatAsRGBA: true, maxMemoryUsageInMB: 1024 });
+  return makeFrame(r.width, r.height, new Uint8ClampedArray(r.data.buffer, r.data.byteOffset, r.data.length));
+}
+
+/** PNG: 8/16-bit, greyscale / RGB / palette / alpha, non-interlaced and Adam7. */
+function decodePNG(u8) {
+  const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength); let p = 8, w = 0, h = 0, depth = 8, type = 2, interlace = 0, pal = null, trns = null; const idat = [];
+  while (p + 8 <= u8.length) {
+    const len = dv.getUint32(p), t = String.fromCharCode(u8[p + 4], u8[p + 5], u8[p + 6], u8[p + 7]), d = u8.subarray(p + 8, p + 8 + len);
+    if (t === 'IHDR') { w = dv.getUint32(p + 8); h = dv.getUint32(p + 12); depth = d[8]; type = d[9]; interlace = d[12]; }
+    else if (t === 'PLTE') pal = d; else if (t === 'tRNS') trns = d; else if (t === 'IDAT') idat.push(d); else if (t === 'IEND') break;
+    p += 12 + len;
+  }
+  let total = 0; for (const c of idat) total += c.length; const z = new Uint8Array(total); let o = 0; for (const c of idat) { z.set(c, o); o += c.length; }
+  const raw = unzlibSync(z), ch = { 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 }[type], bpp = Math.max(1, (ch * depth) >> 3), f = makeFrame(w, h);
+  const sample = (row, x, c) => { // value of channel c at x in an unfiltered row, scaled to 0..255
+    if (depth === 16) return row[(x * ch + c) * 2];
+    if (depth === 8) return row[x * ch + c];
+    const bit = x * depth, v = (row[bit >> 3] >> (8 - depth - (bit & 7))) & ((1 << depth) - 1); return type === 3 ? v : Math.round(v * 255 / ((1 << depth) - 1));
+  };
+  const put = (row, x, X, Y) => { const i = (Y * w + X) * 4;
+    if (type === 3) { const k = sample(row, x, 0); f.data[i] = pal[k * 3]; f.data[i + 1] = pal[k * 3 + 1]; f.data[i + 2] = pal[k * 3 + 2]; f.data[i + 3] = trns && k < trns.length ? trns[k] : 255; return; }
+    const g = type === 0 || type === 4; f.data[i] = sample(row, x, 0); f.data[i + 1] = g ? f.data[i] : sample(row, x, 1); f.data[i + 2] = g ? f.data[i] : sample(row, x, 2);
+    f.data[i + 3] = type === 4 ? sample(row, x, 1) : type === 6 ? sample(row, x, 3) : 255; };
+  const passes = interlace ? [[0, 0, 8, 8], [4, 0, 8, 8], [0, 4, 4, 8], [2, 0, 4, 4], [0, 2, 2, 4], [1, 0, 2, 2], [0, 1, 1, 2]] : [[0, 0, 1, 1]];
+  let q = 0;
+  for (const [x0, y0, dx, dy] of passes) {
+    const pw = Math.ceil((w - x0) / dx), ph = Math.ceil((h - y0) / dy); if (pw <= 0 || ph <= 0) continue;
+    const stride = Math.ceil(pw * ch * depth / 8); let prev = new Uint8Array(stride);
+    for (let y = 0; y < ph; y++) {
+      const ft = raw[q++], row = raw.slice(q, q + stride); q += stride;
+      for (let i = 0; i < stride; i++) { const a = i >= bpp ? row[i - bpp] : 0, b = prev[i], c = i >= bpp ? prev[i - bpp] : 0;
+        if (ft === 1) row[i] = (row[i] + a) & 255; else if (ft === 2) row[i] = (row[i] + b) & 255; else if (ft === 3) row[i] = (row[i] + ((a + b) >> 1)) & 255;
+        else if (ft === 4) { const pp = a + b - c, pa = Math.abs(pp - a), pb = Math.abs(pp - b), pc = Math.abs(pp - c); row[i] = (row[i] + (pa <= pb && pa <= pc ? a : pb <= pc ? b : c)) & 255; } }
+      for (let x = 0; x < pw; x++) put(row, x, x0 + x * dx, y0 + y * dy);
+      prev = row;
+    }
+  }
+  return f;
 }
 
 function decodeBMP(u8) {

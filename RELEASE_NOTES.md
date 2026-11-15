@@ -1,6 +1,13 @@
 # Release notes
 Each `## <version>` block becomes the text of the in-app update banner and the GitHub Release.
 
+## 0.1.4
+Fixes from the first real session in Premiere Pro.
+- Read, Skin, Script and Look work again: frame grabs no longer fail with "format not supported" (Colored Lens now reads PNG and JPEG grabs, and waits for Premiere to finish writing them).
+- The panel scrolls, with the tabs and header kept in place.
+- New sliders: drag or click to set, double-click to reset, type an exact value in the box. Trackpad scrolling scrolls the panel instead of moving a slider.
+- The active tab is clearly marked.
+
 ## 0.1.3
 The Lukuluku Look effect for Premiere Pro now installs on Mac too (0.1.1 and 0.1.2 brought it to Windows only).
 

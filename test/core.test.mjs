@@ -18,6 +18,12 @@ const fixture = decodeImage(fs.readFileSync(new URL('./fixtures/frame.bmp', impo
 const solid = (w, h, fill) => { const f = makeFrame(w, h); for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const c = fill(x / w, y / h), i = (y * w + x) * 4; f.data[i] = c[0] * 255; f.data[i + 1] = c[1] * 255; f.data[i + 2] = c[2] * 255; f.data[i + 3] = 255; } return f; };
 
 test('BMP fixture decodes', () => { assert.equal(fixture.w, 480); assert.equal(fixture.h, 268); });
+test('frame grabs decode whatever format the host writes (PNG, JPEG, BMP)', () => {
+  const small = downsample(fixture, 64), png = decodeImage(encodePNG(small));
+  assert.equal(png.w, small.w); assert.ok(png.data.every((v, i) => i % 4 === 3 || v === small.data[i]), 'PNG round-trips exactly');
+  assert.equal(decodeImage(fs.readFileSync(new URL('./fixtures/frame.jpg', import.meta.url))).w, 480);
+  assert.throws(() => decodeImage(new Uint8Array(64)), /first bytes/);
+});
 test('PNG encoder writes a valid zlib stream', () => {
   const png = encodePNG(downsample(fixture, 64)); assert.deepEqual([...png.slice(1, 4)], [80, 78, 71]);
   let p = 8, idat = []; while (p < png.length) { const len = new DataView(png.buffer, png.byteOffset + p).getUint32(0), type = String.fromCharCode(...png.slice(p + 4, p + 8)); if (type === 'IDAT') idat.push(png.slice(p + 8, p + 8 + len)); p += 12 + len; }

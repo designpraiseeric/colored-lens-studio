@@ -56,13 +56,18 @@ const host = {
     let w = 960, h = 540;
     try { const r = await seq.getFrameSize(); const s = Math.min(1, 960 / r.width); w = Math.round(r.width * s); h = Math.round(r.height * s); } catch { /* keep 16:9 */ }
     const tmp = await lfs.getTemporaryFolder(), base = 'cl_frame_' + Date.now();
-    const ok = await ppro.Exporter.exportSequenceFrame(seq, t, base + '.bmp', tmp.nativePath, w, h);
+    // PNG is the format Adobe's own sample exports. Whatever Premiere actually writes, decodeImage reads it by its bytes.
+    const ok = await ppro.Exporter.exportSequenceFrame(seq, t, base + '.png', tmp.nativePath, w, h);
     if (!ok) throw new Error('Premiere could not export this frame');
-    let entry = null;
-    for (let i = 0; i < 40 && !entry; i++) { // the export can land a moment later; older builds add an extra extension
-      const list = await tmp.getEntries(); entry = list.find(e => e.name.startsWith(base)); if (!entry) await new Promise(r => setTimeout(r, 75)); }
-    if (!entry) throw new Error('The exported frame did not appear');
-    const frame = decodeImage(new Uint8Array(await entry.read({ format: formats.binary })));
+    // The export lands a moment later (and some builds add a second extension): wait until the file stops growing.
+    let entry = null, last = -1, bytes = null;
+    for (let i = 0; i < 80; i++) {
+      if (!entry) entry = (await tmp.getEntries()).find(e => e.name.startsWith(base)) || null;
+      if (entry) { const b = new Uint8Array(await entry.read({ format: formats.binary })); if (b.length > 0 && b.length === last) { bytes = b; break; } last = b.length; }
+      await new Promise(r => setTimeout(r, 75));
+    }
+    if (!bytes) throw new Error(entry ? 'The exported frame never finished writing' : 'The exported frame did not appear');
+    const frame = decodeImage(bytes);
     try { await entry.delete(); } catch { /* temp folder is cleaned by UXP */ }
     let clipName = '';
     try { const items = await (await seq.getSelection()).getTrackItems(); if (items[0] && items[0].getName) clipName = await items[0].getName(); } catch { /* optional */ }

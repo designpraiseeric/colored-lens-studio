@@ -8,6 +8,7 @@ import { parseLookInput, formatCode, fullGrade, makePixelFn, bakeCube, lookToEng
 import { Updater } from '../core/updates.js';
 import { encodePNG } from '../core/image.js';
 import config from '../studio.config.json';
+import { sliderHTML, wireSliders } from './slider.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -24,7 +25,7 @@ export async function startApp(host, root) {
     <div class="cl">
       <div id="banner" class="banner" hidden></div>
       <div class="head"><div class="brand">Colored Lens <span class="dim">· ${esc(host.label || host.name)}</span></div><div id="status" class="dim small"></div></div>
-      <div class="tabs">${['read:Read', 'skin:Skin', 'script:Script', 'look:Look', 'library:Library'].map(t => { const [id, n] = t.split(':'); return `<button data-tab="${id}" class="tab">${n}</button>`; }).join('')}</div>
+      <div class="tabs">${['read:Read', 'skin:Skin', 'script:Script', 'look:Look', 'library:Library'].map(t => { const [id, n] = t.split(':'); return `<div data-tab="${id}" class="tab" role="tab" tabindex="0">${n}</div>`; }).join('')}</div>
       <div id="body" class="body"></div>
       <div id="toast" class="toast" hidden></div>
     </div>`;
@@ -69,7 +70,8 @@ export async function startApp(host, root) {
 
   // ---------- tabs ----------
   function render() {
-    root.querySelectorAll('.tab').forEach(b => b.classList.toggle('on', b.dataset.tab === S.tab));
+    root.querySelectorAll('.tab').forEach(b => { const on = b.dataset.tab === S.tab; b.classList.toggle('on', on); b.setAttribute('aria-selected', on ? 'true' : 'false'); });
+    const bodyEl = $('#body', root); if (bodyEl && render.lastTab !== S.tab) { bodyEl.scrollTop = 0; render.lastTab = S.tab; }
     const body = $('#body', root);
     if (!up.content.encyclopedia) return;
     ({ read: renderRead, skin: renderSkin, script: renderScript, look: renderLook, library: renderLibrary })[S.tab](body);
@@ -169,7 +171,8 @@ export async function startApp(host, root) {
     const C = cat(), L = S.look, G = L.G, X = S.extra;
     const byNum = o => Object.keys(o).sort((a, b) => +a.replace(/\D/g, '') - +b.replace(/\D/g, ''));
     const sel = (k, table) => `<label>${esc({ K: 'Lens character', D: 'Diffusion', C: 'Colour science', M: 'Film / video medium' }[k])}<select data-axis="${k}">${byNum(table).map(id => `<option value="${id}" ${L[k] === id ? 'selected' : ''}>${id} ${esc(table[id].short || table[id].name)}</option>`).join('')}</select></label>`;
-    const slider = (obj, key, label, min, max, step) => `<label class="sl"><span class="lb">${esc(label)}</span><input type="range" data-obj="${obj}" data-key="${key}" min="${min}" max="${max}" step="${step}" value="${(obj === 'G' ? G : X)[key]}"><span>${(+(obj === 'G' ? G : X)[key]).toFixed(2)}</span></label>`;
+    const XDEF = { skinGuard: 0, skinHue: 0.8, skinDensity: 0.7, skinLight: 0.5, matchAmt: 1 };
+    const slider = (obj, key, label, min, max, step) => sliderHTML({ id: obj + ':' + key, label: esc(label), min, max, step, value: +(obj === 'G' ? G : X)[key], def: obj === 'G' ? GRADE0[key] : XDEF[key] });
     body.innerHTML = `
       <div class="row"><input id="code" placeholder="Paste a Lukuluku look code or share link" value="${esc(formatCode(L))}"><button id="parse">Use</button></div>
       <div class="cols">${sel('K', C.lens)}${sel('D', C.diffusion)}${sel('C', C.color)}${sel('M', C.medium)}
@@ -190,7 +193,7 @@ export async function startApp(host, root) {
     body.querySelectorAll('[data-axis]').forEach(s => s.onchange = () => { S.look[s.dataset.axis] = s.value; sync(); drawPreview(); });
     $('#input', body).onchange = e => { S.input = e.target.value; drawPreview(); };
     $('#matte', body).onchange = e => { S.matte = !!e.target.value; if (e.target.value) S.look.A = e.target.value; sync(); };
-    body.querySelectorAll('input[type=range]').forEach(r => r.oninput = () => { const o = r.dataset.obj === 'G' ? S.look.G : S.extra; o[r.dataset.key] = +r.value; r.nextElementSibling.textContent = (+r.value).toFixed(2); drawPreview(); });
+    wireSliders(body, (id, v) => { const [obj, key] = id.split(':'); (obj === 'G' ? S.look.G : S.extra)[key] = v; drawPreview(); });
     $('#parse', body).onclick = () => { try { const l = parseLookInput($('#code', body).value, C); S.look = l; toast('Look loaded: ' + formatCode(l)); render(); } catch (e) { toast(e.message, 4000); } };
     $('#setref', body).onclick = () => busy('Grabbing reference', async () => { const g = await host.grabFrame(); S.refFrameStats = matchStats(g.frame); S.refName = `${g.clipName || 'frame'} ${g.timecode || ''}`; toast('Reference set: now park on the shot to match'); render(); });
     $('#matchref', body).onclick = () => busy('Matching', async () => { await grab(); S.extra = { ...S.extra, ...computeMatch(matchStats(S.frame), S.refFrameStats) }; render(); });

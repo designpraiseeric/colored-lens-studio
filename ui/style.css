@@ -1,15 +1,19 @@
 /* Colored Lens panel. Flexbox only (UXP in Premiere has no CSS grid); dark to sit beside the editors' UIs. */
 :root { --bg: #1d1d1f; --p1: #262629; --p2: #303034; --line: #3a3a40; --ink: #ececee; --dim: #a1a1aa; --acc: #e31837; --good: #3fbf72; --warn: #f0a33a; --info: #6ea8ff; }
-html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink); font: 13px/1.45 -apple-system, "Segoe UI", Inter, system-ui, sans-serif; }
-.cl { display: flex; flex-direction: column; min-height: 100vh; }
+html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--ink); font: 13px/1.45 -apple-system, "Segoe UI", Inter, system-ui, sans-serif; }
+#root { height: 100%; }
+/* Fixed header + tabs, and a content area that scrolls inside the panel (UXP panels do not scroll the page). */
+.cl { display: flex; flex-direction: column; height: 100%; height: 100vh; }
+.cl > .banner, .cl > .head, .cl > .tabs { flex: none; }
 .head { display: flex; justify-content: space-between; align-items: baseline; padding: 10px 12px 4px; }
 .brand { font-weight: 700; font-size: 15px; letter-spacing: .02em; }
 .dim { color: var(--dim); }
 .small { font-size: 11.5px; }
-.tabs { display: flex; flex-direction: row; border-bottom: 1px solid var(--line); padding: 0 8px; }
-.tab { background: none; border: none; color: var(--dim); padding: 8px 10px; font: inherit; cursor: pointer; border-bottom: 2px solid transparent; }
-.tab.on { color: var(--ink); border-bottom-color: var(--acc); }
-.body { padding: 10px 12px 40px; }
+.tabs { display: flex; flex-direction: row; border-bottom: 1px solid var(--line); padding: 0 6px; }
+.tab { color: var(--dim); padding: 8px 10px 6px; margin-right: 2px; cursor: pointer; border-bottom: 3px solid transparent; border-radius: 6px 6px 0 0; }
+.tab:hover { color: var(--ink); }
+.tab.on { color: #fff; font-weight: 700; background: var(--p2); border-bottom-color: var(--acc); }
+.body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 10px 12px 40px; }
 .row { display: flex; flex-direction: row; align-items: center; margin: 6px 0; }
 .row > * { margin-right: 6px; }
 .row.wrap { flex-wrap: wrap; }
@@ -49,10 +53,15 @@ input, select, textarea { background: var(--p1); color: var(--ink); border: 1px 
 .cols { display: flex; flex-direction: row; flex-wrap: wrap; }
 .cols label { display: flex; flex-direction: column; font-size: 11px; color: var(--dim); margin: 0 8px 8px 0; width: 46%; }
 .cols select { margin-top: 3px; color: var(--ink); }
-.sl { display: flex; flex-direction: row; align-items: center; font-size: 11.5px; margin: 3px 0; }
+.sl { display: flex; flex-direction: row; align-items: center; font-size: 11.5px; margin: 5px 0; }
 .sl .lb { width: 104px; flex: none; }
-.sl input { flex: 1; margin: 0 8px; padding: 0; }
-.sl > span { width: 40px; text-align: right; color: var(--dim); }
+.trk { position: relative; flex: 1; height: 20px; margin: 0 8px; cursor: pointer; }
+.trk .rail { position: absolute; left: 0; right: 0; top: 9px; height: 3px; border-radius: 2px; background: var(--line); }
+.trk .zero { position: absolute; top: 5px; width: 1px; height: 11px; background: var(--dim); }
+.trk .fill { position: absolute; left: 0; top: 9px; height: 3px; border-radius: 2px; background: var(--acc); }
+.trk .thumb { position: absolute; top: 3px; width: 14px; height: 14px; margin-left: -7px; border-radius: 7px; background: #f4f4f5; border: 1px solid #00000066; }
+.trk.drag .thumb, .trk:focus .thumb { background: #fff; border-color: var(--acc); }
+.sl .num { width: 46px; flex: none; text-align: right; padding: 2px 4px; font-size: 11.5px; }
 .pair { display: flex; flex-direction: row; }
 .pair > div { flex: 1; margin-right: 6px; }
 .pair img { width: 100%; border-radius: 4px; display: block; }
