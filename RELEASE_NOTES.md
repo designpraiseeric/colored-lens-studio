@@ -1,6 +1,10 @@
 # Release notes
 Each `## <version>` block becomes the text of the in-app update banner and the GitHub Release.
 
+## 0.4.1
+- The Mac installer no longer gets stuck on "Running package scripts" when the Creative Cloud app is closed. It finishes straight away and the Premiere panel is installed in the background.
+- Everything in 0.4.0: Apple Intelligence through the Colored Lens Helper, the hands-on tour, step-by-step Smart setup, and a wipe you can drag.
+
 ## 0.4.0
 Apple Intelligence, a hands-on tour, and a wipe you can drag.
 - Apple Intelligence on Mac: Smart mode can now use the AI built into your Mac. Free, private, nothing to download. The installer adds a small Colored Lens Helper that connects the panel to it. "Automatic" picks it first when it is ready.
