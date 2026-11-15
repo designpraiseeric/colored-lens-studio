@@ -1,6 +1,15 @@
 # Release notes
 Each `## <version>` block becomes the text of the in-app update banner and the GitHub Release.
 
+## 0.4.0
+Apple Intelligence, a hands-on tour, and a wipe you can drag.
+- Apple Intelligence on Mac: Smart mode can now use the AI built into your Mac. Free, private, nothing to download. The installer adds a small Colored Lens Helper that connects the panel to it. "Automatic" picks it first when it is ready.
+- Ollama on Mac now works from Premiere Pro (it goes through the same helper).
+- The wipe is smooth: drag the Wipe slider, or drag straight across the picture. A plain click on a face still checks skin.
+- The tour is now hands-on: it outlines each part of the panel in turn, explains it, and waits while you try it. A sample picture is offered if no sequence is open. It is always under "Guide".
+- Smart mode setup is one small step per screen, with "You should see" for every step and help when something did not happen.
+- Mac users: this update needs the installer (not just the panel) so the helper is added. Use "Install update" and enter your Mac password when asked.
+
 ## 0.3.1
 A guide for new users, and Smart mode setup anyone can follow.
 - A one-minute tour opens the first time you use Colored Lens, and is always under "Guide" at the top of the panel.

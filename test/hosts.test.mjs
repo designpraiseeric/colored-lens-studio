@@ -43,10 +43,10 @@ test('Premiere panel: grab, mark, read markers, apply the effect, update', { ski
     await page.route(`http://127.0.0.1:${port}/mock.js`, r => r.fulfill({ path: path.join(ROOT, 'test/mocks/premiere_mock.js') }));
     await page.addInitScript(({ bmp, params }) => { window.__bmp = new Uint8Array(bmp); window.__effectParams = params; }, { bmp: [...fs.readFileSync(FRAME)], params: kParams });
     await page.goto(`http://127.0.0.1:${port}/test.html`);
-    // first run: the tour opens; walk it to the end, look at the Smart setup, then start
-    await page.waitForSelector('#gNext', { timeout: 15000 }); for (let i = 0; i < 6; i++) await page.click('#gNext');
-    await page.click('#gSmart'); await page.waitForSelector('.card.route'); assert.match(await page.innerText('#body'), /Apple Intelligence/);
-    await page.click('button[data-route="ollama"]'); assert.match(await page.innerText('#body'), /ollama pull gemma3:4b/);
+    // first run: the hands-on tour opens and points at real parts of the panel; then look at the Smart setup
+    await page.waitForSelector('#coach #cNext', { timeout: 15000 }); await page.click('#cNext'); await page.click('#cNext');
+    assert.match(await page.innerText('#coach'), /Read a shot/); assert.ok(await page.locator('#grab.spot').count(), 'the Read button is highlighted');
+    await page.click('#cEnd'); await page.click('#guideBtn'); await page.click('#gSetup'); await page.waitForSelector('.card.route'); assert.match(await page.innerText('#body'), /Apple Intelligence/);
     assert.match(await page.inputValue('textarea[data-prompt="smart"]'), /one small step at a time/);
     await page.click('[data-tab=shot]');
     await page.waitForSelector('#grab', { timeout: 15000 });
@@ -82,6 +82,12 @@ test('Premiere panel: grab, mark, read markers, apply the effect, update', { ski
     await page.fill('#smMsg', 'make it feel like summer'); await page.click('#smAsk'); await page.waitForSelector('.badge.smart', { timeout: 15000 });
     assert.match(await page.innerText('.card.smart'), /candy floss/); assert.equal(window_seen[0].model, 'gemma3:4b'); assert.ok(window_seen[0].messages.at(-1).images[0].length > 1000, 'the frame is sent');
     assert.match(window_seen[0].messages.at(-1).content, /EDITOR'S MESSAGE: make it feel like summer/);
+    // Apple Intelligence through the helper (faked): check it, then ask; the frame goes to the helper
+    await page.evaluate(r => { window.__recipe = r; }, 'super8-summer');
+    await page.click('#smartBtn'); await page.click('[data-prov="apple"]'); await page.click('#apTest'); await page.waitForSelector('.okmsg'); assert.match(await page.innerText('#body'), /Ready on this Mac/); await page.click('#smBack');
+    await page.fill('#smMsg', 'and warmer'); await page.click('#smAsk'); await page.waitForFunction(() => window.__pp.apple, null, { timeout: 15000 });
+    { const a = await page.evaluate(() => ({ n: window.__pp.apple.imageB64.length, p: window.__pp.apple.prompt, s: window.__pp.apple.system })); assert.ok(a.n > 1000, 'the frame goes to Apple Intelligence'); assert.match(a.p, /and warmer/); assert.doesNotMatch(a.s, /JSON only/); }
+    await page.waitForFunction(() => { const t = document.querySelector('.card.smart').innerText; return /apple intelligence/i.test(t) && /and warmer/.test(t); }, null, { timeout: 15000 });
     await page.click('[data-tab=presets]'); await page.waitForSelector('.preset');
     await page.click('[data-tab=scene]'); await page.fill('#tags', 'Ada'); await page.click('#add'); await page.waitForSelector('.shot');
     await page.click('#clear'); await page.click('#load'); await page.waitForSelector('.shot');

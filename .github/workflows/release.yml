@@ -45,6 +45,9 @@ jobs:
           if ! (cmake -S engine -B engine/build "$A" -DAE_SDK="${AE_SDK:-}" && cmake --build engine/build -j4); then
             echo "::warning::The Premiere Pro effect did not build; releasing without it"; rm -rf engine/build
             cmake -S engine -B engine/build "$A" && cmake --build engine/build -j4; fi
+      - name: Newest Xcode (for the helper's Apple Intelligence support)
+        run: |
+          X="$(ls -d /Applications/Xcode_*.app | grep -vi beta | sort -V | tail -1)"; sudo xcode-select -s "$X"; xcodebuild -version
       - name: Build the installer
         env:
           MAC_APP_IDENTITY: '${{ secrets.MAC_APP_IDENTITY }}'

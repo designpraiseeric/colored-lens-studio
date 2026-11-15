@@ -15,7 +15,8 @@ import { listPresets, savePreset, deletePreset, duplicatePreset, presetCode, imp
 import { Updater } from '../core/updates.js';
 import config from '../studio.config.json';
 import { sliderHTML, wireSliders } from './slider.js';
-import { TOUR, routes, helpPrompt } from './guide.js';
+import { COACH, routes, helpPrompt } from './guide.js';
+import { decodeImage } from '../core/image.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -32,7 +33,7 @@ export async function startApp(host, root) {
   const S = { tab: 'shot', back: 'shot', frame: null, meta: null, reading: null, skin: null, sample: null, shots: [],
     intent: normIntent(settings.get('intent', {})), seqId: '', ctx: null, lead: 0, neigh: [], scope: settings.get('scope', 'clip'), input: settings.get('input', 'rec709'),
     directions: [], chosen: -1, look: NEUTRAL_LOOK(), extra: { ...XDEF }, matte: false, recipe: { name: '', presetId: null }, view: 'split', wipe: 0.5,
-    guide: { view: 'tour', step: 0, route: '' }, dockSize: settings.get('dockSize', 'M'), dockHidden: false, detached: false, smartDirs: [],
+    guide: { view: 'home', step: 0, route: '' }, tour: null, dockSize: settings.get('dockSize', 'M'), dockHidden: false, detached: false, smartDirs: [],
     smart: { cfg: { ...SMART0, ...settings.get('smart', {}) }, turns: [], history: [], detect: null, using: '' }, refFrameStats: null, refName: '', adapt: settings.get('adapt', true), encQ: '', shownCode: '', confirmDel: '', busy: false, showSkin: false, showRefs: false };
   let PV = null, pvEl = null; // pvEl: the separate Preview panel's container, once it has been opened
   const up = new Updater(host, config.pagesBase);
@@ -44,6 +45,7 @@ export async function startApp(host, root) {
       <div class="tabs">${['shot:Shot', 'scene:Scene', 'tweak:Tweak', 'presets:Presets'].map(t => { const [id, n] = t.split(':'); return `<div data-tab="${id}" class="tab" role="tab" tabindex="0">${n}</div>`; }).join('')}</div>
       <div id="dock" class="dock" hidden></div>
       <div id="body" class="body"></div>
+      <div id="coach" class="coach" hidden></div>
       <div id="toast" class="toast" hidden></div>
     </div>`;
   const toast = (t, ms = 2600) => { const e = $('#toast', root); e.textContent = t; e.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => (e.hidden = true), ms); };
@@ -118,6 +120,13 @@ export async function startApp(host, root) {
       status(`Reading the shot ${side}…`); const f = (await host.grabFrame(n.seconds)).frame; S.neigh.push({ side, name: n.name, pic: pictureOf(frameStats(labPixels(f))) }); } catch (e) { console.warn('neighbour', e); }
     PV = previewer(S.frame, cat(), lutsFor); stageCache.key = '';
     S.reading = readFrame(S.frame, enc(), refs()); runSkin(); return g;
+  }
+  /** A sample picture from the encyclopedia, for trying Colored Lens without a sequence open. */
+  async function useSample() {
+    const r = await host.fetch(up.frameUrl('frames/ctx-pink-urban.jpg')); if (!r.ok) throw new Error('The sample picture could not be downloaded. Connect to the internet, or read one of your own shots.');
+    S.frame = decodeImage(new Uint8Array(await r.arrayBuffer())); S.meta = { clipName: 'Sample picture', timecode: '' }; S.ctx = null; S.neigh = []; S.sample = null; S.chosen = -1; S.lead = 0;
+    S.smartDirs = []; S.smart.turns = []; S.smart.history = [];
+    PV = previewer(S.frame, cat(), lutsFor); stageCache.key = ''; S.reading = readFrame(S.frame, enc(), refs()); runSkin(); await suggest();
   }
   const lowKey = () => isDark(S.intent);
   function runSkin() { if (S.frame) S.skin = checkSkin(S.frame, { sample: S.sample, input: S.input, lowKey: lowKey(), lead: S.lead }); }
@@ -258,6 +267,35 @@ export async function startApp(host, root) {
     if (!up.content.encyclopedia) return;
     renderDock();
     ({ shot: renderShot, scene: renderScene, tweak: renderTweak, presets: renderPresets, enc: renderEnc, smart: renderSmart, guide: renderGuide })[S.tab](body);
+    renderCoach();
+  }
+
+  // ---------- the hands-on tour: highlights one real part of the panel at a time ----------
+  const coachDone = k => k === 'frame' ? !!S.frame : k === 'feeling' ? answers(S.intent.feeling).length > 0 : k === 'chosen' ? S.chosen >= 0 : true;
+  function startTour() { S.tour = { i: 0, dir: 1 }; S.tab = 'shot'; render(); }
+  function endTour(next) { S.tour = null; settings.set('guideSeen', 1); if (next === 'smart') { S.guide = { view: 'smart', step: 0, route: '' }; S.back = 'shot'; S.tab = 'guide'; } render(); }
+  function renderCoach() {
+    const el = $('#coach', root); root.querySelectorAll('.spot').forEach(n => n.classList.remove('spot')); if (pvEl) pvEl.classList.remove('spot');
+    if (!S.tour) { el.hidden = true; el.innerHTML = ''; return; }
+    let st = COACH[S.tour.i];
+    if (st.tab && S.tab !== st.tab) { S.tab = st.tab; return render(); }
+    let target = st.sel ? (st.sel === '#dock' && S.detached && pvEl ? pvEl : root.querySelector(st.sel)) : null;
+    if (st.sel === '#dock' && target && target.hidden) target = null;
+    if (st.sel && !target && st.opt) { const j = S.tour.i + S.tour.dir; if (j >= 0 && j < COACH.length) { S.tour.i = j; return renderCoach(); } }
+    if (target) { target.classList.add('spot'); const body = $('#body', root);
+      if (body.contains(target)) { const d = target.getBoundingClientRect().top - body.getBoundingClientRect().top; if (d < 0 || d > body.clientHeight * 0.5) body.scrollTop += d - 8; } }
+    const ok = !st.wait || coachDone(st.wait), last = !!st.end, n = S.tour.i + 1;
+    el.hidden = false;
+    el.innerHTML = `<div class="k">Tour · ${n} of ${COACH.length}${target ? ' · look for the red outline' : ''}</div><h3>${esc(st.t)}</h3><p class="small">${esc(st.b)}</p>
+      ${st.wait ? `<p class="small ${ok ? 'okmsg' : 'todo'}">${ok ? '✓ Done. Press Next.' : '👉 ' + esc(st.do)}</p>` : ''}
+      <div class="row wrap">${S.tour.i ? '<button id="cBack">Back</button>' : ''}
+        ${last ? `<button id="cSmart" class="primary">Set up Smart mode</button><button id="cEnd">Finish</button>` : `<button id="cNext" class="${ok ? 'primary' : ''}">${ok ? 'Next' : 'Skip this step'}</button>`}
+        ${st.sample && !ok ? '<button id="cSample">Use a sample picture instead</button>' : ''}${last ? '' : '<button id="cEnd" class="small">End tour</button>'}</div>`;
+    if ($('#cBack', el)) $('#cBack', el).onclick = () => { S.tour.i--; S.tour.dir = -1; render(); };
+    if ($('#cNext', el)) $('#cNext', el).onclick = () => { S.tour.i++; S.tour.dir = 1; render(); };
+    if ($('#cEnd', el)) $('#cEnd', el).onclick = () => endTour();
+    if ($('#cSmart', el)) $('#cSmart', el).onclick = () => endTour('smart');
+    if ($('#cSample', el)) $('#cSample', el).onclick = () => busy('Loading a sample picture', async () => { await useSample(); render(); });
   }
 
   // SHOT ------------------------------------------------------------------
@@ -270,7 +308,7 @@ export async function startApp(host, root) {
       ${S.frame ? '' : `<p class="dim">Park the playhead on a shot and read it. Colored Lens tells you what the frame is doing, asks what it is for, and suggests directions you can preview, tweak, apply and save.</p>`}
       ${S.ctx ? contextCard(S.ctx) : ''}
       <div id="reading">${r ? readingCard(r, k) : ''}</div>
-      <div class="card"><div class="k">What is this for?</div>
+      <div class="card" id="intent"><div class="k">What is this for?</div>
         <p class="small dim">Tap up to two answers per question when a shot is more than one thing; the first is the main one.${S.seqId ? ` Remembered for the sequence “${esc(S.meta && S.meta.sequenceName || '')}”.` : ''}</p>
         <div class="q">The project</div>${chipRow(GENRES, 'genre')}
         <div class="q">This scene should feel</div>${chipRow(FEELINGS, 'feeling')}
@@ -629,65 +667,69 @@ export async function startApp(host, root) {
     const info = { os: host.os === 'win' ? 'win' : 'mac', hostLabel: host.label || host.name, version: host.version, route: G.route };
     const promptBox = (kind, label) => `<div class="card"><div class="k">${label}</div><p class="small dim">Copy this and paste it into any AI assistant (ChatGPT, Claude, Gemini, Copilot…). It will walk you through, one step at a time.</p>
       <textarea class="prompt" rows="5" readonly data-prompt="${kind}">${esc(helpPrompt(kind, info))}</textarea><div class="row"><button data-copyprompt="${kind}">Copy the prompt</button></div></div>`;
-    if (G.view === 'tour') {
-      const st = TOUR[G.step], last = G.step === TOUR.length - 1;
-      body.innerHTML = `<div class="card tour"><div class="k">Getting started · ${G.step + 1} of ${TOUR.length}</div><h3>${esc(st.t)}</h3><p>${esc(st.b)}</p><p class="small tip">${esc(st.tip)}</p>
-        <div class="dots">${TOUR.map((_, i) => `<span class="dot ${i === G.step ? 'on' : ''}"></span>`).join('')}</div>
-        <div class="row wrap">${G.step ? '<button id="gBack">Back</button>' : ''}${last ? '<button id="gSmart" class="primary">Set up Smart mode</button><button id="gDone">Start without it</button>' : '<button id="gNext" class="primary">Next</button>'}${last ? '' : '<button id="guideSkip">Skip the tour</button>'}</div></div>`;
-      if ($('#gBack', body)) $('#gBack', body).onclick = () => { G.step--; render(); };
-      if ($('#gNext', body)) $('#gNext', body).onclick = () => { G.step++; render(); };
-      if ($('#guideSkip', body)) $('#guideSkip', body).onclick = () => { done(); go('shot'); };
-      if ($('#gDone', body)) $('#gDone', body).onclick = () => { done(); go('shot'); };
-      if ($('#gSmart', body)) $('#gSmart', body).onclick = () => { done(); G.view = 'smart'; G.route = ''; render(); };
-      return;
-    }
     if (G.view === 'home') {
       body.innerHTML = `<div class="row"><button id="gClose">← Back</button><b class="grow">Guide</b></div>
-        <div class="card"><h3>Take the one-minute tour</h3><p class="small">How to read a shot, pick a direction, apply it and save it.</p><button id="gTour" class="primary">Start the tour</button></div>
+        <div class="card"><h3>Take the guided tour</h3><p class="small">Colored Lens walks you through grading one shot, pointing at each part of the panel as you go. About two minutes.</p><button id="gTour" class="primary">Start the tour</button></div>
         <div class="card"><h3>Set up Smart mode</h3><p class="small">Step by step, for your ${info.os === 'win' ? 'Windows PC' : 'Mac'}. No technical knowledge needed.</p><button id="gSetup">Show me how</button></div>
         ${promptBox('use', 'Want a patient teacher?')}`;
       $('#gClose', body).onclick = () => go(S.back || 'shot');
-      $('#gTour', body).onclick = () => { G.view = 'tour'; G.step = 0; render(); };
+      $('#gTour', body).onclick = () => startTour();
       $('#gSetup', body).onclick = () => { G.view = 'smart'; G.route = ''; render(); };
-    } else { // Smart mode setup
+    } else { // Smart mode setup: pick a way, then one small step per screen
       const R = routes(info.os), r = R.find(x => x.id === G.route);
-      body.innerHTML = `<div class="row"><button id="gHome">← Guide</button><b class="grow">Set up Smart mode</b></div>
-        ${!r ? `<p class="small">Smart mode needs an AI model to talk to. Pick the way that suits you; you can change it later.</p>
-          ${R.map(x => `<div class="card route ${x.steps.length ? '' : 'soon'}" data-route="${x.id}"><h3>${esc(x.n)}</h3><div class="small tag">${esc(x.tag)}</div><p class="small">${esc(x.who)}</p>${x.steps.length ? `<button data-route="${x.id}">Choose this</button>` : ''}</div>`).join('')}
-          ${promptBox('smart', 'Not sure which to choose?')}`
-        : `<div class="card"><h3>${esc(r.n)}</h3><div class="small tag">${esc(r.tag)}</div>
-            ${r.steps.map((st, i) => `<div class="step"><div class="num">${i + 1}</div><div class="grow"><p class="small">${esc(st.t)}</p>
-              ${st.url ? `<button data-url="${esc(st.url)}">${esc(st.label)}</button>` : ''}${st.copy ? `<div class="row"><span class="mono code grow">${esc(st.copy)}</span><button data-copy="${esc(st.copy)}">Copy</button></div>` : ''}
-              ${st.key ? `<div class="row"><input id="gKey" type="password" placeholder="Paste your key here"><button id="gKeySave">Save</button></div>` : ''}</div></div>`).join('')}
-            ${r.check === 'settings' ? '<button id="gSettings" class="primary">Open Smart settings</button>' : `<button id="gCheck" class="primary">${r.check === 'ollama' ? 'Find Ollama and switch Smart mode on' : 'Test my key and switch Smart mode on'}</button>`}
-            ${G.msg ? `<p class="small ${G.ok ? 'okmsg' : 'warn'}">${esc(G.msg)}</p>` : ''}${G.ok ? '<div class="row"><button id="gGo" class="primary">Try it on a shot</button></div>' : ''}
-            ${r.trouble ? `<p class="small dim">${esc(r.trouble)}</p>` : ''}</div>
-          <div class="row"><button id="gOther">Choose a different way</button></div>
-          ${promptBox('smart', 'Stuck? Get a hand-held walkthrough')}`}`;
-      $('#gHome', body).onclick = () => { G.view = 'home'; G.msg = ''; render(); };
-      body.querySelectorAll('button[data-route]').forEach(b => b.onclick = () => { G.route = b.dataset.route; G.msg = ''; G.ok = false; render(); });
-      if ($('#gOther', body)) $('#gOther', body).onclick = () => { G.route = ''; G.msg = ''; G.ok = false; render(); };
-      if ($('#gSettings', body)) $('#gSettings', body).onclick = () => { S.smart.cfg.provider = 'openai'; saveSmart(); go('smart'); };
-      if ($('#gGo', body)) $('#gGo', body).onclick = () => go('shot');
-      if ($('#gKeySave', body)) $('#gKeySave', body).onclick = async () => { const k = $('#gKey', body).value.trim(); if (!k) return toast('Paste your key first'); await secret.set('gemini', k); S.smart.hasGemini = true; toast('Key saved on this computer'); };
-      if ($('#gCheck', body)) $('#gCheck', body).onclick = () => busy('Checking', async () => {
-        const c = S.smart.cfg; G.ok = false;
-        try {
-          if (r.check === 'ollama') {
-            const d = await detectOllama(c.ollamaUrl || SMART0.ollamaUrl, httpGet);
-            if (!d.ok) throw new Error('Ollama is not answering yet. Is the llama icon showing? Open Ollama, then press the button again.');
-            if (!d.vision.length) throw new Error('Ollama is running, but it has no model that can see pictures yet. Do step 3, wait for the download to finish, then try again.');
-            c.provider = 'ollama'; c.ollamaModel = d.vision.includes(c.ollamaModel) ? c.ollamaModel : d.vision[0]; saveSmart();
-            G.msg = `Found Ollama with ${c.ollamaModel}. Smart mode is on, and your frames stay on this computer.`; G.ok = true;
-          } else {
-            const k = ($('#gKey', body) || {}).value; if (k && k.trim()) { await secret.set('gemini', k.trim()); S.smart.hasGemini = true; }
-            if (!(await secret.get('gemini'))) throw new Error('Paste your key in step 3 first.');
-            c.provider = 'gemini'; saveSmart(); await testSmart();
-            G.msg = 'Your key works. Smart mode is on.'; G.ok = true;
-          }
-        } catch (e) { G.msg = e.message || String(e); if (r.check === 'gemini') { c.provider = 'off'; saveSmart(); } }
-        render();
-      });
+      if (!r) {
+        body.innerHTML = `<div class="row"><button id="gHome">← Guide</button><b class="grow">Set up Smart mode</b></div>
+          <div class="card"><p class="small"><b>What is this?</b> Smart mode gives Colored Lens an AI helper that looks at your frame and suggests looks in plain words. To do that it needs an AI to talk to. There are ${R.filter(x => x.steps.length).length} free ways to give it one. Pick one; you can change it later, and Colored Lens works fine without any of them.</p></div>
+          ${R.map(x => `<div class="card route ${x.steps.length ? '' : 'soon'} ${x.best ? 'best' : ''}" data-route="${x.id}">${x.best ? '<div class="badge smart">Easiest on a Mac</div>' : ''}<h3>${esc(x.n)}</h3><div class="small tag">${esc(x.tag)}</div><p class="small">${esc(x.who)}</p>${x.steps.length ? `<button data-route="${x.id}" class="${x.best ? 'primary' : ''}">Choose this · ${x.steps.length} small steps</button>` : ''}</div>`).join('')}
+          ${promptBox('smart', 'Not sure which to choose? Ask any AI assistant')}`;
+      } else {
+        const n = r.steps.length, i = Math.min(G.step || 0, n - 1), st = r.steps[i], last = i === n - 1;
+        const checkLabel = { apple: 'Check Apple Intelligence and switch Smart mode on', ollama: 'Find Ollama and switch Smart mode on', gemini: 'Test my key and switch Smart mode on', settings: 'Open Smart settings' }[st.check];
+        body.innerHTML = `<div class="row"><button id="gOther">← All ways</button><b class="grow">${esc(r.n)}</b></div>
+          <div class="card wiz"><div class="k">Step ${i + 1} of ${n}</div>
+            <div class="dots">${r.steps.map((_, j) => `<span class="dot ${j < i ? 'done' : j === i ? 'now' : ''}"></span>`).join('')}</div>
+            <h3>${esc(st.t)}</h3><p>${esc(st.b)}</p>
+            ${st.url ? `<button data-url="${esc(st.url)}" class="primary">${esc(st.label)}</button>` : ''}
+            ${st.copy ? `<div class="row"><span class="mono code grow">${esc(st.copy)}</span><button data-copy="${esc(st.copy)}" class="primary">Copy</button></div>` : ''}
+            ${st.key ? `<div class="row"><input id="gKey" type="password" placeholder="Paste your key here"><button id="gKeySave" class="primary">Save</button></div>` : ''}
+            ${st.see ? `<div class="see small"><b>You should see:</b> ${esc(st.see)}</div>` : ''}
+            ${st.check ? `<button id="gCheck" class="primary">${checkLabel}</button>` : ''}
+            ${G.msg ? `<p class="small ${G.ok ? 'okmsg' : 'warn'}">${G.ok ? '✓ ' : ''}${esc(G.msg)}</p>` : ''}
+            ${G.ok ? '<div class="row"><button id="gGo" class="primary">Try it on a shot</button></div>' : ''}
+            ${G.help && st.fix ? `<div class="fix small"><b>If that did not happen:</b> ${esc(st.fix)}</div>` : ''}
+            <div class="row wrap">${i ? '<button id="gPrev">Back</button>' : ''}${!last ? '<button id="gNextStep">Done, next step</button>' : ''}${st.fix && !G.help ? '<button id="gHelp">That didn’t happen</button>' : ''}</div></div>
+          <div class="row"><button id="gOther2">Choose a different way</button></div>
+          ${promptBox('smart', 'Still stuck? Let any AI assistant walk you through it')}`;
+        const stepTo = j => { G.step = j; G.help = false; G.msg = ''; G.ok = false; render(); };
+        if ($('#gPrev', body)) $('#gPrev', body).onclick = () => stepTo(i - 1);
+        if ($('#gNextStep', body)) $('#gNextStep', body).onclick = () => stepTo(i + 1);
+        if ($('#gHelp', body)) $('#gHelp', body).onclick = () => { G.help = true; render(); };
+        $('#gOther2', body).onclick = $('#gOther', body).onclick = () => { G.route = ''; G.step = 0; G.msg = ''; G.ok = false; G.help = false; render(); };
+        if ($('#gGo', body)) $('#gGo', body).onclick = () => go('shot');
+        if ($('#gKeySave', body)) $('#gKeySave', body).onclick = async () => { const k = $('#gKey', body).value.trim(); if (!k) return toast('Paste your key first'); await secret.set('gemini', k); S.smart.hasGemini = true; toast('Key saved on this computer'); };
+        if ($('#gCheck', body)) $('#gCheck', body).onclick = () => { if (st.check === 'settings') { S.smart.cfg.provider = 'openai'; saveSmart(); return go('smart'); }
+          busy('Checking', async () => {
+            const c = S.smart.cfg; G.ok = false;
+            try {
+              if (st.check === 'apple') {
+                const a = await detectApple(host.bridge); if (!a.ok) throw new Error(appleReason(a.reason));
+                c.provider = 'apple'; saveSmart(); G.msg = 'Apple Intelligence is ready. Smart mode is on, and your frames stay on this Mac.' + (a.image ? '' : ' (In this version it works from Colored Lens\'s measurements and your Mac\'s description of the frame.)'); G.ok = true;
+              } else if (st.check === 'ollama') {
+                const d = await detectOllama(c.ollamaUrl || SMART0.ollamaUrl, httpGet);
+                if (!d.ok) throw new Error('Ollama is not answering yet. Is the llama icon showing? Open Ollama, then press the button again.');
+                if (!d.vision.length) throw new Error('Ollama is running, but it has no model that can see pictures yet. Go back one step, wait for the download to say “success”, then try again.');
+                c.provider = 'ollama'; c.ollamaModel = d.vision.includes(c.ollamaModel) ? c.ollamaModel : d.vision[0]; saveSmart();
+                G.msg = `Found Ollama with ${c.ollamaModel}. Smart mode is on, and your frames stay on this computer.`; G.ok = true;
+              } else {
+                if (!(await secret.get('gemini'))) throw new Error('There is no key saved yet. Go back one step and paste your key.');
+                c.provider = 'gemini'; saveSmart(); await testSmart(); G.msg = 'Your key works. Smart mode is on.'; G.ok = true;
+              }
+            } catch (e) { G.msg = e.message || String(e); G.help = true; if (st.check === 'gemini') { c.provider = 'off'; saveSmart(); } }
+            render();
+          }); };
+      }
+      if ($('#gHome', body)) $('#gHome', body).onclick = () => { G.view = 'home'; G.msg = ''; render(); };
+      body.querySelectorAll('button[data-route]').forEach(b => b.onclick = () => { G.route = b.dataset.route; G.step = 0; G.msg = ''; G.ok = false; G.help = false; render(); });
     }
     body.querySelectorAll('[data-copy]').forEach(b => b.onclick = async () => toast((await copyText(b.dataset.copy)) ? 'Copied' : 'Select the text and copy it by hand'));
     body.querySelectorAll('[data-copyprompt]').forEach(b => b.onclick = async () => { const t = body.querySelector(`textarea[data-prompt="${b.dataset.copyprompt}"]`);
@@ -696,7 +738,7 @@ export async function startApp(host, root) {
 
   /** Called by the host when the separate Preview panel shows: the preview moves there. */
   function attachPreview(el) { pvEl = el; S.detached = true; render(); }
-  if (!settings.get('guideSeen', 0)) { S.back = 'shot'; S.tab = 'guide'; S.guide = { view: 'tour', step: 0, route: '' }; }
+  if (!settings.get('guideSeen', 0)) S.tour = { i: 0, dir: 1 };
   render();
   return { state: S, updater: up, render, attachPreview };
 }

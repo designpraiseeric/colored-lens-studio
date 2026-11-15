@@ -245,19 +245,18 @@ const host = {
    * on macOS, so the panel cannot call Ollama itself).
    */
   bridge: os !== 'mac' ? null : async (req, ms = 180000) => {
-    const home = require('os').homedir(); let dir;
-    try { dir = await lfs.getEntryWithUrl('file:' + home + '/Library/Application Support/ColoredLens/bridge'); } catch { throw new Error('helper'); }
+    const fs = require('fs'), dir = 'file:' + require('os').homedir() + '/Library/Application Support/ColoredLens/bridge/';
     const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8), body = JSON.stringify(req);
-    const tmp = await dir.createFile('tmp-' + id + '.json', { overwrite: true }); await tmp.write(body, { format: formats.utf8 });
-    try { await tmp.moveTo(dir, { newName: 'req-' + id + '.json', overwrite: true }); }
-    catch { const f = await dir.createFile('req-' + id + '.json', { overwrite: true }); await f.write(body, { format: formats.utf8 }); try { await tmp.delete(); } catch {} }
+    // written under a temporary name, then renamed, so the helper never reads half a request
+    try { await fs.writeFile(dir + 'tmp-' + id + '.json', body, { encoding: 'utf-8' }); await fs.rename(dir + 'tmp-' + id + '.json', dir + 'req-' + id + '.json'); }
+    catch (e) { console.warn('bridge write', e); throw new Error('helper'); }
     const t0 = Date.now();
     while (Date.now() - t0 < ms) {
       await new Promise(r => setTimeout(r, 150));
-      let e = null; try { e = await dir.getEntry('res-' + id + '.json'); } catch { continue; }
-      try { const out = JSON.parse(await e.read({ format: formats.utf8 })); try { await e.delete(); } catch {} return out; } catch { /* still being written */ }
+      let txt; try { txt = await fs.readFile(dir + 'res-' + id + '.json', { encoding: 'utf-8' }); } catch { continue; }
+      try { const out = JSON.parse(txt); try { await fs.unlink(dir + 'res-' + id + '.json'); } catch {} return out; } catch { /* still being written */ }
     }
-    try { (await dir.getEntry('req-' + id + '.json')).delete(); } catch {}
+    try { await fs.unlink(dir + 'req-' + id + '.json'); } catch {}
     throw new Error('helper');
   },
   // On the Mac, requests to this computer (Ollama, LM Studio…) go through the helper; everything else is direct.

@@ -7,3 +7,4 @@ dist/
 .DS_Store
 engine/tests/ofxhost/build/
 engine/src/generated/
+helper/build/

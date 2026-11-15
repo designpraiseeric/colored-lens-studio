@@ -159,3 +159,14 @@ textarea.prompt { color: var(--dim); }
 #stClip img { position: relative; }
 #stLine { position: absolute; top: 0; width: 2px; background: #fff; }
 #stGrip { position: absolute; top: 50%; left: -8px; width: 18px; height: 28px; margin-top: -14px; border-radius: 9px; background: #fff; border: 1px solid #0008; }
+/* 0.3.2: hands-on tour */
+.coach { flex: none; border-top: 2px solid var(--acc); background: #241a1d; padding: 9px 12px 10px; }
+.coach h3 { margin: 4px 0; font-size: 14px; }
+.coach p { margin: 4px 0; }
+.todo { color: #ffd27a; font-weight: 600; }
+.spot { outline: 2px solid var(--acc); outline-offset: 2px; border: 2px solid var(--acc) !important; border-radius: 8px; }
+/* 0.3.2: Smart setup, one step per screen */
+.wiz h3 { font-size: 15px; margin: 6px 0; } .wiz p { margin: 6px 0; line-height: 1.5; }
+.dots { display: flex; margin: 4px 0; } .dot { width: 18px; height: 4px; border-radius: 2px; background: #555; margin-right: 4px; } .dot.done { background: #6c6; } .dot.now { background: var(--acc); }
+.see { border-left: 3px solid #6c6; padding: 4px 8px; margin: 8px 0; } .fix { border-left: 3px solid #ffd27a; padding: 4px 8px; margin: 8px 0; }
+.card.best { border-color: var(--acc); }

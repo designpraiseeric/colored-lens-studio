@@ -13,6 +13,11 @@ if [ -d engine/build/LukulukuLook.plugin ]; then
   cp -R engine/build/LukulukuLook.plugin "$STAGE/Library/Application Support/Adobe/Common/Plug-ins/7.0/MediaCore/"
 fi
 cp "$OUT/ColoredLens-Premiere-$VERSION.ccx" "$STAGE/Library/Application Support/ColoredLens/"
+# The helper (Apple Intelligence + local models for the panel) and its per-user launch agent.
+./helper/mac/build.sh "$ROOT/helper/build" "$VERSION"
+cp helper/build/ColoredLensHelper "$STAGE/Library/Application Support/ColoredLens/"
+mkdir -p "$STAGE/Library/LaunchAgents"; cp helper/mac/com.designpraise.coloredlens.helper.plist "$STAGE/Library/LaunchAgents/"
+if [ -n "${MAC_APP_IDENTITY:-}" ]; then codesign --force --options runtime --timestamp --sign "$MAC_APP_IDENTITY" "$STAGE/Library/Application Support/ColoredLens/ColoredLensHelper"; fi
 # Signing is switched on by adding the Apple certificates as GitHub secrets (see docs/RELEASING.md).
 SIGN_ARGS=(); if [ -n "${MAC_INSTALLER_IDENTITY:-}" ]; then SIGN_ARGS=(--sign "$MAC_INSTALLER_IDENTITY"); fi
 if [ -n "${MAC_APP_IDENTITY:-}" ]; then

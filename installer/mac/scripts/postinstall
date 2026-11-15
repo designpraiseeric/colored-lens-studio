@@ -26,5 +26,14 @@ fi
 xattr -dr com.apple.quarantine "/Library/OFX/Plugins/LukulukuLook.ofx.bundle" 2>/dev/null
 xattr -dr com.apple.quarantine "/Library/Application Support/Adobe/Common/Plug-ins/7.0/MediaCore/LukulukuLook.plugin" 2>/dev/null
 xattr -dr com.apple.quarantine "/Library/Application Support/Blackmagic Design/DaVinci Resolve/Workflow Integration Plugins/com.designpraise.coloredlens" 2>/dev/null
+# 4. The Colored Lens Helper: start it now for the logged-in user (it starts by itself at every login after this).
+HELPER="$SUPPORT/ColoredLensHelper"; AGENT="/Library/LaunchAgents/com.designpraise.coloredlens.helper.plist"
+chmod 755 "$HELPER" 2>/dev/null; chown root:wheel "$AGENT" 2>/dev/null; chmod 644 "$AGENT" 2>/dev/null
+xattr -dr com.apple.quarantine "$HELPER" 2>/dev/null
+if [ -n "$USER_ID" ] && [ "$USER_NAME" != "root" ]; then
+  sudo -u "$USER_NAME" mkdir -p "/Users/$USER_NAME/Library/Application Support/ColoredLens/bridge"
+  launchctl bootout "gui/$USER_ID/com.designpraise.coloredlens.helper" 2>/dev/null
+  launchctl bootstrap "gui/$USER_ID" "$AGENT" && echo "helper started" || echo "helper will start at next login"
+fi
 echo "done"
 exit 0

@@ -34,9 +34,17 @@
   const files = {};
   const folder = (name) => ({ nativePath: '/tmp/' + name, name,
     async getEntries() { return Object.keys(files).filter(k => k.startsWith(name + '/')).map(k => ({ name: k.slice(name.length + 1), read: async () => files[k], delete: async () => delete files[k] })); },
-    async getEntry(n) { const k = name + '/' + n; if (files[k] !== undefined) return { name: n, read: async () => files[k] }; if (Object.keys(files).some(f => f.startsWith(k + '/'))) return folder(k); throw new Error('no entry ' + k); },
+    async getEntry(n) { const k = name + '/' + n; if (files[k] !== undefined) return { name: n, read: async () => files[k], delete: async () => delete files[k] }; if (Object.keys(files).some(f => f.startsWith(k + '/'))) return folder(k); throw new Error('no entry ' + k); },
     async createFolder(n) { return folder(name + '/' + n); },
-    async createFile(n) { const k = name + '/' + n; return { nativePath: '/tmp/' + k, write: async d => { files[k] = d; } }; } });
+    async createFile(n) { const k = name + '/' + n; return { nativePath: '/tmp/' + k, write: async d => { files[k] = d; helper(k); }, delete: async () => delete files[k],
+      moveTo: async (dir, o) => { const k2 = dir.name + '/' + o.newName; files[k2] = files[k]; delete files[k]; helper(k2); } }; } });
+  // a stand-in for the Colored Lens Helper: answers req-<id>.json in the bridge folder with res-<id>.json
+  window.__apple = { available: true, image: true };
+  async function helper(k) { const m = /^(.*bridge)\/req-(.+)\.json$/.exec(k); if (!m) return; const req = JSON.parse(files[k]); delete files[k]; let res;
+    if (req.type === 'status') res = { helper: 'mock', variant: 'apple-image', apple: window.__apple };
+    else if (req.type === 'http') { try { const r = await fetch(req.url, { method: req.method, headers: req.headers, body: req.body }); res = { status: r.status, text: await r.text() }; } catch (e) { res = { status: 0, text: '', error: String(e) }; } }
+    else if (req.type === 'apple') { log.apple = req; res = { text: JSON.stringify({ sees: 'A man selling candy floss.', reading: 'Warm and busy.', reply: '', questions: [], answers: { feeling: ['joyful'] }, picks: [{ recipe: window.__recipe || 'x', why: 'It suits the warmth.' }] }) }; }
+    files[m[1] + '/res-' + m[2] + '.json'] = JSON.stringify(res); }
   // the plugin folder, served by the test web server (dist/premiere)
   const rfolder = prefix => ({ async getEntry(n) { if (/\.[a-z]+$/.test(n)) { const r = await fetch(prefix + n); if (!r.ok) throw new Error('missing ' + n);
       const blob = await r.arrayBuffer(); return { name: n, read: async o => (o && o.format === 'binary' ? blob : new TextDecoder().decode(blob)) }; } return rfolder(prefix + n + '/'); } });
@@ -51,7 +59,9 @@
       entrypoints: { setup(o) { log.hooks = o; } },
       pluginManager: { plugins: [{ id: 'com.designpraise.coloredlens', async showPanel(id) { log.calls.push('showPanel ' + id);
         const node = document.createElement('div'); node.id = 'pvRoot'; node.style.height = '400px'; document.body.appendChild(node); log.hooks.panels[id].show(node); } }] } },
-    os: { platform: () => 'darwin' },
+    os: { platform: () => 'darwin', homedir: () => '/Users/x' },
+    fs: { writeFile: async (p, d) => { files[p] = d; }, rename: async (a, b) => { files[b] = files[a]; delete files[a]; helper(b); },
+      readFile: async p => { if (files[p] === undefined) throw new Error('ENOENT'); return files[p]; }, unlink: async p => { delete files[p]; } },
   };
   window.require = n => { if (!modules[n]) throw new Error('mock has no module ' + n); return modules[n]; };
 })();
