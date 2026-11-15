@@ -152,3 +152,10 @@ div.chip.off { color: #6b6b72; border-style: dashed; background: transparent; cu
 .code { background: #111; border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; }
 .okmsg { color: var(--good); }
 textarea.prompt { color: var(--dim); }
+/* 0.3.2: stacked before/after with a draggable wipe */
+.stage2 { position: relative; overflow: hidden; margin: 0 auto 4px; border-radius: 4px; background: #000; cursor: ew-resize; }
+.stage2 img { position: absolute; left: 0; top: 0; display: block; max-width: none; }
+#stClip { position: absolute; top: 0; overflow: hidden; }
+#stClip img { position: relative; }
+#stLine { position: absolute; top: 0; width: 2px; background: #fff; }
+#stGrip { position: absolute; top: 50%; left: -8px; width: 18px; height: 28px; margin-top: -14px; border-radius: 9px; background: #fff; border: 1px solid #0008; }

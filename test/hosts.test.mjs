@@ -62,7 +62,10 @@ test('Premiere panel: grab, mark, read markers, apply the effect, update', { ski
     assert.equal(await page.innerText('[data-intent="feeling:tense"]'), '+ Tense', 'second answer marked');
     assert.ok((await page.$$('.dir')).length >= 4, 'at least four directions');
     await page.locator('.dir .dtext b').first().click(); await page.waitForSelector('[data-dapply]');
-    await page.waitForFunction(() => document.querySelector('#stage') && document.querySelector('#stage').src.startsWith('data:image/png'), null, { timeout: 15000 });
+    await page.waitForFunction(() => document.querySelector('#stA') && document.querySelector('#stA').src.startsWith('data:image/png'), null, { timeout: 15000 });
+    // drag the wipe on the picture: the clip edge follows the mouse
+    { const bx = await page.locator('#stage').boundingBox(); await page.mouse.move(bx.x + bx.width / 2, bx.y + bx.height / 2); await page.mouse.down(); await page.mouse.move(bx.x + bx.width * 0.25, bx.y + bx.height / 2, { steps: 4 });
+      const mid = await page.evaluate(() => parseFloat(document.querySelector('#stClip').style.left)); await page.mouse.up(); assert.ok(Math.abs(mid - bx.width * 0.25) < 6, 'wipe follows the drag: ' + mid); }
     await page.click('[data-dsave]'); await page.waitForTimeout(400);
     // pop the preview out into its own panel, then bring it back
     await page.click('#dockPop'); await page.waitForSelector('#pvRoot #previewPanel #stage');

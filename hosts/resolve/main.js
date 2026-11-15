@@ -57,6 +57,15 @@ function downloadTo(url, dest, onProgress, depth = 0) {
 
 // ---- the API the panel uses (see hosts/README.md)
 const api = {
+  /** The Colored Lens Helper on macOS (Apple Intelligence), over the same request / answer files the Premiere panel uses. */
+  async bridge(req, ms = 180000) {
+    const dir = path.join(os.homedir(), 'Library', 'Application Support', 'ColoredLens', 'bridge'); if (IS_WIN || !fs.existsSync(dir)) throw new Error('helper');
+    const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8), tmp = path.join(dir, `tmp-${id}.json`), res = path.join(dir, `res-${id}.json`);
+    fs.writeFileSync(tmp, JSON.stringify(req)); fs.renameSync(tmp, path.join(dir, `req-${id}.json`));
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) { await new Promise(r => setTimeout(r, 150)); if (fs.existsSync(res)) { try { const out = JSON.parse(fs.readFileSync(res, 'utf8')); fs.unlinkSync(res); return out; } catch { /* still being written */ } } }
+    throw new Error('helper');
+  },
   /** Smart mode's requests go out from here (no page CORS or content policy in the way). */
   async http(url, method, headers, body) {
     const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 180000);

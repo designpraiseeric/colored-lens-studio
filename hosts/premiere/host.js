@@ -239,6 +239,32 @@ const host = {
     await f.write(data, { format: typeof data === 'string' ? formats.utf8 : formats.binary }); return f.nativePath;
   },
   openUrl: url => uxp.shell.openExternal(url, 'Opens in your browser'),
+  /**
+   * The Colored Lens Helper (macOS): reaches Apple Intelligence and models on this computer for the panel. Requests
+   * and answers are small JSON files in ~/Library/Application Support/ColoredLens/bridge (Premiere blocks http://
+   * on macOS, so the panel cannot call Ollama itself).
+   */
+  bridge: os !== 'mac' ? null : async (req, ms = 180000) => {
+    const home = require('os').homedir(); let dir;
+    try { dir = await lfs.getEntryWithUrl('file:' + home + '/Library/Application Support/ColoredLens/bridge'); } catch { throw new Error('helper'); }
+    const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8), body = JSON.stringify(req);
+    const tmp = await dir.createFile('tmp-' + id + '.json', { overwrite: true }); await tmp.write(body, { format: formats.utf8 });
+    try { await tmp.moveTo(dir, { newName: 'req-' + id + '.json', overwrite: true }); }
+    catch { const f = await dir.createFile('req-' + id + '.json', { overwrite: true }); await f.write(body, { format: formats.utf8 }); try { await tmp.delete(); } catch {} }
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) {
+      await new Promise(r => setTimeout(r, 150));
+      let e = null; try { e = await dir.getEntry('res-' + id + '.json'); } catch { continue; }
+      try { const out = JSON.parse(await e.read({ format: formats.utf8 })); try { await e.delete(); } catch {} return out; } catch { /* still being written */ }
+    }
+    try { (await dir.getEntry('req-' + id + '.json')).delete(); } catch {}
+    throw new Error('helper');
+  },
+  // On the Mac, requests to this computer (Ollama, LM Studio…) go through the helper; everything else is direct.
+  async post(url, headers, body) { if (host.bridge && /^http:\/\/(localhost|127\.0\.0\.1)/.test(url)) { const r = await host.bridge({ type: 'http', method: 'POST', url, headers, body }, 240000); return { status: r.status || 0, text: r.text || '' }; }
+    const r = await fetch(url, { method: 'POST', headers, body }); return { status: r.status, text: await r.text() }; },
+  async get(url, headers = {}) { if (host.bridge && /^http:\/\/(localhost|127\.0\.0\.1)/.test(url)) { const r = await host.bridge({ type: 'http', method: 'GET', url, headers }, 6000); return { status: r.status || 0, text: r.text || '' }; }
+    const r = await fetch(url, { headers }); return { status: r.status, text: await r.text() }; },
   /** API keys for Smart mode live in UXP's secure storage (the OS keychain), not in plain settings. */
   secret: {
     async get(k) { try { const v = await uxp.storage.secureStorage.getItem('coloredlens.' + k); return v ? new TextDecoder().decode(v) : ''; } catch { return ''; } },

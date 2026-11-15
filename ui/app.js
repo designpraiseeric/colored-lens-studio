@@ -6,7 +6,7 @@
 import { readFrame, frameStats, labPixels } from '../core/analysis.js';
 import { checkSkin, vectorscope } from '../core/skin.js';
 import { pngDataUrl, encodePNG, downsample, toBase64 } from '../core/image.js';
-import { PROVIDERS, DEFAULTS as SMART0, buildPrompt, parseReply, validate, ask, detectOllama, detectOpenAI, resolveProvider } from '../core/smart.js';
+import { PROVIDERS, DEFAULTS as SMART0, buildPrompt, parseReply, validate, ask, detectOllama, detectOpenAI, detectApple, appleReason, resolveProvider } from '../core/smart.js';
 import { shotRecord, encodeShot, decodeShot, renderStrip, readSequence, scriptCSV } from '../core/script.js';
 import { parseLookInput, formatCode, fullGrade, makePixelFn, bakeCube, lookToEngineParams, shareLink, computeMatch, matchStats, hasCurves, GRADE0 } from '../core/look.js';
 import { GENRES, FEELINGS, ROLES, KIND_LABEL, pickDirections, describeEffect, whyFor, frameSummary, answers, isDark, continuity, pictureOf, directionsFromPicks } from '../core/directions.js';
@@ -152,7 +152,10 @@ export async function startApp(host, root) {
     const a = S.frame.w / S.frame.h, avail = Math.max(80, (pvBox ? pvBox.w : (root.clientWidth || 360)) - 26);
     let h = pvBox ? Math.max(60, pvBox.h - (shot && S.chosen >= 0 ? 200 : 100)) : Math.min(DOCK_H[S.dockSize] || 220, Math.round((window.innerHeight || 800) * 0.42));
     let w = Math.round(h * a); if (w > avail) { w = avail; h = Math.round(w / a); }
-    return `<img id="stage" class="frame ${shot ? 'click' : ''}" src="" style="width:${w}px;height:${h}px;margin:0 auto 4px;display:block;">
+    // Two stacked pictures: "before" underneath, "after" on top, clipped at the wipe. Dragging only moves the clip
+    // edge, so it is instant (re-encoding a picture on every mouse move made the wipe feel stuck).
+    return `<div id="stage" class="stage2 ${shot ? 'click' : ''}" data-w="${w}" style="width:${w}px;height:${h}px;">
+        <img id="stB" src="" style="width:${w}px;height:${h}px;"><div id="stClip" style="height:${h}px;"><img id="stA" src="" style="width:${w}px;height:${h}px;"></div><div id="stLine" style="height:${h}px;"><div id="stGrip"></div></div></div>
       <div class="row tight"><div class="segs">${['before:Before', 'split:Split', 'after:After'].map(v => { const [id, n] = v.split(':'); return seg(id, n, S.view === id, 'data-view'); }).join('')}</div>
         <div class="grow"></div>${S.detached ? '' : `<div class="segs" title="Preview size">${['S', 'M', 'L'].map(z => seg(z, z, S.dockSize === z, 'data-dsize')).join('')}</div>`}
         ${host.openPreviewPanel ? `<button id="dockPop" class="small" title="${S.detached ? 'Put the preview back in the Colored Lens panel' : 'Open the preview as its own panel, to dock anywhere'}">${S.detached ? 'Back to panel' : 'Pop out'}</button>` : ''}${S.detached ? '' : '<button id="dockHide" class="small" title="Hide the preview">✕</button>'}</div>
@@ -182,11 +185,22 @@ export async function startApp(host, root) {
       : busy('Opening the preview panel', async () => { await host.openPreviewPanel(); if (pvEl) { S.detached = true; render(); } else toast('Find it under Window › UXP Plugins › Colored Lens Preview'); });
     dock.querySelectorAll('[data-view]').forEach(b => b.onclick = () => { S.view = b.dataset.view; renderDock(); });
     dock.querySelectorAll('[data-dsize]').forEach(b => b.onclick = () => { S.dockSize = b.dataset.dsize; settings.set('dockSize', S.dockSize); renderDock(); });
-    wireSliders(dock, (id, v) => { if (id === 'wipe') { S.wipe = v; composite(); } });
+    wireSliders(dock, (id, v) => { if (id === 'wipe') { S.wipe = v; placeWipe(); } });
     wireActions(dock);
-    const img = $('#stage', dock);
-    if (S.tab === 'shot' || S.detached) img.onclick = e => { const r = img.getBoundingClientRect(), x = (e.clientX - r.left) / r.width, y = (e.clientY - r.top) / r.height;
-      busy('Checking skin', async () => { S.sample = [x, y]; runSkin(); await suggest(); S.showSkin = true; render(); toast(S.skin.found ? `Skin sampled: about ${S.skin.ire} IRE` : 'No skin there; try the middle of a cheek'); }); };
+    // On the picture itself: drag to move the wipe; a plain click checks the skin at that point.
+    const st = $('#stage', dock), canSample = S.tab === 'shot' || S.detached;
+    const sample = (x, y) => busy('Checking skin', async () => { S.sample = [x, y]; runSkin(); await suggest(); S.showSkin = true; render(); toast(S.skin.found ? `Skin sampled: about ${S.skin.ire} IRE` : 'No skin there; try the middle of a cheek'); });
+    let drag = null;
+    const posOf = e => { const r = st.getBoundingClientRect(); return [Math.min(1, Math.max(0, (e.clientX - r.left) / Math.max(1, r.width))), Math.min(1, Math.max(0, (e.clientY - r.top) / Math.max(1, r.height)))]; };
+    const move = e => { if (!drag) return; if (!drag.moved && Math.abs(e.clientX - drag.x) < 4) return;
+      if (!drag.moved) { drag.moved = true; if (S.view !== 'split') S.view = 'split'; }
+      S.wipe = posOf(e)[0]; placeWipe(); e.preventDefault && e.preventDefault(); };
+    const up = e => { if (!drag) return; const d = drag; drag = null;
+      for (const t of ['pointermove', 'mousemove']) document.removeEventListener(t, move); for (const t of ['pointerup', 'mouseup']) document.removeEventListener(t, up);
+      if (d.moved) renderDock(); else if (canSample) { const [x, y] = posOf(e); sample(x, y); } };
+    const down = e => { if (e.button != null && e.button !== 0) return; drag = { x: e.clientX, moved: false };
+      const P = e.type === 'pointerdown'; document.addEventListener(P ? 'pointermove' : 'mousemove', move); document.addEventListener(P ? 'pointerup' : 'mouseup', up); e.preventDefault && e.preventDefault(); };
+    st.addEventListener(typeof window !== 'undefined' && 'PointerEvent' in window ? 'pointerdown' : 'mousedown', down);
     stageCache.key = stageCache.key || ''; drawStage(true);
   }
   let stageT = 0, stageSeq = 0;
@@ -205,9 +219,18 @@ export async function startApp(host, root) {
     }, 60);
   }
   function composite() {
-    const img = $('#stage', dockEl()); if (!img || !stageCache.before) return;
-    const same = stageCache.after === stageCache.before;
-    img.src = pngDataUrl(same ? stageCache.before : wipe(stageCache.before, stageCache.after, S.wipe, S.view));
+    const st = $('#stage', dockEl()); if (!st || !stageCache.before) return;
+    if (stageCache.urlKey !== stageCache.key) { stageCache.urlB = pngDataUrl(stageCache.before); stageCache.urlA = stageCache.after === stageCache.before ? stageCache.urlB : pngDataUrl(stageCache.after); stageCache.urlKey = stageCache.key; }
+    const B = $('#stB', st), A = $('#stA', st); if (B.dataset.k !== stageCache.key) { B.src = stageCache.urlB; A.src = stageCache.urlA; B.dataset.k = stageCache.key; }
+    placeWipe();
+  }
+  /** Moves the wipe: cheap enough to run on every mouse move. */
+  function placeWipe() {
+    const st = $('#stage', dockEl()); if (!st) return; const w = +st.dataset.w, same = stageCache.after === stageCache.before;
+    const pos = S.view === 'before' ? 1 : S.view === 'after' ? 0 : S.wipe, x = Math.round(pos * w);
+    const clip = $('#stClip', st), A = $('#stA', st), line = $('#stLine', st);
+    clip.style.left = x + 'px'; clip.style.width = (w - x) + 'px'; A.style.marginLeft = -x + 'px';
+    line.style.left = (x - 1) + 'px'; line.style.display = S.view === 'split' && !same ? 'block' : 'none';
   }
 
   // ---------- applying ----------
@@ -514,14 +537,15 @@ export async function startApp(host, root) {
   async function askSmart(message) {
     if (smartBusy || !S.frame) return; smartBusy = true; S.smart.error = ''; S.smart.pending = message || '(read this frame)'; render();
     try {
-      const real = await resolveProvider(await smartCfg(), httpGet);
+      const real = await resolveProvider(await smartCfg(), httpGet, host.bridge);
       if (!real) throw new Error(S.smart.cfg.provider === 'auto' ? 'Automatic found no model: Ollama is not running with a vision model, and no Gemini key is set. See Smart settings.' : 'Smart mode is off.');
       if (real.provider === 'ollama' && !real.ollamaModel) throw new Error('Choose an Ollama vision model in Smart settings');
       if (real.provider === 'openai' && !real.openaiModel) throw new Error('Choose a model for your local server in Smart settings');
+      if (real.provider === 'apple') { const a = await detectApple(host.bridge); if (!a.ok) throw new Error(appleReason(a.reason)); S.smart.appleImage = a.image; }
       S.smart.using = provName(real.provider) + (real.ollamaModel && real.provider === 'ollama' ? ' · ' + real.ollamaModel : real.provider === 'openai' ? ' · ' + real.openaiModel : real.provider === 'gemini' ? ' · ' + real.geminiModel : '');
       status('Smart mode is thinking…');
       const prompt = buildPrompt({ reading: S.reading, skin: S.skin, intent: S.intent, ctx: S.ctx, neigh: S.neigh, message, summary: frameSummary(S.reading, enc()) });
-      const text = await ask(real, { prompt, imageB64: toBase64(encodePNG(downsample(S.frame, 512))), history: S.smart.history }, httpPost);
+      const text = await ask(real, { prompt, imageB64: toBase64(encodePNG(downsample(S.frame, 512))), history: S.smart.history }, httpPost, host.bridge);
       const res = validate(parseReply(text));
       S.smart.history.push({ role: 'user', text: message || '(read this frame)' }, { role: 'assistant', text: JSON.stringify(res).slice(0, 1500) });
       S.smart.turns.push({ q: message, res, using: S.smart.using });
@@ -557,7 +581,7 @@ export async function startApp(host, root) {
     const field = (id, label, val, ph, type = 'text') => `<label class="fld"><span class="small dim">${label}</span><input id="${id}" type="${type}" value="${esc(val || '')}" placeholder="${esc(ph || '')}"></label>`;
     body.innerHTML = `<div class="row"><button id="smBack">← Back</button><b class="grow">Smart mode</b><button id="smGuide" class="small">Step-by-step setup</button></div>
       <p class="small">Optional, and free to you: an AI that looks at the frame, reads what the scene is doing, talks it through with you and picks looks from Colored Lens's own recipes. Every pick is checked and previewed like any other direction; nothing is applied until you say so.</p>
-      <div class="chips">${PROVIDERS.map(p => `<div role="button" tabindex="0" class="chip ${c.provider === p.id ? 'on' : ''}" data-prov="${p.id}">${c.provider === p.id ? '✓ ' : ''}${esc(p.n)}</div>`).join('')}</div>
+      <div class="chips">${PROVIDERS.filter(p => !p.mac || host.bridge).map(p => `<div role="button" tabindex="0" class="chip ${c.provider === p.id ? 'on' : ''}" data-prov="${p.id}">${c.provider === p.id ? '✓ ' : ''}${esc(p.n)}</div>`).join('')}</div>
       <p class="small dim">${esc((PROVIDERS.find(p => p.id === c.provider) || {}).where || '')}</p>
       ${c.provider === 'ollama' || c.provider === 'auto' ? `<div class="card"><div class="k">Ollama</div>${field('olUrl', 'Address', c.ollamaUrl, SMART0.ollamaUrl)}
         ${d.ollama ? (d.ollama.ok ? (d.ollama.vision.length ? `<label class="fld"><span class="small dim">Vision model</span><select id="olModel">${d.ollama.vision.map(m => `<option ${m === c.ollamaModel ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select></label>` : `<p class="small warn">Ollama is running, but none of its models can see images. In a terminal: ollama pull gemma3:4b</p>`) : '<p class="small warn">Ollama is not answering at that address. Install it from ollama.com and open it.</p>') : ''}
@@ -568,7 +592,10 @@ export async function startApp(host, root) {
         ${field('oaKey', 'Key (only if your server needs one)', '', '••••', 'password')}<button id="oaTest" class="small">Find the server and its models</button></div>` : ''}
       ${c.provider === 'gemini' || c.provider === 'auto' ? `<div class="card"><div class="k">Google Gemini</div>${field('gmKey', 'Your API key (from aistudio.google.com)', '', S.smart.hasGemini ? 'saved: paste to replace' : 'paste your key', 'password')}
         ${field('gmModel', 'Model', c.geminiModel, SMART0.geminiModel)}<p class="small dim">Your key stays on this computer. Check Google's pricing page for which models are free on your account.</p><button id="gmSave" class="small">Save key</button></div>` : ''}
-      <div class="card"><div class="k">Built-in AI on your computer</div><p class="small">Apple Intelligence on recent Macs and the Windows AI on Copilot+ PCs can see images too. Colored Lens will use them through a small helper app in a later update. Until then: on Windows, Microsoft Foundry Local works through “Local server”; on Mac, use Ollama.</p></div>
+      ${c.provider === 'apple' || (c.provider === 'auto' && host.bridge) ? `<div class="card"><div class="k">Apple Intelligence</div>
+        ${d.apple ? (d.apple.ok ? `<p class="small okmsg">Ready on this Mac.${d.apple.image ? '' : ' This version reads Colored Lens\'s measurements of the frame; it cannot look at the picture itself yet.'}</p>` : `<p class="small warn">${esc(appleReason(d.apple.reason))}</p>`) : ''}
+        <button id="apTest" class="small">Check Apple Intelligence</button></div>` : ''}
+      ${host.os === 'win' ? '<div class="card"><div class="k">Windows built-in AI</div><p class="small">The AI built into Copilot+ PCs will be supported through a small helper in a later update. Until then, Ollama or Microsoft Foundry Local (“Local server”) run on your PC for free.</p></div>' : ''}
       ${c.provider !== 'off' ? `<div role="button" tabindex="0" class="chip ${c.autoAsk ? 'on' : ''}" id="smAuto">${c.autoAsk ? '✓ ' : ''}Ask Smart mode every time I read a frame</div>` : ''}`;
     $('#smBack', body).onclick = () => go(S.back || 'shot');
     $('#smGuide', body).onclick = () => { S.guide = { view: 'smart', step: 0, route: '' }; S.tab = 'guide'; render(); };
@@ -576,6 +603,7 @@ export async function startApp(host, root) {
     const v = id => ($('#' + id, body) || {}).value;
     const keep = () => { if (v('olUrl') != null) c.ollamaUrl = v('olUrl'); if (v('olModel') != null) c.ollamaModel = v('olModel'); if (v('oaUrl') != null) c.openaiUrl = v('oaUrl'); if (v('oaModel') != null) c.openaiModel = v('oaModel'); if (v('gmModel') != null) c.geminiModel = v('gmModel'); saveSmart(); };
     body.querySelectorAll('input, select').forEach(i => i.onchange = keep);
+    if ($('#apTest', body)) $('#apTest', body).onclick = () => busy('Checking Apple Intelligence', async () => { S.smart.detect = { ...d, apple: await detectApple(host.bridge) }; render(); });
     if ($('#olTest', body)) $('#olTest', body).onclick = () => busy('Looking for Ollama', async () => { keep(); const r = await detectOllama(c.ollamaUrl, httpGet); S.smart.detect = { ...d, ollama: r };
       if (r.ok && r.vision.length && !r.vision.includes(c.ollamaModel)) { c.ollamaModel = r.vision[0]; saveSmart(); } render(); });
     if ($('#oaTest', body)) $('#oaTest', body).onclick = () => busy('Looking for the server', async () => { keep(); if (v('oaKey')) await secret.set('openai', v('oaKey')); const r = await detectOpenAI(c.openaiUrl, await secret.get('openai'), httpGet);
@@ -591,9 +619,9 @@ export async function startApp(host, root) {
     return false;
   }
   async function testSmart() { // a tiny real request: proves the whole path works
-    const real = await resolveProvider(await smartCfg(), httpGet); if (!real) throw new Error('No model is set up yet');
+    const real = await resolveProvider(await smartCfg(), httpGet, host.bridge); if (!real) throw new Error('No model is set up yet');
     const px = { w: 8, h: 8, data: new Uint8ClampedArray(8 * 8 * 4).fill(128) };
-    const text = await ask(real, { prompt: 'This is a connection test. Reply with exactly this JSON: {"sees":"ok","picks":[]}', imageB64: toBase64(encodePNG(px)) }, httpPost);
+    const text = await ask(real, { prompt: 'This is a connection test. Reply with exactly this JSON: {"sees":"ok","picks":[]}', imageB64: toBase64(encodePNG(px)) }, httpPost, host.bridge);
     parseReply(text); return real;
   }
   function renderGuide(body) {

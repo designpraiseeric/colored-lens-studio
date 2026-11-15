@@ -8,8 +8,8 @@ echo "Xcode: $(xcodebuild -version 2>/dev/null | tr '\n' ' ')  SDK: $(xcrun --sh
 for ARCH in arm64 x86_64; do
   BUILT=""
   for V in image text none; do
-    if xcrun swiftc -O -parse-as-library -target "$ARCH-apple-macos13.0" main_entry.swift main.swift "ai_$V.swift" "$OUT/version.swift" -o "$OUT/helper-$ARCH" 2> "$OUT/err-$ARCH-$V.txt"; then BUILT="$V"; break
-    else echo "-- $ARCH: variant '$V' did not compile:"; head -12 "$OUT/err-$ARCH-$V.txt"; fi
+    if perl -e 'alarm shift; exec @ARGV' 300 xcrun swiftc -Onone -parse-as-library -target "$ARCH-apple-macos13.0" main_entry.swift main.swift "ai_$V.swift" "$OUT/version.swift" -o "$OUT/helper-$ARCH" 2> "$OUT/err-$ARCH-$V.txt"; then BUILT="$V"; break
+    else echo "-- $ARCH: variant '$V' did not compile (or timed out):"; grep -m6 "error" "$OUT/err-$ARCH-$V.txt" || head -5 "$OUT/err-$ARCH-$V.txt"; fi
   done
   [ -n "$BUILT" ] || { echo "The helper did not build for $ARCH"; exit 1; }
   echo "HELPER $ARCH variant: $BUILT"

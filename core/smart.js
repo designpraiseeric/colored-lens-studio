@@ -8,7 +8,8 @@ import { RECIPES, GENRES, FEELINGS, ROLES } from './directions.js';
 
 export const PROVIDERS = [
   { id: 'off', n: 'Off', where: 'Rules only. Nothing leaves this computer.' },
-  { id: 'auto', n: 'Automatic', where: 'Uses Ollama on this computer when it is running with a vision model; otherwise your Gemini key if you have set one.' },
+  { id: 'auto', n: 'Automatic', where: 'Uses the best free option this computer has: Apple Intelligence on a Mac that has it, else Ollama when it is running with a vision model, else your Gemini key.' },
+  { id: 'apple', n: 'Apple Intelligence (this Mac)', where: 'Built into recent Macs: free, private, nothing to install. Needs Apple Intelligence switched on in System Settings.', mac: true },
   { id: 'ollama', n: 'Ollama (this computer)', where: 'Free and private: the frame stays on this computer. Install Ollama, then a vision model, e.g. ollama pull gemma3:4b (or qwen2.5vl:7b).' },
   { id: 'openai', n: 'Local server (OpenAI-compatible)', where: 'Microsoft Foundry Local (Windows and Mac), LM Studio and similar. The frame stays on this computer when the server is local.' },
   { id: 'gemini', n: 'Google Gemini (your key)', where: 'Free tier with your own key from Google AI Studio. The frame is sent to Google, and free-tier requests may be used to improve Google products.' },
@@ -20,7 +21,7 @@ const VISION = /llava|gemma3|gemma4|qwen2\.5vl|qwen3-vl|qwen3\.5|qwen3\.6|moondr
 export const TWEAKS = { exp: [-1.5, 1.5], con: [0.7, 1.4], sat: [0.3, 1.6], vib: [-0.6, 0.6], temp: [-0.6, 0.6], tint: [-0.5, 0.5], hi: [-0.6, 0.6], sh: [-0.6, 0.6],
   bk: [-0.5, 0.5], wh: [-0.5, 0.5], lutMix: [0, 1], grainK: [0, 1.8], halK: [0, 1.8], diffK: [0, 1.8], vigK: [0, 1.8], skinGuard: [0, 1] };
 
-const SYSTEM = `You are the colourist's assistant inside Colored Lens, a colour panel in a video editor.
+const SYSTEM_FULL = `You are the colourist's assistant inside Colored Lens, a colour panel in a video editor.
 You see one frame and measurements of it, what the editor said the shot is for, and where it sits on the timeline.
 Your job: say plainly what you see, read what the colour is doing for this moment, ask at most two short questions when the purpose is unclear, and pick 2 to 4 looks from the RECIPES list that fit what the editor wants.
 Rules:
@@ -28,8 +29,28 @@ Rules:
 - Faces: if there are people, protect their skin (skinGuard 0.6 to 0.9) unless the editor wants a stylised look on purpose.
 - Be specific to this frame (what is lit, where the colour is, what the faces need). No film-school boilerplate.
 - If the editor's answers look wrong for the picture, suggest better ones in "answers"; the editor decides.
-- Reply with JSON only, in this shape:
+<<JSON>>- Reply with JSON only, in this shape:
 {"sees":"one or two sentences","reading":"what the colour is doing for this moment","reply":"a short direct answer to the editor's message, if any","questions":["..."],"answers":{"genre":[],"feeling":[],"role":[]},"picks":[{"recipe":"id","why":"one sentence tied to this frame","tweaks":{"key":0}}]}`;
+
+const SYSTEM = SYSTEM_FULL.replace('<<JSON>>', ''), SYSTEM_PLAIN = SYSTEM_FULL.slice(0, SYSTEM_FULL.indexOf('<<JSON>>')); // Apple's model fills a fixed structure instead
+
+/** Why Apple Intelligence is not available, in words an editor can act on. */
+export function appleReason(r) {
+  const s = String(r || '');
+  if (/helper/i.test(s)) return 'The Colored Lens helper is not running. Install the latest Colored Lens Studio (the installer adds it), or log out of your Mac and back in.';
+  if (/NotEnabled/i.test(s)) return 'Apple Intelligence is switched off. Open System Settings › Apple Intelligence & Siri and turn it on.';
+  if (/NotEligible/i.test(s)) return 'This Mac cannot run Apple Intelligence (it needs Apple silicon).';
+  if (/NotReady/i.test(s)) return 'Apple Intelligence is still downloading its model. Leave the Mac on Wi-Fi and power for a while, then try again.';
+  if (/needsNewerMacOS/i.test(s)) return 'Apple Intelligence in Colored Lens needs a newer macOS. Update macOS in System Settings › General › Software Update.';
+  if (/notInThisBuild/i.test(s)) return 'This Mac (or this build of the helper) has no Apple Intelligence. Use Ollama or a Gemini key instead.';
+  return 'Apple Intelligence is not available on this Mac right now' + (s ? ` (${s}).` : '.');
+}
+/** Asks the helper whether Apple Intelligence is ready. bridge(req, ms) is supplied by the host; absent off the Mac. */
+export async function detectApple(bridge) {
+  if (!bridge) return { ok: false, reason: 'notInThisBuild' };
+  try { const r = await bridge({ type: 'status' }, 4000), a = r.apple || {}; return { ok: !!a.available, image: !!a.image, reason: a.reason || '', helper: r.helper, variant: r.variant }; }
+  catch { return { ok: false, reason: 'helper' }; }
+}
 
 /** Everything the model needs, as text (the frame goes with it as an image). */
 export function buildPrompt({ reading, skin, intent, ctx, neigh, message, summary }) {
@@ -82,8 +103,15 @@ async function postJSON(post, url, headers, body, ms = 120000) {
 const trim = u => String(u || '').replace(/\/+$/, '');
 
 /** One request to the chosen provider. history = [{role:'user'|'assistant', text}] from earlier turns. */
-export async function ask(cfg, { prompt, imageB64, history = [] }, post) {
+export async function ask(cfg, { prompt, imageB64, history = [] }, post, bridge) {
   const hist = history.slice(-6);
+  if (cfg.provider === 'apple') {
+    if (!bridge) throw new Error(appleReason('notInThisBuild'));
+    const past = hist.length ? '\nEARLIER IN THIS CONVERSATION: ' + hist.map(h => `${h.role === 'user' ? 'Editor' : 'You'}: ${h.text.slice(0, 300)}`).join(' | ') : '';
+    let r; try { r = await bridge({ type: 'apple', system: SYSTEM_PLAIN, prompt: prompt + past, imageB64 }, 180000); } catch { throw new Error(appleReason('helper')); }
+    if (r.error) throw new Error(appleReason(r.error));
+    return r.text || '';
+  }
   if (cfg.provider === 'ollama') {
     const msgs = [{ role: 'system', content: SYSTEM }, ...hist.map(h => ({ role: h.role, content: h.text })), { role: 'user', content: prompt, images: [imageB64] }];
     const j = await postJSON(post, trim(cfg.ollamaUrl) + '/api/chat', {}, { model: cfg.ollamaModel, messages: msgs, format: 'json', stream: false, options: { temperature: 0.4 } });
@@ -122,8 +150,9 @@ export async function detectOpenAI(url, key, get) {
 }
 
 /** Resolves "Automatic" to a concrete provider for this computer, or null when nothing is available. */
-export async function resolveProvider(cfg, get) {
+export async function resolveProvider(cfg, get, bridge) {
   if (cfg.provider !== 'auto') return cfg.provider === 'off' ? null : cfg;
+  if (bridge && (await detectApple(bridge)).ok) return { ...cfg, provider: 'apple' };
   const o = await detectOllama(cfg.ollamaUrl || DEFAULTS.ollamaUrl, get);
   if (o.ok && o.vision.length) return { ...cfg, provider: 'ollama', ollamaModel: cfg.ollamaModel && o.models.includes(cfg.ollamaModel) ? cfg.ollamaModel : o.vision[0] };
   if (cfg.geminiKey) return { ...cfg, provider: 'gemini' };
