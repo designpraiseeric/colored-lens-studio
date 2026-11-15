@@ -73,7 +73,8 @@ async function allLayers(seq, t = null, depth = 0) {
         if (nested && t != null && depth < 2) try {
           const ns = await clip.getSequence(), local = t - s0 + (await it.getInPoint()).seconds, lay = await allLayers(ns, local, depth + 1);
           empty = !lay.some(l => l.kind !== 'adjustment' && !l.empty); const sub = subjectOf(lay);
-          if (sub) inner = { name: sub.name, track: sub.track, kind: sub.kind };
+          if (sub) { const off = s0 - (await it.getInPoint()).seconds; // nested time -> this sequence's time
+            inner = { name: sub.name, track: sub.track, kind: sub.kind, start: Math.max(s0, sub.start + off), end: Math.min(e0, sub.end + off) }; }
         } catch (e) { console.warn('nested', e); }
       } catch {}
       let selected = false; try { selected = await it.getIsSelected(); } catch {}
@@ -156,18 +157,19 @@ const host = {
     const plain = l => l && (({ item, ...rest }) => rest)(l);
     const all = await allLayers(seq), scenes = await scenesOf(seq), scene = scenes.find(sc => t >= sc.start && t < sc.end) || null;
     const footage = l => l.kind === 'video' || l.kind === 'nested';
-    // the shots either side of this one on its track (where the cut is)
+    // the shots either side: whatever is on screen just before this shot cuts in and just after it cuts out
+    // (for a nest, the cut of the clip showing inside it), on any track
     let before = null, after = null;
-    if (subject) { const same = all.filter(l => l.track === subject.track && footage(l)).sort((a, b) => a.start - b.start), i = same.findIndex(l => l.start === subject.start);
-      before = i > 0 ? same[i - 1] : null; after = i >= 0 && i < same.length - 1 ? same[i + 1] : null; }
-    // a scene's clips: footage overlapping it, and nested sequences only when they sit inside it (a wrapper nest
-    // that runs the length of the timeline belongs to every scene, so it is not this scene's to recolour)
+    if (subject) {
+      const a = subject.inner && subject.inner.start != null ? subject.inner.start : subject.start, b = subject.inner && subject.inner.end != null ? subject.inner.end : subject.end, endSeq = (await seq.getEndTime()).seconds;
+      const at = async x => { const sub = subjectOf(await layersAt(seq, x)); return sub ? { name: sub.inner ? sub.inner.name : sub.name, track: sub.inner ? sub.inner.track : sub.track, seconds: x } : null; };
+      if (a > 0.3) before = await at(a - 0.25); if (b < endSeq - 0.3) after = await at(b + 0.25);
+    }
     const inScene = l => scene && l.start < scene.end && l.end > scene.start && (l.kind !== 'nested' || (l.start >= scene.start - 0.05 && l.end <= scene.end + 0.05));
     const counts = { clip: subject ? 1 : 0, source: subject && subject.path ? all.filter(l => l.path === subject.path).length : 0,
       scene: scene ? all.filter(l => footage(l) && inScene(l)).length : 0, adjust: layers.filter(l => l.kind === 'adjustment').length };
-    const mid = l => l && { name: l.name, track: l.track, seconds: (l.start + l.end) / 2 };
     return { sequenceId: String(seq.guid || seq.name), sequenceName: seq.name, seconds: t, layers: layers.map(plain), subject: plain(subject),
-      above: subject ? layers.filter(l => l.track > subject.track && !l.empty).map(plain) : [], emptyAbove: subject ? layers.filter(l => l.track > subject.track && l.empty).map(plain) : [], scene, scenes: scenes.length, before: mid(before), after: mid(after), counts };
+      above: subject ? layers.filter(l => l.track > subject.track && !l.empty).map(plain) : [], emptyAbove: subject ? layers.filter(l => l.track > subject.track && l.empty).map(plain) : [], scene, scenes: scenes.length, before, after, counts };
   },
 
   async addMarker({ seconds, name, note }) {

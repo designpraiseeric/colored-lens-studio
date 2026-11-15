@@ -174,14 +174,20 @@ export const pictureOf = stats => ({ b: stats.meanB, C: stats.meanC, L: stats.p5
  */
 export function continuity(fn, reading, neighbours) {
   if (!reading || !neighbours || !neighbours.length) return '';
-  const d = effectDeltas(fn, reading), cur = pictureOf(reading.stats), n = neighbours.length;
+  const cur = pictureOf(reading.stats), n = neighbours.length;
   const ref = { b: neighbours.reduce((a, x) => a + x.pic.b, 0) / n, C: neighbours.reduce((a, x) => a + x.pic.C, 0) / n, L: neighbours.reduce((a, x) => a + x.pic.L, 0) / n };
-  const pred = { b: cur.b + d.db, C: cur.C * d.cr, L: cur.L + d.dL }, parts = [];
-  if (pred.b - ref.b > 0.012) parts.push('warmer'); else if (pred.b - ref.b < -0.012) parts.push('cooler');
-  if (pred.C / Math.max(ref.C, 1e-4) > 1.3) parts.push('more colourful'); else if (pred.C / Math.max(ref.C, 1e-4) < 0.75) parts.push('more muted');
-  if (pred.L - ref.L > 0.07) parts.push('brighter'); else if (pred.L - ref.L < -0.07) parts.push('darker');
-  const who = n === 2 ? 'the shots either side' : `the shot ${neighbours[0].side}`;
-  return parts.length ? `${fn ? 'With this look it lands' : 'Right now it is'} ${joinAnd(parts)} than ${who}${fn ? '; fine for a deliberate change, otherwise apply it to the scene.' : '.'}` : `${fn ? 'Sits in line with' : 'Already sits in line with'} ${who}.`;
+  const diffs = p => { const out = [];
+    if (p.b - ref.b > 0.012) out.push('warmer'); else if (p.b - ref.b < -0.012) out.push('cooler');
+    if (p.C / Math.max(ref.C, 1e-4) > 1.3) out.push('more colourful'); else if (p.C / Math.max(ref.C, 1e-4) < 0.75) out.push('more muted');
+    if (p.L - ref.L > 0.07) out.push('brighter'); else if (p.L - ref.L < -0.07) out.push('darker');
+    return out; };
+  const now = diffs(cur), who = n === 2 ? 'the shots either side' : `the shot ${neighbours[0].side}`;
+  if (!fn) return now.length ? `Right now it is ${joinAnd(now)} than ${who}.` : `Already sits in line with ${who}.`;
+  const d = effectDeltas(fn, reading), parts = diffs({ b: cur.b + d.db, C: cur.C * d.cr, L: cur.L + d.dL });
+  if (!parts.length) return now.length ? `Brings it in line with ${who}.` : `Keeps it in line with ${who}.`;
+  // the look moves the shot toward its neighbours but not far enough: it "stays"; otherwise it "lands"
+  if (parts.every(x => now.includes(x))) return `Even with this look it stays ${joinAnd(parts)} than ${who}.`;
+  return `With this look it lands ${joinAnd(parts)} than ${who}; fine for a deliberate change, otherwise apply it to the scene.`;
 }
 const joinAnd = a => a.length < 2 ? a.join('') : a.slice(0, -1).join(', ') + ' and ' + a[a.length - 1];
 function hexRgb(h) { const n = parseInt(h.slice(1), 16); return [(n >> 16 & 255) / 255, (n >> 8 & 255) / 255, (n & 255) / 255]; }

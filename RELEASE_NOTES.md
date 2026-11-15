@@ -1,6 +1,11 @@
 # Release notes
 Each `## <version>` block becomes the text of the in-app update banner and the GitHub Release.
 
+## 0.2.8
+Continuity at the cut, found in a real edit.
+- "The shots either side" are now whatever is on screen just before this shot cuts in and just after it cuts out, on any track (for a nested B-roll layer, the cut of the clip inside it), not the neighbouring pieces on the same track.
+- Clearer wording when a look moves a shot toward its neighbours but not all the way ("Even with this look it stays darker than the shots either side").
+
 ## 0.2.7
 The preview stays in view.
 - The before / after preview now sits above the options in Shot and Tweak, so it stays put while you scroll and adjust.
