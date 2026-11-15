@@ -124,18 +124,30 @@ const host = {
   },
   openUrl: url => uxp.shell.openExternal(url, 'Opens in your browser'),
 
-  /** Downloads the installer from GitHub Releases into the temp folder and opens it. */
+  /**
+   * Downloads the installer from GitHub Releases and opens it. The whole file is fetched in one go (UXP's streamed
+   * chunks are not reliably Uint8Arrays, which in 0.1.x could write an empty installer), checked against the
+   * expected size and file type, saved to Downloads (temp folder as a fallback) and read back before opening.
+   */
   async installUpdate(url, filename, onProgress = () => {}) {
+    onProgress(0.05);
     const r = await fetch(url); if (!r.ok) throw new Error('Download failed (' + r.status + ')');
-    const total = +r.headers.get('content-length') || 0, reader = r.body && r.body.getReader ? r.body.getReader() : null;
-    let buf;
-    if (reader) { const parts = []; let got = 0; for (;;) { const { done, value } = await reader.read(); if (done) break; parts.push(value); got += value.length; if (total) onProgress(got / total); }
-      buf = new Uint8Array(got); let o = 0; for (const p of parts) { buf.set(p, o); o += p.length; } }
-    else buf = new Uint8Array(await r.arrayBuffer());
-    const tmp = await lfs.getTemporaryFolder(), f = await tmp.createFile(filename, { overwrite: true });
-    await f.write(buf.buffer, { format: formats.binary });
+    const total = +r.headers.get('content-length') || 0;
+    const buf = new Uint8Array(await r.arrayBuffer()); onProgress(0.9);
+    if (total && buf.length !== total) throw new Error(`The download was incomplete (${buf.length} of ${total} bytes)`);
+    const magic = String.fromCharCode(...buf.subarray(0, 4)), ext = filename.split('.').pop().toLowerCase();
+    const ok = ext === 'pkg' ? magic === 'xar!' : ext === 'exe' ? magic.startsWith('MZ') : ext === 'ccx' ? magic.startsWith('PK') : buf.length > 0;
+    if (!ok || buf.length < 100000) throw new Error('The downloaded file is not a valid installer (' + buf.length + ' bytes)');
+    let folder = null;
+    try { const home = require('os').homedir(); if (home) folder = await lfs.getEntryWithUrl('file:' + home.replace(/\\/g, '/') + '/Downloads'); } catch { folder = null; }
+    if (!folder) folder = await lfs.getTemporaryFolder();
+    const f = await folder.createFile(filename, { overwrite: true });
+    await f.write(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength), { format: formats.binary });
+    try { const back = await f.read({ format: formats.binary }); const n = back.byteLength ?? back.length; if (n !== buf.length) throw new Error(`Saving the installer failed (${n} of ${buf.length} bytes written)`); } catch (e) { if (/Saving/.test(e.message)) throw e; }
+    onProgress(1);
     const res = await uxp.shell.openPath(f.nativePath, 'Opens the Colored Lens Studio installer');
     if (res) throw new Error('Could not open the installer: ' + res + '. It is saved at ' + f.nativePath);
+    return f.nativePath;
   },
 };
 

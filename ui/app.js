@@ -57,7 +57,19 @@ export async function startApp(host, root) {
     const b = $('#banner', root); b.hidden = false;
     b.innerHTML = `<b>Colored Lens ${esc(info.latest)} is available</b> <span class="dim">(you have ${esc(info.current)})</span><div class="small">${esc(info.notes || '').slice(0, 220)}</div>
       <div class="row"><button id="doUpdate" class="primary">Install update</button><button id="seeUpdate">What's new</button><button id="hideUpdate">Later</button></div>`;
-    $('#doUpdate', root).onclick = () => busy('Downloading update', async () => { await up.install(info, p => status(`Downloading update ${pct(p)}`)); b.innerHTML = '<b>The installer is open.</b> Follow it, then restart ' + esc(host.label || host.name) + '.'; });
+    $('#doUpdate', root).onclick = async () => {
+      if (S.busy) return; S.busy = true; status('Downloading update…');
+      try {
+        const where = await up.install(info, p => status(`Downloading update ${pct(p)}`));
+        b.innerHTML = `<b>The installer is open.</b> Follow it, then restart ${esc(host.label || host.name)}.${where ? `<div class="small dim">Saved at ${esc(where)}</div>` : ''}`;
+      } catch (e) {
+        console.error(e);
+        b.innerHTML = `<b>The update could not be installed from here.</b><div class="small">${esc(e.message || String(e))}</div>
+          <div class="row"><button id="manualUpdate" class="primary">Download from GitHub</button><button id="hideUpdate2">Later</button></div>
+          <div class="small dim">Open the downloaded installer, then restart ${esc(host.label || host.name)}.</div>`;
+        $('#manualUpdate', root).onclick = () => host.openUrl(info.page); $('#hideUpdate2', root).onclick = () => (b.hidden = true);
+      } finally { S.busy = false; status(); }
+    };
     $('#seeUpdate', root).onclick = () => host.openUrl(info.page);
     $('#hideUpdate', root).onclick = () => (b.hidden = true);
   });

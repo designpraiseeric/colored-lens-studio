@@ -36,7 +36,8 @@ test('Premiere panel: grab, mark, read markers, apply the effect, update', { ski
       if (rel === 'version.json') { const v = JSON.parse(fs.readFileSync(f, 'utf8')); v.version = '9.9.9'; return route.fulfill({ body: JSON.stringify(v), contentType: 'application/json' }); }
       return fs.existsSync(f) ? route.fulfill({ path: f }) : route.fulfill({ status: 404, body: '' });
     });
-    await page.route('https://github.com/**', route => route.fulfill({ body: Buffer.from('fake installer') }));
+    let badDownload = false; // a real installer starts with its file signature; the panel must refuse anything else
+    await page.route('https://github.com/**', route => route.fulfill({ body: badDownload ? Buffer.from('<html>not an installer</html>') : Buffer.concat([Buffer.from('xar!'), Buffer.alloc(300000, 7)]) }));
     const html = fs.readFileSync(path.join(ROOT, 'dist/premiere/index.html'), 'utf8').replace('<script src="app.js">', '<script src="mock.js"></script><script src="app.js">');
     await page.route(`http://127.0.0.1:${port}/test.html`, r => r.fulfill({ body: html, contentType: 'text/html' }));
     await page.route(`http://127.0.0.1:${port}/mock.js`, r => r.fulfill({ path: path.join(ROOT, 'test/mocks/premiere_mock.js') }));
@@ -63,6 +64,9 @@ test('Premiere panel: grab, mark, read markers, apply the effect, update', { ski
     await page.waitForSelector('#doUpdate'); await page.click('#doUpdate'); await page.waitForTimeout(800);
     const pp2 = await page.evaluate(() => window.__pp.calls);
     assert.ok(pp2.some(c => /^openPath \/tmp\/tmp\/ColoredLensStudio-.*-mac\.pkg$/.test(c)), 'installer downloaded and opened: ' + pp2.join(', '));
+    // a broken download is refused, and the banner offers the GitHub download instead
+    badDownload = true; await page.reload(); await page.waitForSelector('#doUpdate'); await page.click('#doUpdate'); await page.waitForSelector('#manualUpdate', { timeout: 10000 });
+    assert.match(await page.innerText('#banner'), /not a valid installer/);
     assert.deepEqual(errors, []);
   } finally { await browser.close(); server.close(); }
 });

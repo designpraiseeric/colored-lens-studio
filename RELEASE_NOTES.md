@@ -1,6 +1,12 @@
 # Release notes
 Each `## <version>` block becomes the text of the in-app update banner and the GitHub Release.
 
+## 0.2.1
+Fixes "Install update" in Premiere Pro, which could hand macOS Installer an empty file ("Couldn't open ColoredLensStudio-….pkg").
+- The installer is now downloaded whole, checked (size and file type) and saved to your Downloads folder before it opens.
+- If anything goes wrong, the banner says what happened and offers the download from GitHub instead.
+- Includes everything in 0.2.0: directions you can preview, tweak, apply and save as presets, and the fixed Lukuluku Look effect.
+
 ## 0.2.0
 Colored Lens now asks what a shot is for and suggests looks you can preview, tweak, apply and save.
 - Shot: read the frame, say what the project is, how the scene should feel and what the shot is, and get directions you can preview on your own frame with a before / after wipe. Each one says what it will do to this frame and to faces.
