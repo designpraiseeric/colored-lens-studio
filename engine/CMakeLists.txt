@@ -76,6 +76,7 @@ if(AE_SDK AND EXISTS "${AE_SDK}/Examples/Headers/AE_Effect.h")
       MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/adobe/Info.plist.in")
     target_link_libraries(LukulukuLook_ae "-framework CoreFoundation")
     add_custom_command(TARGET LukulukuLook_ae POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:LukulukuLook_ae>/Contents/Resources"
       COMMAND xcrun Rez -o "$<TARGET_BUNDLE_DIR:LukulukuLook_ae>/Contents/Resources/LukulukuLook.rsrc" -define __MACH__ -arch arm64 -arch x86_64
               -i "${AE_SDK}/Examples/Headers" -i "${AE_SDK}/Examples/Resources" -i "${CMAKE_CURRENT_SOURCE_DIR}/adobe" -i "${CMAKE_BINARY_DIR}"
               -useDF "${CMAKE_CURRENT_SOURCE_DIR}/adobe/LukulukuLookPiPL.r"
@@ -83,7 +84,7 @@ if(AE_SDK AND EXISTS "${AE_SDK}/Examples/Headers/AE_Effect.h")
   elseif(WIN32)
     # PiPLtool turns the .r into an .rc that the resource compiler links in
     add_custom_command(OUTPUT "${CMAKE_BINARY_DIR}/LukulukuLookPiPL.rc"
-      COMMAND cl /nologo /I "${AE_SDK}/Examples/Headers" /I "${CMAKE_BINARY_DIR}" /D AE_OS_WIN /D AE_PROC_INTELx64 /EP "${CMAKE_CURRENT_SOURCE_DIR}/adobe/LukulukuLookPiPL.r" > "${CMAKE_BINARY_DIR}/LukulukuLookPiPL.rr"
+      COMMAND cl /nologo /I "${AE_SDK}/Examples/Headers" /I "${CMAKE_BINARY_DIR}" /EP "${CMAKE_CURRENT_SOURCE_DIR}/adobe/LukulukuLookPiPL.r" > "${CMAKE_BINARY_DIR}/LukulukuLookPiPL.rr"
       COMMAND "${AE_SDK}/Examples/Resources/PiPLtool.exe" "${CMAKE_BINARY_DIR}/LukulukuLookPiPL.rr" "${CMAKE_BINARY_DIR}/LukulukuLookPiPL.rrc"
       COMMAND cl /nologo /D MSWindows /EP "${CMAKE_BINARY_DIR}/LukulukuLookPiPL.rrc" > "${CMAKE_BINARY_DIR}/LukulukuLookPiPL.rc"
       DEPENDS adobe/LukulukuLookPiPL.r "${CMAKE_BINARY_DIR}/lk_pipl_values.h")

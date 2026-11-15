@@ -1,6 +1,9 @@
 # Release notes
 Each `## <version>` block becomes the text of the in-app update banner and the GitHub Release.
 
+## 0.1.2
+The Lukuluku Look effect for Premiere Pro now installs on Mac too (0.1.1 brought it to Windows only).
+
 ## 0.1.1
 The Lukuluku Look effect now comes to Premiere Pro.
 - Premiere Pro: the Colored Lens panel's Apply adds the Lukuluku Look effect to the selected clips and sets every setting, including Skin Guard and Match to Reference. Grain, halation and glow now work in Premiere.
