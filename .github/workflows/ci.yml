@@ -20,6 +20,6 @@ jobs:
         run: cmake -S engine -B engine/build && cmake --build engine/build -j4
       - run: node tools/build_hosts.mjs
       - name: Unit, parity and host tests
-        run: node --test test/
+        run: node --test test/*.test.mjs
       - name: OpenFX plugin in the OpenFX reference host
         run: node tools/make_test_ppm.mjs engine/build/test_720x576.ppm && engine/tests/ofx_host_test.sh "$PWD/engine/build/test_720x576.ppm"

@@ -7,7 +7,7 @@
   "scripts": {
     "content": "node tools/build_content.mjs",
     "build": "node tools/build_hosts.mjs",
-    "test": "node --test test/",
+    "test": "node --test test/*.test.mjs",
     "package": "node tools/package.mjs"
   },
   "devDependencies": {

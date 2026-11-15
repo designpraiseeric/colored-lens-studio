@@ -7,6 +7,6 @@ set -euo pipefail
 cd "$(dirname "$0")/../engine"
 mkdir -p third_party
 if [ ! -f third_party/openfx/include/ofxImageEffect.h ]; then
-  git clone --depth 1 --branch OFX_Release_1_4_TAG https://github.com/AcademySoftwareFoundation/openfx.git third_party/openfx
+  git -c advice.detachedHead=false clone -q --depth 1 --branch OFX_Release_1_4_TAG https://github.com/AcademySoftwareFoundation/openfx.git third_party/openfx
 fi
 echo "OpenFX ready: engine/third_party/openfx"

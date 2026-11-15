@@ -43,7 +43,7 @@ node tools/build_content.mjs --enc ../chroma-encyclopedia --luk ../lukuluku
 node tools/gen_engine.mjs && ./tools/fetch_sdks.sh
 cmake -S engine -B engine/build && cmake --build engine/build -j      # add -DAE_SDK=/path/to/AfterEffectsSDK for Premiere
 node tools/build_hosts.mjs && node tools/package.mjs
-node --test test/
+node --test test/*.test.mjs
 ```
 Load `dist/premiere` in Adobe's UXP Developer Tool to develop the Premiere panel; copy `dist/resolve/com.designpraise.coloredlens` into Resolve's *Workflow Integration Plugins* folder for Resolve.
 
