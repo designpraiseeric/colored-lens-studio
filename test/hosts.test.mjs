@@ -58,6 +58,11 @@ test('Premiere panel: grab, mark, read markers, apply the effect, update', { ski
     await page.locator('.dir .dtext b').first().click(); await page.waitForSelector('[data-dapply]');
     await page.waitForFunction(() => document.querySelector('#stage') && document.querySelector('#stage').src.startsWith('data:image/png'), null, { timeout: 15000 });
     await page.click('[data-dsave]'); await page.waitForTimeout(400);
+    // pop the preview out into its own panel, then bring it back
+    await page.click('#dockPop'); await page.waitForSelector('#pvRoot #previewPanel #stage');
+    assert.match(await page.innerText('#dock'), /in its own panel/);
+    await page.click('#dockBack'); await page.waitForSelector('#dock #stage');
+    assert.match(await page.innerText('#pvRoot'), /back in the Colored Lens panel/);
     await page.click('[data-tab=presets]'); await page.waitForSelector('.preset');
     await page.click('[data-tab=scene]'); await page.fill('#tags', 'Ada'); await page.click('#add'); await page.waitForSelector('.shot');
     await page.click('#clear'); await page.click('#load'); await page.waitForSelector('.shot');

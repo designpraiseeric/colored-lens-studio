@@ -128,3 +128,6 @@ div.chip.off { color: #6b6b72; border-style: dashed; background: transparent; cu
 .segs div.seg { margin-right: 0; border-radius: 0; }
 .segs div.seg:first-child { border-radius: 6px 0 0 6px; } .segs div.seg:last-child { border-radius: 0 6px 6px 0; margin-right: 0; }
 .dock .sl { margin: 2px 0; }
+/* 0.2.9: the preview in its own panel */
+.pv { height: 100vh; box-sizing: border-box; padding: 8px 10px; background: var(--bg); color: var(--ink); overflow: hidden; }
+.pvnote { padding: 16px; }

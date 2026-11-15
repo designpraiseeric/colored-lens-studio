@@ -1,6 +1,11 @@
 # Release notes
 Each `## <version>` block becomes the text of the in-app update banner and the GitHub Release.
 
+## 0.2.9
+The preview can have a panel of its own.
+- "Pop out" opens the preview as its own Premiere panel (Colored Lens Preview): dock it beside the Program Monitor or anywhere you like, and the Colored Lens panel is all options. It is also under Window › UXP Plugins.
+- "Bring it back" returns it to the Colored Lens panel.
+
 ## 0.2.8
 Continuity at the cut, found in a real edit.
 - "The shots either side" are now whatever is on screen just before this shot cuts in and just after it cuts out, on any track (for a nested B-roll layer, the cut of the clip inside it), not the neighbouring pieces on the same track.

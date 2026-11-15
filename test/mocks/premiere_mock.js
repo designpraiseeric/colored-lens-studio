@@ -46,7 +46,11 @@
       VideoFilterFactory: { getMatchNames: async () => ['AE.ADBE Motion', 'AE.DesignPraise Lukuluku Look'], createComponent: async n => ({ n }) } },
     uxp: { storage: { formats: { binary: 'binary', utf8: 'utf8' }, localFileSystem: { getTemporaryFolder: async () => folder('tmp'), getDataFolder: async () => folder('data'),
       getPluginFolder: async () => rfolder(''), getFileForSaving: async n => ({ nativePath: '/Users/x/' + n, write: async () => {} }) } },
-      shell: { openExternal: async u => log.calls.push('open ' + u), openPath: async p => { log.calls.push('openPath ' + p); return ''; } } },
+      shell: { openExternal: async u => log.calls.push('open ' + u), openPath: async p => { log.calls.push('openPath ' + p); return ''; } },
+      // two panels: setup() records the hooks; showPanel('preview') gives the preview panel its own root node
+      entrypoints: { setup(o) { log.hooks = o; } },
+      pluginManager: { plugins: [{ id: 'com.designpraise.coloredlens', async showPanel(id) { log.calls.push('showPanel ' + id);
+        const node = document.createElement('div'); node.id = 'pvRoot'; node.style.height = '400px'; document.body.appendChild(node); log.hooks.panels[id].show(node); } }] } },
     os: { platform: () => 'darwin' },
   };
   window.require = n => { if (!modules[n]) throw new Error('mock has no module ' + n); return modules[n]; };

@@ -267,4 +267,31 @@ const host = {
   },
 };
 
-startApp(host, document.getElementById('root')).catch(e => { document.getElementById('root').textContent = 'Colored Lens could not start: ' + e.message; });
+// ---- two panels: the main Colored Lens panel, and an optional Preview panel the editor can dock anywhere.
+// Both live in this one document and JavaScript context (Adobe's multi-panel pattern): the preview's container
+// is appended to the Preview panel's root when that panel shows.
+const previewEl = document.createElement('div'); previewEl.id = 'previewPanel'; previewEl.className = 'pv';
+let app = null, previewShown = false;
+host.openPreviewPanel = async () => {
+  const me = [...uxp.pluginManager.plugins].find(p => p.id === config.ids.premierePlugin);
+  if (!me) throw new Error('Could not find the Colored Lens plugin to open its preview panel');
+  await me.showPanel('preview');
+};
+try {
+  uxp.entrypoints.setup({
+    panels: {
+      coloredlens: { show() { /* the main panel's content is already in the document */ } },
+      preview: {
+        show(rootNode) {
+          // Premiere may fire hooks for every panel: only take a root that is not the main panel's
+          if (!rootNode || (rootNode.contains && rootNode.contains(document.getElementById('root')))) return;
+          if (previewEl.parentNode !== rootNode) rootNode.appendChild(previewEl);
+          previewShown = true; if (app && app.attachPreview) app.attachPreview(previewEl);
+        },
+      },
+    },
+  });
+} catch (e) { console.warn('panel setup', e); }
+
+startApp(host, document.getElementById('root')).then(a => { app = a; if (previewShown && a.attachPreview) a.attachPreview(previewEl); })
+  .catch(e => { document.getElementById('root').textContent = 'Colored Lens could not start: ' + e.message; });

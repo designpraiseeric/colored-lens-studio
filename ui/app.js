@@ -30,8 +30,8 @@ export async function startApp(host, root) {
   const S = { tab: 'shot', back: 'shot', frame: null, meta: null, reading: null, skin: null, sample: null, shots: [],
     intent: normIntent(settings.get('intent', {})), seqId: '', ctx: null, lead: 0, neigh: [], scope: settings.get('scope', 'clip'), input: settings.get('input', 'rec709'),
     directions: [], chosen: -1, look: NEUTRAL_LOOK(), extra: { ...XDEF }, matte: false, recipe: { name: '', presetId: null }, view: 'split', wipe: 0.5,
-    dockSize: settings.get('dockSize', 'M'), dockHidden: false, refFrameStats: null, refName: '', adapt: settings.get('adapt', true), encQ: '', shownCode: '', confirmDel: '', busy: false, showSkin: false, showRefs: false };
-  let PV = null;
+    dockSize: settings.get('dockSize', 'M'), dockHidden: false, detached: false, refFrameStats: null, refName: '', adapt: settings.get('adapt', true), encQ: '', shownCode: '', confirmDel: '', busy: false, showSkin: false, showRefs: false };
+  let PV = null, pvEl = null; // pvEl: the separate Preview panel's container, once it has been opened
   const up = new Updater(host, config.pagesBase);
   root.innerHTML = `
     <div class="cl">
@@ -136,28 +136,39 @@ export async function startApp(host, root) {
     const shot = S.tab === 'shot', d = shot && S.chosen >= 0 ? S.directions[S.chosen] : null;
     const seg = (id, n, on, attr) => `<div role="button" tabindex="0" class="seg ${on ? 'on' : ''}" ${attr}="${id}">${n}</div>`;
     if (S.dockHidden) return `<div class="row tight"><span class="small dim grow">Preview hidden</span><button id="dockShow" class="small">Show preview</button></div>`;
-    const a = S.frame.w / S.frame.h, avail = Math.max(160, (root.clientWidth || 360) - 26);
-    let h = Math.min(DOCK_H[S.dockSize] || 220, Math.round((window.innerHeight || 800) * 0.42)), w = Math.round(h * a); if (w > avail) { w = avail; h = Math.round(w / a); }
+    const a = S.frame.w / S.frame.h, box = S.detached && pvEl ? pvEl : root, avail = Math.max(160, (box.clientWidth || 360) - 26);
+    let h = S.detached && pvEl ? Math.max(120, (pvEl.clientHeight || 400) - (shot && S.chosen >= 0 ? 190 : 90)) : Math.min(DOCK_H[S.dockSize] || 220, Math.round((window.innerHeight || 800) * 0.42));
+    let w = Math.round(h * a); if (w > avail) { w = avail; h = Math.round(w / a); }
     return `<img id="stage" class="frame ${shot ? 'click' : ''}" src="" style="width:${w}px;height:${h}px;margin:0 auto 4px;display:block;">
       <div class="row tight"><div class="segs">${['before:Before', 'split:Split', 'after:After'].map(v => { const [id, n] = v.split(':'); return seg(id, n, S.view === id, 'data-view'); }).join('')}</div>
-        <div class="grow"></div><div class="segs" title="Preview size">${['S', 'M', 'L'].map(z => seg(z, z, S.dockSize === z, 'data-dsize')).join('')}</div><button id="dockHide" class="small" title="Hide the preview">✕</button></div>
+        <div class="grow"></div>${S.detached ? '' : `<div class="segs" title="Preview size">${['S', 'M', 'L'].map(z => seg(z, z, S.dockSize === z, 'data-dsize')).join('')}</div>`}
+        ${host.openPreviewPanel ? `<button id="dockPop" class="small" title="${S.detached ? 'Put the preview back in the Colored Lens panel' : 'Open the preview as its own panel, to dock anywhere'}">${S.detached ? 'Back to panel' : 'Pop out'}</button>` : ''}${S.detached ? '' : '<button id="dockHide" class="small" title="Hide the preview">✕</button>'}</div>
       ${S.view === 'split' ? sliderHTML({ id: 'wipe', label: 'Wipe', min: 0, max: 1, step: 0.01, value: S.wipe, def: 0.5 }) : ''}
       ${d ? `<div class="small">Previewing <b>${esc(d.name)}</b> <span class="dim">(colour, grain and vignette; halation and glow show on the clip)</span></div>
         ${scopeRow()}<div class="row wrap"><button class="primary" data-dapply="${S.chosen}">${S.scope === 'clip' ? 'Apply to selected clips' : 'Apply'}</button><button data-dtweak="${S.chosen}">Tweak</button><button data-dsave="${S.chosen}">Save as preset</button><button id="dclear">Back to the original</button></div>`
         : `<div class="small dim">${shot ? 'Click a face in the picture to check its skin. Pick a direction below to preview it here.' : 'Live preview: colour, grain and vignette. Halation and diffusion glow show on the clip.'}</div>`}`;
   }
+  const dockEl = () => (S.detached && pvEl ? pvEl : $('#dock', root));
   function renderDock() {
-    const dock = $('#dock', root), show = !!S.frame && (S.tab === 'shot' || S.tab === 'tweak');
-    dock.hidden = !show; if (!show) { dock.innerHTML = ''; return; }
+    const main = $('#dock', root), show = !!S.frame && (S.tab === 'shot' || S.tab === 'tweak' || S.detached);
+    if (S.detached && pvEl) { // the preview lives in its own panel; the main panel keeps a one-line note
+      main.hidden = false; main.innerHTML = `<div class="row tight"><span class="small dim grow">The preview is in its own panel.</span><button id="dockBack" class="small">Bring it back</button></div>`;
+      $('#dockBack', main).onclick = () => { S.detached = false; pvEl.innerHTML = '<p class="small dim pvnote">The preview is back in the Colored Lens panel. Pop it out again from there; you can close this panel.</p>'; render(); };
+      if (!S.frame) { pvEl.innerHTML = '<p class="small dim pvnote">Read a frame in the Colored Lens panel; its preview appears here.</p>'; return; }
+    } else { main.hidden = !show; if (!show) { main.innerHTML = ''; return; } }
+    const dock = dockEl();
     dock.innerHTML = dockHTML();
     if ($('#dockShow', dock)) { $('#dockShow', dock).onclick = () => { S.dockHidden = false; renderDock(); }; return; }
-    $('#dockHide', dock).onclick = () => { S.dockHidden = true; renderDock(); };
+    if ($('#dockHide', dock)) $('#dockHide', dock).onclick = () => { S.dockHidden = true; renderDock(); };
+    if ($('#dockPop', dock)) $('#dockPop', dock).onclick = () => S.detached
+      ? $('#dockBack', root) && $('#dockBack', root).onclick()
+      : busy('Opening the preview panel', async () => { await host.openPreviewPanel(); if (pvEl) { S.detached = true; render(); } else toast('Find it under Window › UXP Plugins › Colored Lens Preview'); });
     dock.querySelectorAll('[data-view]').forEach(b => b.onclick = () => { S.view = b.dataset.view; renderDock(); });
     dock.querySelectorAll('[data-dsize]').forEach(b => b.onclick = () => { S.dockSize = b.dataset.dsize; settings.set('dockSize', S.dockSize); renderDock(); });
     wireSliders(dock, (id, v) => { if (id === 'wipe') { S.wipe = v; composite(); } });
     wireActions(dock);
     const img = $('#stage', dock);
-    if (S.tab === 'shot') img.onclick = e => { const r = img.getBoundingClientRect(), x = (e.clientX - r.left) / r.width, y = (e.clientY - r.top) / r.height;
+    if (S.tab === 'shot' || S.detached) img.onclick = e => { const r = img.getBoundingClientRect(), x = (e.clientX - r.left) / r.width, y = (e.clientY - r.top) / r.height;
       busy('Checking skin', async () => { S.sample = [x, y]; runSkin(); await suggest(); S.showSkin = true; render(); toast(S.skin.found ? `Skin sampled: about ${S.skin.ire} IRE` : 'No skin there; try the middle of a cheek'); }); };
     stageCache.key = stageCache.key || ''; drawStage(true);
   }
@@ -166,7 +177,7 @@ export async function startApp(host, root) {
     if (rebuilt && stageCache.before) composite();
     clearTimeout(stageT); const seq = ++stageSeq;
     stageT = setTimeout(async () => {
-      if (!S.frame || !$('#stage', root)) return;
+      if (!S.frame || !$('#stage', dockEl())) return;
       const showLook = !(S.tab === 'shot' && S.chosen < 0);
       const key = JSON.stringify([showLook, S.look, S.extra, S.input]);
       if (stageCache.key !== key) {
@@ -177,7 +188,7 @@ export async function startApp(host, root) {
     }, 60);
   }
   function composite() {
-    const img = $('#stage', root); if (!img || !stageCache.before) return;
+    const img = $('#stage', dockEl()); if (!img || !stageCache.before) return;
     const same = stageCache.after === stageCache.before;
     img.src = pngDataUrl(same ? stageCache.before : wipe(stageCache.before, stageCache.after, S.wipe, S.view));
   }
@@ -473,6 +484,8 @@ export async function startApp(host, root) {
     const q$ = $('#q', body); q$.oninput = () => { S.encQ = q$.value; clearTimeout(renderEnc.t); renderEnc.t = setTimeout(() => { renderEnc(body); const n = $('#q', body); n.focus(); try { n.setSelectionRange(S.encQ.length, S.encQ.length); } catch {} }, 250); };
   }
 
+  /** Called by the host when the separate Preview panel shows: the preview moves there. */
+  function attachPreview(el) { pvEl = el; S.detached = true; render(); }
   render();
-  return { state: S, updater: up, render };
+  return { state: S, updater: up, render, attachPreview };
 }
