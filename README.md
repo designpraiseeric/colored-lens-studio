@@ -5,11 +5,13 @@ DaVinci Resolve. By DesignPraise Studio.
 
 ## What you get
 **Colored Lens panel** (Premiere Pro 25.6+, DaVinci Resolve Studio 19+)
-- **Read**: reads the frame under the playhead in the encyclopedia's terms: dominant hues and what they mean, palette structure, Itten's contrasts, narrative devices it could serve, the closest reference frames and auteur signatures, and Lukuluku looks to try.
-- **Skin**: §7 *Skin, Exposure & Equity* as a working check: exposure on the face, density (grey/ashy skin), hue against the skin line, crushed or clipped skin, two complexions in one frame. Click a face to sample it. Fixes feed straight into the look.
-- **Script**: a color script of the whole film from tagged shots (stored as markers, so they travel with the project) or a scan, plus what the sequence says (withholding a color, temporal evolution, location coding…). Saves PNG and CSV.
-- **Look**: any Lukuluku look code or share link, with **Skin Guard** and **Match to Reference**. Applies to the selected clips, exports a `.cube`, or opens in Lukuluku.
-- **Library**: the whole encyclopedia, searchable, offline.
+- **Shot**: reads the frame under the playhead (letterbox bars, deep shadow and blown highlights are left out, so it reads the subject, not the black), asks what the project is, how the scene should feel and what the shot is, then suggests directions: each one a palette structure from the encyclopedia, a colour grade and a Lukuluku configuration, with what it will do to this frame and to faces. Preview any of them on your own frame with a before / after wipe, apply it to the selected clips, tweak it or save it. Click a face to check skin exposure (40–75 IRE), density and hue (§7 *Skin, Exposure & Equity*).
+- **Scene**: a colour script from tagged shots (stored as markers, so they travel with the project) or a scan, checked against the feeling you set. Narrative devices (motifs, omens, leitmotifs) only when the piece tells a story. Saves PNG and CSV.
+- **Tweak**: every setting of the look with a live preview on your frame: colour science, medium, lens, diffusion, strength, grade, **Skin Guard** and **Match to Reference**. Also pastes any Lukuluku look code or share link, exports a `.cube`, or opens in Lukuluku.
+- **Presets**: saved looks with what they were for. Apply to other shots (optionally adapting to each shot's exposure and balance first), open and edit with live preview, share as a code.
+- **Encyclopedia**: the whole encyclopedia, searchable, offline, one tap from any reading or direction.
+
+Everything above is rules running on your machine: free, offline after the first launch, and the same answer every time.
 
 **Lukuluku Look effect** (OpenFX for Resolve free and Studio; Adobe effect for Premiere Pro)
 - Lukuluku's pipeline, ported line for line: 17 colour sciences, 11 film/video media (grain, halation, softness, gate, VHS…), lens character, diffusion filters, aspect mattes, anamorphic streaks, the full grade including colour wheels.

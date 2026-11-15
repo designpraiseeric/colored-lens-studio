@@ -123,14 +123,18 @@ PF_Err Render(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* params[], P
   Fmt fmt = PF_WORLD_IS_DEEP(output) ? Fmt::AE16 : Fmt::AE8;
 #ifdef LK_HAVE_PR_FORMATS
   if (in_data->appl_id == kAppID_Premiere) {
-    AEFX_SuiteScoper<PF_WorldSuite2> ws(in_data, kPFWorldSuite, kPFWorldSuiteVersion2, out_data);
-    PF_PixelFormat pf = PF_PixelFormat_INVALID;
-    ERR(ws->PF_GetPixelFormat(output, &pf));
-    if (pf == (PF_PixelFormat)PrPixelFormat_BGRA_4444_32f) fmt = Fmt::PR32;
-    else if (pf == (PF_PixelFormat)PrPixelFormat_BGRA_4444_8u) fmt = Fmt::PR8;
+    // Premiere: frames are BGRA, and the format is read through the Pixel Format suite (as in Adobe's SDK_Noise
+    // sample). PF_WorldSuite2 is the After Effects path; in Premiere it misreports or fails, which rendered black.
+    PrPixelFormat pf = PrPixelFormat_BGRA_4444_8u;
+    try {
+      AEFX_SuiteScoper<PF_PixelFormatSuite1> pfs(in_data, kPFPixelFormatSuite, kPFPixelFormatSuiteVersion1, out_data);
+      pfs->GetPixelFormat(output, &pf);
+    } catch (...) { pf = PrPixelFormat_BGRA_4444_8u; }
+    if (pf == PrPixelFormat_BGRA_4444_32f) fmt = Fmt::PR32;
+    else if (pf == PrPixelFormat_BGRA_4444_8u) fmt = Fmt::PR8;
+    else return PF_COPY(&params[0]->u.ld, output, NULL, NULL); // a format we did not ask for: pass the frame through untouched
   }
 #endif
-  if (err) return err;
 
   const int W = std::min(input->width, output->width), H = std::min(input->height, output->height);
   if (W <= 0 || H <= 0) return PF_Err_NONE;

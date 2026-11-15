@@ -75,3 +75,28 @@ input, select, textarea { background: var(--p1); color: var(--ink); border: 1px 
 .banner { background: #2b1a1e; border-bottom: 1px solid var(--acc); padding: 9px 12px; }
 .toast { position: fixed; left: 12px; right: 12px; bottom: 12px; background: #000c; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
 a { color: var(--info); }
+/* 0.2: the loop */
+.row.tight { margin: 2px 0; }
+.grow { flex: 1 1 auto; min-width: 0; }
+button.link { background: none; border: none; color: var(--info); padding: 2px 4px; }
+.stage { margin: 4px 0 8px; }
+.stage .frame { margin-bottom: 4px; }
+.stage .sl .lb { width: 40px; }
+button.seg { padding: 3px 9px; margin-right: 0; border-radius: 0; font-size: 11.5px; }
+button.seg:first-child { border-radius: 6px 0 0 6px; } button.seg:nth-child(3) { border-radius: 0 6px 6px 0; margin-right: 8px; }
+button.seg.on, .chip.on { background: var(--ink); color: #111; border-color: var(--ink); font-weight: 600; }
+.q { font-size: 11px; color: var(--dim); margin: 8px 0 0; }
+.k.sect { margin: 14px 0 2px; }
+.dir, .preset { display: flex; flex-direction: row; background: var(--p1); border: 1px solid var(--line); border-radius: 8px; padding: 8px; margin: 8px 0; cursor: pointer; }
+.dir.on { border-color: var(--acc); background: #2a2124; }
+.dir img, .preset img, .preset .nothumb { width: 112px; flex: none; border-radius: 4px; margin-right: 9px; align-self: flex-start; }
+.preset .nothumb { height: 63px; background: var(--p2); }
+.preset { cursor: default; }
+.dtext { flex: 1; min-width: 0; }
+.dtext p { margin: 3px 0; }
+.badge { display: inline-block; font-size: 10px; border-radius: 8px; padding: 0 6px; margin-left: 4px; border: 1px solid var(--line); color: var(--dim); }
+.badge.lean { border-color: #3f7fbf; color: #8fc1f0; } .badge.counter { border-color: #b97a2a; color: #f0b56a; } .badge.natural, .badge.clean { border-color: #3f8f62; color: #7fd6a3; }
+.mono { font-family: Menlo, Consolas, monospace; font-size: 10.5px; }
+textarea { width: 100%; box-sizing: border-box; font-family: Menlo, Consolas, monospace; font-size: 11px; }
+.row .sl .num, .row .sl input.num { flex: none; width: 46px; min-width: 0; }
+.stage .sl { margin: 0; }

@@ -3,8 +3,9 @@
 // click the skin to sample it instead of trusting the detector.
 import { srgbToOklab, toLCh, hueDist, srgb2lin, luma, oklabToSrgb, rgbToHex } from './color.js';
 import { downsample, makeFrame } from './image.js';
+import { activeArea } from './analysis.js';
 
-export const SKIN = { hueLo: 28, hueHi: 88, cLo: 0.022, cHi: 0.17, lLo: 0.16, lHi: 0.94, hueCentre: 56 };
+export const SKIN = { hueLo: 28, hueHi: 88, cLo: 0.022, cHi: 0.145, lLo: 0.16, lHi: 0.94, hueCentre: 56 };
 const expectedChroma = L => 0.015 + 0.05 * L; // below this, skin reads grey / ashy / "muddy"
 
 function pixelInfo(f) {
@@ -15,7 +16,8 @@ function pixelInfo(f) {
   }
   return info;
 }
-const looksLikeSkin = p => p.lch[2] >= SKIN.hueLo && p.lch[2] <= SKIN.hueHi && p.lch[1] >= SKIN.cLo && p.lch[1] <= SKIN.cHi && p.lch[0] >= SKIN.lLo && p.lch[0] <= SKIN.lHi;
+// Saturated oranges and yellows (cushions, lamps, sand) sit above real skin chroma for their lightness.
+const looksLikeSkin = p => p.lch[2] >= SKIN.hueLo && p.lch[2] <= SKIN.hueHi && p.lch[1] >= SKIN.cLo && p.lch[1] <= Math.min(SKIN.cHi, 0.04 + 0.16 * p.lch[0]) && p.lch[0] >= SKIN.lLo && p.lch[0] <= SKIN.lHi && !(p.lch[2] > 72 && p.lch[1] > 0.1);
 
 /** Mask from the detector, cleaned with a 3x3 majority filter so isolated pixels drop out. */
 function detectMask(f, info) {
@@ -40,68 +42,104 @@ function sampleMask(f, info, sx, sy) {
 function median(a) { if (!a.length) return 0; const s = Float64Array.from(a).sort(); return s[s.length >> 1]; }
 function circMean(hs) { let x = 0, y = 0; for (const h of hs) { x += Math.cos(h * Math.PI / 180); y += Math.sin(h * Math.PI / 180); } let m = Math.atan2(y, x) * 180 / Math.PI; return m < 0 ? m + 360 : m; }
 
-/** Splits skin into a lighter and a darker group when two complexions share the frame. */
-function complexions(Ls) {
-  if (Ls.length < 40) return null;
-  const s = Float64Array.from(Ls).sort(); let c1 = s[Math.floor(s.length * 0.2)], c2 = s[Math.floor(s.length * 0.8)];
-  for (let it = 0; it < 10; it++) { let a = 0, na = 0, b = 0, nb = 0; for (const L of s) { if (Math.abs(L - c1) < Math.abs(L - c2)) { a += L; na++; } else { b += L; nb++; } } if (na) c1 = a / na; if (nb) c2 = b / nb; }
-  let na = 0; for (const L of s) if (Math.abs(L - c1) < Math.abs(L - c2)) na++;
-  const shareDark = na / s.length;
-  return c2 - c1 > 0.2 && shareDark > 0.12 && shareDark < 0.88 ? { dark: c1, light: c2, shareDark } : null;
+/**
+ * Connected skin-like regions, kept only when they are face- or hand-sized: big warm areas (walls, wood, sand,
+ * lamp-lit backgrounds) and specks are dropped. Returns the cleaned mask and the regions kept.
+ */
+function regions(f, mask, info) {
+  const N = mask.length, lab = new Int32Array(N).fill(-1), kept = [], out = new Uint8Array(N); let dropped = 0;
+  for (let s0 = 0; s0 < N; s0++) {
+    if (!mask[s0] || lab[s0] >= 0) continue;
+    const id = s0, q = [s0], px = []; lab[s0] = id; let x0 = f.w, x1 = 0, y0 = f.h, y1 = 0;
+    while (q.length) { const i = q.pop(), x = i % f.w, y = (i / f.w) | 0; px.push(i); x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y);
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const xx = x + dx, yy = y + dy; if (xx < 0 || yy < 0 || xx >= f.w || yy >= f.h) continue; const j = yy * f.w + xx; if (mask[j] && lab[j] < 0) { lab[j] = id; q.push(j); } } }
+    const area = px.length / N, bw = x1 - x0 + 1, bh = y1 - y0 + 1, fill = px.length / (bw * bh), aspect = bw / bh;
+    if (area < 0.002) continue;
+    const bigOk = area <= 0.2 || (area <= 0.45 && fill > 0.5 && bw < f.w * 0.62); // close-ups can fill a lot of frame, but compactly
+    if (!bigOk || fill < 0.28 || aspect > 3 || aspect < 0.25 || bw > f.w * 0.7) { dropped += area; continue; }
+    for (const i of px) out[i] = 1;
+    kept.push({ area, L: median(px.map(i => info[i].lab[0])) });
+  }
+  return { mask: out, kept: kept.sort((a, b) => b.area - a.area), dropped };
 }
 
 /**
  * Check skin in a frame.
  * opts.sample = [x, y] in 0..1 to sample skin at a clicked point instead of detecting it.
- * Returns findings in plain language, numbers, a mask preview and suggested fixes.
+ * opts.input = 'rec709' | 'logc3' (log skin is always pale and grey before a look, so colour checks wait).
+ * opts.lowKey = true when the editor said the scene is meant to be dark.
+ * Returns findings in plain language, numbers, a mask preview, a confidence and suggested fixes.
  */
 export function checkSkin(frame, opts = {}) {
-  const f = downsample(frame, 220), info = pixelInfo(f);
-  const mask = opts.sample ? sampleMask(f, info, opts.sample[0], opts.sample[1]) : detectMask(f, info);
+  const full = downsample(frame, 220), a = activeArea(full), f = crop(full, a), info = pixelInfo(f);
+  let mask, kept = [], dropped = 0;
+  if (opts.sample) { // the click is on the full frame; map it into the picture area
+    const sx = (opts.sample[0] * full.w - a.x0) / (a.x1 - a.x0 + 1), sy = (opts.sample[1] * full.h - a.y0) / (a.y1 - a.y0 + 1);
+    mask = sampleMask(f, info, Math.min(1, Math.max(0, sx)), Math.min(1, Math.max(0, sy))); }
+  else ({ mask, kept, dropped } = regions(f, detectMask(f, info), info));
   const pts = []; for (let i = 0; i < mask.length; i++) if (mask[i]) pts.push(info[i]);
   const coverage = pts.length / mask.length;
-  const result = { coverage, mode: opts.sample ? 'sampled' : 'detected', findings: [], fixes: [], ok: true };
+  const result = { coverage, mode: opts.sample ? 'sampled' : 'detected', findings: [], fixes: [], ok: true, regions: kept.length, found: false,
+    confidence: opts.sample ? 'high' : kept.length ? 'medium' : 'none' }; // detection by colour alone is a hint; a click makes it sure
   if (pts.length < 25) {
-    result.findings.push({ level: 'info', title: 'No skin found', text: opts.sample ? 'The point you clicked did not grow into a skin region. Try clicking the middle of a cheek or forehead.' : 'No skin-like region was found. Click on a face in the preview to sample it directly.' });
+    result.findings.push({ level: 'info', title: 'No face found', text: opts.sample ? 'The point you clicked did not grow into a skin region. Try the middle of a cheek or forehead.'
+      : `No face-sized skin region was found${dropped > 0.05 ? ' (large warm areas such as walls, wood or lamplight were ignored)' : ''}. If there is a person in the shot, click their face in the picture.` });
     result.mask = maskPreview(f, mask); return result;
   }
+  result.found = true;
   const Ls = pts.map(p => p.lab[0]), Cs = pts.map(p => p.lch[1]), Hs = pts.map(p => p.lch[2]), Ys = pts.map(p => p.y);
   const L = median(Ls), C = median(Cs), H = circMean(Hs), Y = median(Ys);
   const crushed = Ys.filter(y => y < 0.07).length / Ys.length, clipped = Ys.filter(y => y > 0.97).length / Ys.length;
   const detail = Math.sqrt(Ls.reduce((s, v) => s + (v - L) ** 2, 0) / Ls.length);
-  const mix = complexions(Ls);
+  const mix = kept.length >= 2 && kept[1].area >= 0.004 && Math.abs(kept[0].L - kept[1].L) > 0.18 ? { light: Math.max(kept[0].L, kept[1].L), dark: Math.min(kept[0].L, kept[1].L) } : null;
   Object.assign(result, { L, C, H, ire: Math.round(Y * 100), crushed, clipped, detail, complexions: mix,
     swatch: rgbToHex(...oklabToSrgb(L, C * Math.cos(H * Math.PI / 180), C * Math.sin(H * Math.PI / 180))) });
-  const add = (level, title, text) => { result.findings.push({ level, title, text }); if (level !== 'good' && level !== 'info') result.ok = false; };
+  const add = (level, title, text) => { result.findings.push({ level, title, text }); if (level === 'warn') result.ok = false; };
+  if (dropped > 0.08 && !opts.sample) add('info', 'Only face-sized regions were checked', 'Large warm areas (walls, wood, sand, lamplight) look like skin to a colour detector, so they were left out. Click a face to check it directly.');
 
-  // 1. Exposure: is the face given enough of the tonal range?
-  if (L < 0.3 || crushed > 0.12) {
-    const targetL = 0.36, stops = Math.log2(srgb2lin(lStar(targetL)) / Math.max(1e-4, srgb2lin(lStar(L))));
-    add('warn', 'Skin sits low in the exposure', `Median skin is about ${result.ire} IRE${crushed > 0.05 ? `, and ${(crushed * 100).toFixed(0)}% of it is crushed toward black` : ''}. Expose for the face, not the room: lifting it later in the grade adds noise and a grey cast.`);
-    result.fixes.push({ kind: 'exposure', label: `Lift exposure about +${Math.min(2, stops).toFixed(1)} EV`, params: { exp: +Math.min(2, Math.max(0.2, stops)).toFixed(2) } });
-  } else add('good', 'Exposure holds the face', `Median skin is about ${result.ire} IRE, with shadow detail kept.`);
-  if (clipped > 0.08) add('warn', 'Highlights on skin are clipping', `${(clipped * 100).toFixed(0)}% of the skin is at the top of the range. Sheen is good on dark skin; flat white patches are not.`);
+  if (opts.input === 'logc3') {
+    add('info', 'Log footage: check skin after the look', `Skin found at about ${result.ire} IRE in the log image. Log skin always looks pale and grey; Colored Lens checks colour and exposure on the preview once a look is applied.`);
+    result.mask = maskPreview(f, mask); result.guard = { hueCentre: H, L, C }; return result;
+  }
+
+  // 1. Exposure, against the usual range for a key-lit face in Rec.709 (about 40-75 IRE).
+  const ire = result.ire;
+  if (ire < 35 || crushed > 0.12) {
+    const targetL = 0.5, stops = Math.log2(srgb2lin(lStar(targetL)) / Math.max(1e-4, srgb2lin(lStar(L))));
+    if (opts.lowKey) add('info', 'The face is dark, as the mood asks', `Median skin is about ${ire} IRE (a key-lit face usually sits at 40–75). That suits the dark mood you set; keep the eyes readable.`);
+    else {
+      add('warn', 'The face is underexposed', `Median skin is about ${ire} IRE; a key-lit face usually sits at 40–75 IRE${crushed > 0.05 ? `, and ${(crushed * 100).toFixed(0)}% of it is crushed toward black` : ''}. Lifting it in the grade adds noise; if you can, expose for the face.`);
+      result.fixes.push({ kind: 'exposure', label: `Lift exposure about +${Math.min(2, stops).toFixed(1)} EV`, params: { exp: +Math.min(2, Math.max(0.2, stops)).toFixed(2) } });
+    }
+  } else if (ire < 40) add('info', 'The face is on the dark side', `Median skin is about ${ire} IRE, just under the usual 40–75 for a key-lit face. Fine for a moody scene.`);
+  else if (ire > 80 || clipped > 0.08) add('warn', 'The face is running hot', `Median skin is about ${ire} IRE${clipped > 0.05 ? ` and ${(clipped * 100).toFixed(0)}% of it is clipping` : ''}. Above about 75 IRE skin loses its modelling; sheen is good, flat white patches are not.`);
+  else add('good', 'Exposure suits the face', `Median skin is about ${ire} IRE, inside the usual 40–75 for a key-lit face.`);
 
   // 2. Density / mud: chroma that has drained away reads grey or ashy.
   if (C < expectedChroma(L)) {
-    add('warn', 'Skin is losing its colour (grey / ashy)', 'Saturation in the skin is low for its brightness. Cool, bleach-bypass and cyan looks flatten dark skin first; key the skin and limit how far the look reaches it.');
+    add('warn', 'Skin is losing its colour (grey / ashy)', 'Saturation in the skin is low for its brightness. Cool, bleach-bypass and cyan looks flatten dark skin first; Skin Guard limits how far a look reaches it.');
     result.fixes.push({ kind: 'guard', label: 'Turn on Skin Guard (protect density)', params: { skinGuard: 0.75, skinDensity: 0.6 } });
   } else add('good', 'Skin keeps its density', 'Skin chroma is healthy for its brightness.');
 
   // 3. Hue: is it on the skin line?
   const off = signedHue(H, SKIN.hueCentre);
   if (Math.abs(off) > 16) {
-    add('warn', off < 0 ? 'Skin is drifting red / magenta' : 'Skin is drifting yellow / olive', off > 0 ? 'Green spikes from low-CRI LEDs or fluorescents turn deep skin olive or grey. Correct the light with minus-green, or pull the hue back here.' : 'Skin has moved toward magenta-red; check the white balance and the look.');
+    add('warn', off < 0 ? 'Skin is drifting red / magenta' : 'Skin is drifting yellow / olive', off > 0 ? 'Green spikes from low-CRI LEDs or fluorescents turn deep skin olive or grey. Correct the light with minus-green, or pull the hue back with Skin Guard.' : 'Skin has moved toward magenta-red; check the white balance and the look.');
     result.fixes.push({ kind: 'hue', label: 'Pull skin back to the skin line', params: { skinGuard: 0.6, skinHue: 0.8 } });
   } else add('good', 'Skin sits on the skin line', `Skin hue is within ${Math.abs(off).toFixed(0)}° of the skin line.`);
 
-  // 4. Mixed complexions in one frame.
-  if (mix) add('info', 'Two complexions share this frame', 'Light for the darker face and flag or net the lighter one, rather than exposing for the middle.');
+  // 4. Mixed complexions: two separate faces with clearly different lightness.
+  if (mix) add('info', 'Two complexions share this frame', 'Two faces sit far apart in lightness. Light for the darker face and flag or net the lighter one, rather than exposing for the middle.');
   if (detail < 0.025 && pts.length > 200) add('info', 'Skin detail is very flat', 'Little tonal variation across the face. Shape it with specular highlights and large soft sources for wrap.');
 
   result.mask = maskPreview(f, mask);
   result.guard = { hueCentre: H, L, C };
   return result;
+}
+function crop(f, a) {
+  if (!a.bars) return f; const w = a.x1 - a.x0 + 1, h = a.y1 - a.y0 + 1, out = makeFrame(w, h);
+  for (let y = 0; y < h; y++) out.data.set(f.data.subarray(((y + a.y0) * f.w + a.x0) * 4, ((y + a.y0) * f.w + a.x1 + 1) * 4), y * w * 4);
+  return out;
 }
 function signedHue(h, c) { let d = h - c; while (d > 180) d -= 360; while (d < -180) d += 360; return d; }
 function lStar(L) { return oklabToSrgb(L, 0, 0)[0]; } // grey with Oklab lightness L, in display terms

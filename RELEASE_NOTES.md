@@ -1,6 +1,16 @@
 # Release notes
 Each `## <version>` block becomes the text of the in-app update banner and the GitHub Release.
 
+## 0.2.0
+Colored Lens now asks what a shot is for and suggests looks you can preview, tweak, apply and save.
+- Shot: read the frame, say what the project is, how the scene should feel and what the shot is, and get directions you can preview on your own frame with a before / after wipe. Each one says what it will do to this frame and to faces.
+- Tweak: adjust any direction with a live preview on your frame, then apply it or save it.
+- Presets: save looks with what they were for, apply them to other shots (adapting to each shot's exposure and balance), and share them as a code.
+- Fixed: the Lukuluku Look effect no longer turns clips black in Premiere Pro, and its dropdowns no longer land one option off.
+- The neutral look now leaves Rec.709 footage untouched, so a look only changes what it says it changes.
+- Truer readings: letterbox bars, deep shadow and blown highlights no longer count as the colour of the shot, skin checks only face-sized regions and use the usual 40–75 IRE range, and you can click a face to check it.
+- Scene (the colour script) only talks about motifs and omens when you say the piece tells a story.
+
 ## 0.1.4
 Fixes from the first real session in Premiere Pro.
 - Read, Skin, Script and Look work again: frame grabs no longer fail with "format not supported" (Colored Lens now reads PNG and JPEG grabs, and waits for Premiere to finish writing them).

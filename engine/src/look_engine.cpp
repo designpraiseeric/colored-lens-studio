@@ -143,6 +143,24 @@ struct Lut {
   }
 };
 
+// ---- Rec.709 input: cancel the baseline (C0) film curve so the neutral look is a pass-through (mirrors core/look.js)
+struct NeutralInverse {
+  static const int N = 1024; float inv[N]; float y0 = 0, y1 = 1, sLo = 1, sHi = 1;
+  explicit NeutralInverse(const Lut& lut0) {
+    float f[N];
+    for (int i = 0; i < N; i++) { float g = lin2log(srgb2lin(float(i) / (N - 1))); V3 o = lut0.sample({g, g, g}); f[i] = (o.r + o.g + o.b) / 3; if (i && f[i] < f[i - 1]) f[i] = f[i - 1]; }
+    y0 = f[0]; y1 = f[N - 1]; int j = 0;
+    for (int k = 0; k < N; k++) { float y = y0 + (y1 - y0) * k / (N - 1); while (j < N - 2 && f[j + 1] < y) j++;
+      float d = f[j + 1] - f[j], t = d > 1e-9f ? std::clamp((y - f[j]) / d, 0.f, 1.f) : 0.f; inv[k] = (j + t) / (N - 1); }
+    float step = (y1 - y0) / (N - 1); sLo = (inv[1] - inv[0]) / step; sHi = (inv[N - 1] - inv[N - 2]) / step;
+  }
+  float operator()(float v) const {
+    if (v <= y0) return std::max(0.f, inv[0] + (v - y0) * sLo); if (v >= y1) return std::min(1.f, inv[N - 1] + (v - y1) * sHi);
+    float x = (v - y0) / (y1 - y0) * (N - 1); int i = std::min(N - 2, int(x)); float t = x - i; return inv[i] + (inv[i + 1] - inv[i]) * t;
+  }
+};
+const NeutralInverse& neutralInverse() { static const NeutralInverse ni(Lut{kLuts[0], kLutSize}); return ni; }
+
 // ---- everything derived from the parameters once per frame
 struct Setup {
   const LensFx* K; const DiffFx* Dd; const MediumFx* M; Lut lut, lut0;
@@ -237,6 +255,7 @@ V3 finish(V3 c, const Setup& s, float grainVal3[3], bool useGrain, float gAmp, f
   }
   V3 col = s.lut.sample(t);
   if (s.lutMix < 0.999f) col = mixv(s.lut0.sample(t), col, s.lutMix);
+  if (s.in709) { const NeutralInverse& ni = neutralInverse(); col = {ni(col.r), ni(col.g), ni(col.b)}; }
   if (s.clipv > 0) col = {std::min(col.r * (1 + s.clipv), 1.f), std::min(col.g * (1 + s.clipv), 1.f), std::min(col.b * (1 + s.clipv), 1.f)};
   if (s.wh != 0 || s.bk != 0) { float Yd = std::clamp(dotW(col), 0.f, 1.f), add = s.wh * 0.22f * smoothstepf(0.55f, 1, Yd) + s.bk * 0.14f * (1 - smoothstepf(0, 0.38f, Yd)); col = clamp01(col + V3{add, add, add}); }
   col = clamp01(col + V3{s.bri * 0.2f, s.bri * 0.2f, s.bri * 0.2f}); col = {std::pow(col.r, 1 / s.gam), std::pow(col.g, 1 / s.gam), std::pow(col.b, 1 / s.gam)};

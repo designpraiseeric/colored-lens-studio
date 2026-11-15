@@ -6,15 +6,39 @@ import { downsample } from './image.js';
 
 export const CHROMA_MIN = 0.035; // below this a pixel reads as neutral
 
-/** Frame -> Float32Array of Oklab triplets (downsampled). */
-export function labPixels(frame, max = 160) {
-  const f = downsample(frame, max), n = f.w * f.h, lab = new Float32Array(n * 3);
-  for (let i = 0; i < n; i++) {
-    const o = srgbToOklab(f.data[i * 4] / 255, f.data[i * 4 + 1] / 255, f.data[i * 4 + 2] / 255);
-    lab[i * 3] = o[0]; lab[i * 3 + 1] = o[1]; lab[i * 3 + 2] = o[2];
-  }
-  return { lab, w: f.w, h: f.h, n };
+/**
+ * The picture area of a (downsampled) frame: letterbox / pillarbox bars are found and left out, so black bars
+ * never count as "the colour of the shot".
+ */
+export function activeArea(f) {
+  const lum = i => (0.2126 * f.data[i * 4] + 0.7152 * f.data[i * 4 + 1] + 0.0722 * f.data[i * 4 + 2]) / 255;
+  const dark = (n, at) => { let s = 0, mx = 0, mn = 1; for (let k = 0; k < n; k++) { const l = lum(at(k)); s += l; if (l > mx) mx = l; if (l < mn) mn = l; } return s / n < 0.03 && mx < 0.08 && mx - mn < 0.035; }; // bars: black and flat
+  let y0 = 0, y1 = f.h - 1, x0 = 0, x1 = f.w - 1;
+  while (y0 < f.h * 0.3 && dark(f.w, x => y0 * f.w + x)) y0++;
+  while (y1 > f.h * 0.7 && dark(f.w, x => y1 * f.w + x)) y1--;
+  while (x0 < f.w * 0.3 && dark(f.h, y => y * f.w + x0)) x0++;
+  while (x1 > f.w * 0.7 && dark(f.h, y => y * f.w + x1)) x1--;
+  const bars = y0 + (f.h - 1 - y1) > f.h * 0.04 ? 'letterbox' : x0 + (f.w - 1 - x1) > f.w * 0.04 ? 'pillarbox' : null;
+  if (!bars) { y0 = 0; y1 = f.h - 1; x0 = 0; x1 = f.w - 1; }
+  return { x0, y0, x1, y1, bars, share: ((x1 - x0 + 1) * (y1 - y0 + 1)) / (f.w * f.h) };
 }
+
+/**
+ * Frame -> Oklab triplets of the picture area (downsampled), plus a weight per pixel that favours the centre of
+ * the frame, where the subject usually is (edges count about a third as much as the middle).
+ */
+export function labPixels(frame, max = 160) {
+  const f = downsample(frame, max), area = activeArea(f), w = area.x1 - area.x0 + 1, h = area.y1 - area.y0 + 1, n = w * h;
+  const lab = new Float32Array(n * 3), wt = new Float32Array(n);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = y * w + x, j = (y + area.y0) * f.w + x + area.x0;
+    const o = srgbToOklab(f.data[j * 4] / 255, f.data[j * 4 + 1] / 255, f.data[j * 4 + 2] / 255);
+    lab[i * 3] = o[0]; lab[i * 3 + 1] = o[1]; lab[i * 3 + 2] = o[2];
+    const dx = (x + 0.5) / w * 2 - 1, dy = (y + 0.5) / h * 2 - 1; wt[i] = 0.35 + 0.65 * Math.exp(-(dx * dx + dy * dy) * 1.4);
+  }
+  return { lab, w, h, n, wt, area };
+}
+export const SHADOW_L = 0.18, HIGHLIGHT_L = 0.965; // below / above these, a pixel carries tone, not colour
 
 /** Deterministic k-means in Oklab. Returns clusters sorted by share. */
 export function dominantColors(px, k = 7, iters = 12) {
@@ -43,16 +67,17 @@ export function dominantColors(px, k = 7, iters = 12) {
 /** Global statistics used by several readings. */
 export function frameStats(px) {
   const { lab, n } = px, Ls = new Float32Array(n);
-  let sumC = 0, chromatic = 0, warm = 0, cool = 0, sumB = 0, sumA = 0, neuC = 0;
+  let sumC = 0, chromatic = 0, warm = 0, cool = 0, sumB = 0, sumA = 0, neuC = 0, lit = 0;
   for (let i = 0; i < n; i++) {
     const L = lab[i * 3], a = lab[i * 3 + 1], b = lab[i * 3 + 2], C = Math.hypot(a, b); Ls[i] = L; sumC += C; sumA += a; sumB += b;
+    if (L < SHADOW_L) continue; lit++; // deep shadow carries no readable colour
     if (C <= CHROMA_MIN) neuC += C; if (C > CHROMA_MIN) { chromatic++; const h = toLCh([L, a, b])[2]; if (h >= 20 && h < 110) warm += C; else if (h >= 170 && h < 290) cool += C; }
   }
   const sorted = Float32Array.from(Ls).sort(), q = p => sorted[Math.min(n - 1, Math.floor(p * n))];
   const p5 = q(0.05), p50 = q(0.5), p95 = q(0.95);
   const meanC = sumC / n, temp = warm + cool > 0 ? (warm - cool) / (warm + cool) : 0;
   return {
-    p5, p50, p95, contrast: p95 - p5, meanC, neutralC: n - chromatic > 0 ? neuC / (n - chromatic) : 0, chromaticShare: chromatic / n, temperature: temp, meanA: sumA / n, meanB: sumB / n,
+    p5, p50, p95, contrast: p95 - p5, meanC, neutralC: lit - chromatic > 0 ? neuC / (lit - chromatic) : 0, chromaticShare: lit ? chromatic / lit : 0, litShare: lit / n, temperature: temp, meanA: sumA / n, meanB: sumB / n,
     key: p50 > 0.72 ? 'high-key' : p50 < 0.38 ? 'low-key' : 'mid-key',
     saturation: meanC < 0.025 ? 'near-neutral' : meanC < 0.06 ? 'muted' : meanC < 0.11 ? 'moderate' : 'saturated',
     warmth: temp > 0.35 ? 'warm' : temp < -0.35 ? 'cool' : 'balanced',
@@ -61,10 +86,11 @@ export function frameStats(px) {
 }
 
 /** Chroma-weighted hue histogram, 36 bins of 10°. */
-export function hueHistogram(px) {
+export function hueHistogram(px, weighted = false) {
   const bins = new Float64Array(36); let tot = 0; const { lab, n } = px;
   for (let i = 0; i < n; i++) { const a = lab[i * 3 + 1], b = lab[i * 3 + 2], C = Math.hypot(a, b); if (C <= CHROMA_MIN) continue;
-    let h = Math.atan2(b, a) * 180 / Math.PI; if (h < 0) h += 360; bins[Math.floor(h / 10) % 36] += C; tot += C; }
+    if (weighted && lab[i * 3] < SHADOW_L) continue;
+    const k = C * (weighted ? px.wt[i] : 1); let h = Math.atan2(b, a) * 180 / Math.PI; if (h < 0) h += 360; bins[Math.floor(h / 10) % 36] += k; tot += k; }
   return { bins: Array.from(bins, v => (tot ? v / tot : 0)), total: tot };
 }
 /** Groups the hue histogram into hue families (circular runs of populated bins). */
@@ -102,14 +128,20 @@ export function classifyHue(enc, lab) {
   return best;
 }
 
-/** Share of the frame belonging to each encyclopedia hue, classified pixel by pixel (memoised). */
+/**
+ * Colour shares of the frame, by encyclopedia hue, classified pixel by pixel (memoised) and weighted toward the
+ * centre. Deep shadow and blown highlights carry tone, not colour, so they are reported separately in `tones`
+ * instead of outvoting the subject ("Black 80%" on a lamp-lit room).
+ */
 export function hueShares(px, enc) {
-  const memo = new Map(), out = {}; const { lab, n } = px;
-  for (let i = 0; i < n; i++) { const L = lab[i * 3], a = lab[i * 3 + 1], b = lab[i * 3 + 2];
+  const memo = new Map(), out = {}; const { lab, n, wt } = px; let tot = 0, all = 0, shadow = 0, high = 0;
+  for (let i = 0; i < n; i++) { const L = lab[i * 3], a = lab[i * 3 + 1], b = lab[i * 3 + 2], w = wt ? wt[i] : 1; all += w;
+    if (L < SHADOW_L) { shadow += w; continue; } if (L > HIGHLIGHT_L && Math.hypot(a, b) < CHROMA_MIN) { high += w; continue; }
     const key = (Math.round(L * 24) << 16) | (Math.round(a * 80 + 64) << 8) | Math.round(b * 80 + 64);
     let id = memo.get(key); if (id === undefined) { id = classifyHue(enc, [L, a, b]); memo.set(key, id); }
-    out[id] = (out[id] || 0) + 1 / n; }
-  return out;
+    out[id] = (out[id] || 0) + w; tot += w; }
+  for (const k of Object.keys(out)) out[k] /= tot || 1;
+  return { shares: out, tones: { shadow: shadow / (all || 1), highlight: high / (all || 1), readable: tot / (all || 1) } };
 }
 
 /** Palette structure, as one of the encyclopedia's PALS ids, with the reasons. */
@@ -185,15 +217,23 @@ export function signatureDistance(a, b) {
   return 0.45 * dL + colourWeight * 0.9 * (1 - dH) + 3 * Math.abs(a.C - b.C) + 0.35 * Math.abs(a.T - b.T) + 0.6 * Math.abs(a.K - b.K);
 }
 
+/** How sure a reading is, in words the panel can show. */
+function readingConfidence(tones, pal, area) {
+  const why = [];
+  if (tones.readable < 0.2) why.push(`Only ${Math.round(tones.readable * 100)}% of the picture is lit enough to carry colour, so the colour reading rests on a small area.`);
+  if (pal.confidence < 0.55) why.push('The palette sits between two structures.');
+  const level = tones.readable < 0.12 ? 'low' : why.length ? 'medium' : 'high';
+  return { level, why };
+}
+
 /** The full reading of a frame. `refs` is content/refs.json (frame signatures + readings). */
 export function readFrame(frame, enc, refs) {
-  const px = labPixels(frame), stats = frameStats(px), hist = hueHistogram(px), swatches = dominantColors(px);
-  const hueShare = hueShares(px, enc);
-  const hues = Object.entries(hueShare).map(([id, share]) => ({ id, share, entry: enc.HUES.find(h => h.id === id) })).sort((a, b) => b.share - a.share);
+  const px = labPixels(frame), stats = frameStats(px), hist = hueHistogram(px, true), swatches = dominantColors(px);
+  const { shares, tones } = hueShares(px, enc);
+  const hues = Object.entries(shares).map(([id, share]) => ({ id, share, entry: enc.HUES.find(h => h.id === id) })).sort((a, b) => b.share - a.share);
   const pal = classifyPalette(stats, hist, swatches);
   const palEntry = enc.PALS.find(p => p.id === pal.id);
   const itten = ittenContrasts(stats, hist, swatches, pal);
-  const narrative = narrativeHints(stats, pal, hues);
   const sig = signature(px);
   let matches = [];
   if (refs && refs.frames) {
@@ -202,6 +242,9 @@ export function readFrame(frame, enc, refs) {
   }
   const auteurs = [];
   for (const m of matches) if (m.kind === 'aut' && !auteurs.find(a => a.n === m.title)) { const a = enc.AUTS.find(x => x.n === m.title); if (a) auteurs.push(a); }
-  const looks = [...new Set([...(hues[0] && hues[0].entry ? hues[0].entry.looks : []), ...(palEntry ? palEntry.looks : []), ...matches.flatMap(m => m.looks)])].slice(0, 8);
-  return { stats, swatches, hues, pal: { ...pal, entry: palEntry, reading: enc.PALI[pal.id] }, itten, narrative, matches, auteurs, looks, sig };
+  const lead = hues.find(h => h.entry && !NEUTRAL_IDS.includes(h.id) && h.share >= 0.08) || null;
+  const looks = [...new Set([...(lead ? lead.entry.looks : []), ...(palEntry ? palEntry.looks : []), ...matches.flatMap(m => m.looks)])].slice(0, 8);
+  const confidence = readingConfidence(tones, pal, px.area);
+  return { stats, swatches, hues, lead, tones, area: px.area, confidence, pal: { ...pal, entry: palEntry, reading: enc.PALI[pal.id] }, itten, narrative: [], matches, auteurs, looks, sig };
 }
+export const NEUTRAL_IDS = ['grey', 'black', 'white', 'bw'];

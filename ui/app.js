@@ -1,12 +1,17 @@
 // Colored Lens panel: one app for Premiere Pro (UXP), DaVinci Resolve Studio (Workflow Integration) and the web.
 // Everything host-specific goes through `host` (see hosts/README.md). Plain DOM + flexbox so it runs inside UXP.
+//
+// The loop: read the frame -> say what it is for -> get directions -> preview them on the frame -> tweak live ->
+// apply to clips -> save as a preset -> apply the preset to other shots.
 import { readFrame } from '../core/analysis.js';
 import { checkSkin, vectorscope } from '../core/skin.js';
-import { downsample, pngDataUrl } from '../core/image.js';
+import { pngDataUrl, encodePNG } from '../core/image.js';
 import { shotRecord, encodeShot, decodeShot, renderStrip, readSequence, scriptCSV } from '../core/script.js';
 import { parseLookInput, formatCode, fullGrade, makePixelFn, bakeCube, lookToEngineParams, shareLink, computeMatch, matchStats, hasCurves, GRADE0 } from '../core/look.js';
+import { GENRES, FEELINGS, ROLES, DARK_FEELINGS, KIND_LABEL, pickDirections, describeEffect, whyFor, frameSummary } from '../core/directions.js';
+import { previewer, wipe } from '../core/preview.js';
+import { listPresets, savePreset, deletePreset, duplicatePreset, presetCode, importPresetCode, settings } from '../core/presets.js';
 import { Updater } from '../core/updates.js';
-import { encodePNG } from '../core/image.js';
 import config from '../studio.config.json';
 import { sliderHTML, wireSliders } from './slider.js';
 
@@ -15,24 +20,32 @@ const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '
 const strip = s => String(s ?? '').replace(/<[^>]+>/g, '');
 const cap = s => s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
 const pct = v => Math.round(v * 100) + '%';
+const clone = o => JSON.parse(JSON.stringify(o));
+const XDEF = { skinGuard: 0, skinHue: 0.8, skinDensity: 0.7, skinLight: 0.5, matchAmt: 0, mLg: 1, mLo: 0, mA: 0, mB: 0, mCg: 1 };
+const NEUTRAL_LOOK = () => ({ L: 'L1', O: 'O1', H: 'H0', K: 'K0', D: 'D0', C: 'C0', M: 'M0', A: '2.39', G: fullGrade({}) });
+const lookCode = (l, matte) => { const c = formatCode(l); return matte ? c : c.replace(/·[\d.]+$/, ''); };
 
 export async function startApp(host, root) {
-  const S = { tab: 'read', frame: null, meta: null, reading: null, skin: null, sample: null, shots: [], refFrameStats: null, refName: '',
-    look: { L: 'L1', O: 'O1', H: 'H0', K: 'K0', D: 'D0', C: 'C1', M: 'M2', A: '2.39', G: fullGrade({}) }, input: 'rec709',
-    extra: { skinGuard: 0, skinHue: 0.8, skinDensity: 0.7, skinLight: 0.5, matchAmt: 0, mLg: 1, mLo: 0, mA: 0, mB: 0, mCg: 1 }, matte: false, busy: false };
+  const S = { tab: 'shot', back: 'shot', frame: null, meta: null, reading: null, skin: null, sample: null, shots: [],
+    intent: Object.assign({ genre: '', feeling: '', role: '', note: '' }, settings.get('intent', {})), input: settings.get('input', 'rec709'),
+    directions: [], chosen: -1, look: NEUTRAL_LOOK(), extra: { ...XDEF }, matte: false, recipe: { name: '', presetId: null }, view: 'split', wipe: 0.5,
+    refFrameStats: null, refName: '', adapt: settings.get('adapt', true), encQ: '', shownCode: '', confirmDel: '', busy: false, showSkin: false, showRefs: false };
+  let PV = null;
   const up = new Updater(host, config.pagesBase);
   root.innerHTML = `
     <div class="cl">
       <div id="banner" class="banner" hidden></div>
-      <div class="head"><div class="brand">Colored Lens <span class="dim">· ${esc(host.label || host.name)}</span></div><div id="status" class="dim small"></div></div>
-      <div class="tabs">${['read:Read', 'skin:Skin', 'script:Script', 'look:Look', 'library:Library'].map(t => { const [id, n] = t.split(':'); return `<div data-tab="${id}" class="tab" role="tab" tabindex="0">${n}</div>`; }).join('')}</div>
+      <div class="head"><div class="brand">Colored Lens <span class="dim">· ${esc(host.label || host.name)}</span></div><div class="row tight"><span id="status" class="dim small"></span><button id="encBtn" class="link small">Encyclopedia</button></div></div>
+      <div class="tabs">${['shot:Shot', 'scene:Scene', 'tweak:Tweak', 'presets:Presets'].map(t => { const [id, n] = t.split(':'); return `<div data-tab="${id}" class="tab" role="tab" tabindex="0">${n}</div>`; }).join('')}</div>
       <div id="body" class="body"></div>
       <div id="toast" class="toast" hidden></div>
     </div>`;
-  const toast = (t, ms = 2200) => { const e = $('#toast', root); e.textContent = t; e.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => (e.hidden = true), ms); };
-  const busy = async (label, fn) => { if (S.busy) return; S.busy = true; status(label + '…'); try { return await fn(); } catch (e) { console.error(e); toast(e.message || String(e), 5000); } finally { S.busy = false; status(); } };
+  const toast = (t, ms = 2600) => { const e = $('#toast', root); e.textContent = t; e.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => (e.hidden = true), ms); };
+  const busy = async (label, fn) => { if (S.busy) return; S.busy = true; status(label + '…'); try { return await fn(); } catch (e) { console.error(e); toast(e.message || String(e), 6000); } finally { S.busy = false; status(); } };
   const status = t => { const c = up.content && up.content.manifest; $('#status', root).textContent = t || `v${host.version}${c ? ' · content ' + c.contentVersion.slice(0, 7) : ''}`; };
-  root.addEventListener('click', e => { const b = e.target.closest('[data-tab]'); if (b) { S.tab = b.dataset.tab; render(); } });
+  const go = tab => { if (tab === 'enc' && S.tab !== 'enc') S.back = S.tab; S.tab = tab; render(); };
+  root.addEventListener('click', e => { const b = e.target.closest('[data-tab]'); if (b) go(b.dataset.tab); });
+  $('#encBtn', root).onclick = () => { S.encQ = ''; go('enc'); };
 
   // ---------- content + updates (silent) ----------
   await up.load();
@@ -51,106 +64,209 @@ export async function startApp(host, root) {
 
   const enc = () => up.content.encyclopedia, cat = () => up.content.looks.catalog, refs = () => up.content.refs;
   const lutsFor = async look => ({ C0: await up.lut('C0'), [look.C]: await up.lut(look.C) });
-
-  async function grab() {
-    const g = await host.grabFrame(); S.frame = g.frame; S.meta = g; S.reading = null; S.skin = null; S.sample = null; return g;
-  }
-  const preview = (f, max = 420) => pngDataUrl(downsample(f, max));
   const swatchBar = sw => `<div class="swbar">${sw.map(s => `<div style="flex:${Math.max(0.02, s.share ?? s[1])};background:${s.hex || s[0]}" title="${s.hex || s[0]}"></div>`).join('')}</div>`;
-  const lookChips = ids => ids.length ? `<div class="chips">${ids.map(id => `<button class="chip" data-look="${id}" title="${esc(lookName(id))}">${id} ${esc(shortName(id))}</button>`).join('')}</div>` : '';
   const axisTable = id => ({ L: cat().lighting, O: cat().optics, H: cat().atmosphere, K: cat().lens, D: cat().diffusion, C: cat().color, M: cat().medium })[id[0]];
   const lookName = id => { const t = axisTable(id); return t && t[id] ? t[id].name : id; };
   const shortName = id => { const t = axisTable(id); return t && t[id] ? t[id].short : ''; };
+  const lookChips = ids => ids.length ? `<div class="chips">${ids.map(id => `<button class="chip" data-look="${id}" title="${esc(lookName(id))}">${id} ${esc(shortName(id))}</button>`).join('')}</div>` : '';
   root.addEventListener('click', e => {
     const c = e.target.closest('[data-look]'); if (!c) return; const id = c.dataset.look;
-    if ('KDCM'.includes(id[0])) { S.look[id[0]] = id; S.tab = 'look'; render(); toast(`${id} ${shortName(id)} set in Look`); }
-    else { S.tab = 'look'; render(); toast(`${id} ${lookName(id)} is an in-camera choice (lighting / lens / atmosphere): see it in Lukuluku`); }
+    if ('KDCM'.includes(id[0])) { S.look[id[0]] = id; S.recipe = { name: S.recipe.name || lookName(id), presetId: S.recipe.presetId }; go('tweak'); toast(`${id} ${shortName(id)} set in Tweak`); }
+    else toast(`${id} ${lookName(id)} is an in-camera choice (lighting / lens / atmosphere): see it in Lukuluku`);
   });
   root.addEventListener('click', e => { const a = e.target.closest('[data-url]'); if (a) { e.preventDefault(); host.openUrl(a.dataset.url); } });
+  root.addEventListener('click', e => { const a = e.target.closest('[data-more]'); if (a) { e.preventDefault(); S.encQ = a.dataset.more; go('enc'); } });
+
+  // ---------- reading ----------
+  async function grab() {
+    const g = await host.grabFrame(); S.frame = g.frame; S.meta = g; S.sample = null; S.chosen = -1;
+    PV = previewer(S.frame, cat(), lutsFor); stageCache.key = '';
+    S.reading = readFrame(S.frame, enc(), refs()); runSkin(); return g;
+  }
+  const lowKey = () => DARK_FEELINGS.includes(S.intent.feeling);
+  function runSkin() { if (S.frame) S.skin = checkSkin(S.frame, { sample: S.sample, input: S.input, lowKey: lowKey() }); }
+  async function suggest() {
+    if (!S.frame) return;
+    const ds = pickDirections(S.intent, { reading: S.reading, skin: S.skin, input: S.input });
+    for (const d of ds) {
+      const fn = makePixelFn(d.look, cat(), await lutsFor(d.look), { input: S.input, keepExposure: true, extra: { ...XDEF, ...d.extra } });
+      d.effect = describeEffect(fn, S.reading, S.skin); d.why = whyFor(d, S.intent, enc());
+      d.thumb = pngDataUrl(await PV.render(d.look, { ...XDEF, ...d.extra }, S.input, 200));
+    }
+    S.directions = ds; if (S.chosen >= ds.length) S.chosen = -1;
+  }
+  function choose(i) {
+    const d = S.directions[i]; if (!d) return; S.chosen = i;
+    S.look = clone(d.look); S.extra = { ...XDEF, ...d.extra }; S.matte = false; S.recipe = { name: d.name, presetId: null };
+  }
+
+  // ---------- the stage: a large before / after preview with a wipe ----------
+  const stageCache = { key: '', before: null, after: null };
+  const stageHTML = (clickable, hint) => `<div class="stage">
+      ${S.frame ? `<img id="stage" class="frame ${clickable ? 'click' : ''}" src="">
+      <div class="row tight">${['before:Before', 'split:Split', 'after:After'].map(v => { const [id, n] = v.split(':'); return `<button class="seg ${S.view === id ? 'on' : ''}" data-view="${id}">${n}</button>`; }).join('')}
+        <div class="grow">${S.view === 'split' ? sliderHTML({ id: 'wipe', label: 'Wipe', min: 0, max: 1, step: 0.01, value: S.wipe, def: 0.5 }) : ''}</div></div>
+      <div class="small dim">${hint || ''}</div>` : ''}</div>`;
+  function wireStage(body, onClickImg) {
+    body.querySelectorAll('[data-view]').forEach(b => b.onclick = () => { S.view = b.dataset.view; render(); });
+    wireSliders(body.querySelector('.stage') || body, (id, v) => { if (id === 'wipe') { S.wipe = v; composite(); } });
+    const img = $('#stage', body); if (img && onClickImg) img.onclick = e => { const r = img.getBoundingClientRect(); onClickImg((e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height); };
+    drawStage();
+  }
+  let stageT = 0, stageSeq = 0;
+  function drawStage() {
+    clearTimeout(stageT); const seq = ++stageSeq;
+    stageT = setTimeout(async () => {
+      if (!S.frame || !$('#stage', root)) return;
+      const showLook = !(S.tab === 'shot' && S.chosen < 0);
+      const key = JSON.stringify([showLook, S.look, S.extra, S.input]);
+      if (stageCache.key !== key) {
+        const before = PV.before(640), after = showLook ? await PV.render(S.look, S.extra, S.input, 640) : before;
+        if (seq !== stageSeq) return; Object.assign(stageCache, { key, before, after });
+      }
+      composite();
+    }, 60);
+  }
+  function composite() {
+    const img = $('#stage', root); if (!img || !stageCache.before) return;
+    const same = stageCache.after === stageCache.before;
+    img.src = pngDataUrl(same ? stageCache.before : wipe(stageCache.before, stageCache.after, S.wipe, S.view));
+  }
+
+  // ---------- applying ----------
+  async function applyLookToClips(look, extra, input, matte) {
+    const C = cat(), params = lookToEngineParams(look, C, { matte, params: { ...extra, input: input === 'logc3' ? 1 : 0 } });
+    const res = await host.applyLook({ params, look, makeCube: async () => bakeCube(look, C, await lutsFor(look), { input, keepExposure: true, extra }) });
+    toast(res.message, 6000); return res;
+  }
+  async function saveCurrentAsPreset(name, asNew) {
+    const thumb = S.frame && PV ? pngDataUrl(await PV.render(S.look, S.extra, S.input, 120)) : '';
+    const p = savePreset({ id: asNew ? null : S.recipe.presetId, name: name || S.recipe.name || 'Untitled look', look: S.look, extra: S.extra, input: S.input, matte: S.matte,
+      intent: { ...S.intent }, from: S.meta ? `${S.meta.clipName || ''} ${S.meta.timecode || ''}`.trim() : '', ref: S.frame ? matchStats(S.frame) : null, thumb });
+    S.recipe = { name: p.name, presetId: p.id }; toast(`Saved preset “${p.name}”`); return p;
+  }
+  function presetExtra(p) {
+    const extra = { ...XDEF, ...p.extra };
+    if (S.adapt && p.ref && S.frame) Object.assign(extra, computeMatch(matchStats(S.frame), p.ref), { matchAmt: 0.6 });
+    return extra;
+  }
 
   // ---------- tabs ----------
   function render() {
     root.querySelectorAll('.tab').forEach(b => { const on = b.dataset.tab === S.tab; b.classList.toggle('on', on); b.setAttribute('aria-selected', on ? 'true' : 'false'); });
-    const bodyEl = $('#body', root); if (bodyEl && render.lastTab !== S.tab) { bodyEl.scrollTop = 0; render.lastTab = S.tab; }
-    const body = $('#body', root);
+    const body = $('#body', root); if (body && render.lastTab !== S.tab) { body.scrollTop = 0; render.lastTab = S.tab; }
     if (!up.content.encyclopedia) return;
-    ({ read: renderRead, skin: renderSkin, script: renderScript, look: renderLook, library: renderLibrary })[S.tab](body);
+    ({ shot: renderShot, scene: renderScene, tweak: renderTweak, presets: renderPresets, enc: renderEnc })[S.tab](body);
   }
 
-  // READ ------------------------------------------------------------------
-  function renderRead(body) {
-    const r = S.reading;
+  // SHOT ------------------------------------------------------------------
+  const chipRow = (list, key) => `<div class="chips">${list.map(x => `<button class="chip ${S.intent[key] === x.id ? 'on' : ''}" data-intent="${key}:${x.id}">${esc(x.n)}</button>`).join('')}</div>`;
+  function renderShot(body) {
+    const r = S.reading, k = S.skin, I = S.intent;
+    const hint = S.chosen >= 0 ? `Previewing <b>${esc(S.directions[S.chosen].name)}</b> (colour, grain and vignette; halation and glow show on the clip). Click a face to check its skin.` : 'Click a face in the picture to check its skin. Pick a direction below to preview it here.';
     body.innerHTML = `
-      <div class="row"><button id="grab" class="primary">${esc(host.grabLabel || 'Read the frame under the playhead')}</button></div>
-      ${S.frame ? `<img class="frame" src="${preview(S.frame)}"><div class="dim small">${esc(S.meta.clipName || '')} ${esc(S.meta.timecode || '')}</div>` : '<p class="dim">Park the playhead on a shot and read it. Colored Lens describes the frame in the encyclopedia\'s terms and finds the closest references.</p>'}
-      <div id="reading"></div>`;
-    $('#grab', body).onclick = () => busy('Reading frame', async () => { await grab(); S.reading = readFrame(S.frame, enc(), refs()); render(); });
-    if (!r) return;
-    const e = enc(), hue = r.hues.find(h => h.entry && !['grey', 'black', 'white', 'bw'].includes(h.id)) || r.hues[0];
-    $('#reading', body).innerHTML = `
-      ${swatchBar(r.swatches)}
-      <div class="facts small">${esc(cap(r.stats.key))} · ${esc(r.stats.saturation)} · ${esc(r.stats.warmth)} · blacks ${esc(r.stats.blacks)} · contrast ${r.stats.contrast.toFixed(2)}</div>
-      <div class="card"><div class="k">Dominant colour</div>
-        ${r.hues.slice(0, 4).map(h => `<span class="pill" style="border-color:${h.entry ? h.entry.hex : '#666'}">${esc(h.entry ? h.entry.name : cap(h.id))} ${pct(h.share)}</span>`).join(' ')}
-        ${hue && hue.entry ? `<h3>${esc(hue.entry.name)}: ${esc(hue.entry.tag)}</h3><p>${esc(hue.entry.p[0])}</p><p class="small"><b>Bright side:</b> ${esc(hue.entry.pos)}<br><b>Dark side:</b> ${esc(hue.entry.neg)}<br><b>How it gets on screen:</b> ${esc(hue.entry.craft)}</p>` : ''}</div>
-      <div class="card"><div class="k">Palette structure</div><h3>${esc(r.pal.entry ? r.pal.entry.n : r.pal.id)}</h3>
-        ${r.pal.entry ? swatchBar(r.pal.entry.pal.map(h => ({ hex: h, share: 1 }))) : ''}<p class="small">${r.pal.why.map(esc).join(' ')}</p>
-        ${r.pal.reading ? `<p>${esc(r.pal.reading)}</p>` : ''}${r.pal.entry ? lookChips(r.pal.entry.looks) : ''}</div>
-      <div class="card"><div class="k">Itten's contrasts at work</div>${r.itten.slice(0, 4).map(c => { const it = e.ITTEN.find(x => x.n === c.n);
-        return `<div class="bar"><span>${esc(c.n)}</span><div class="track"><div style="width:${pct(c.score)}"></div></div></div>${c.score > 0.45 && it ? `<p class="small dim">${esc(it.t)}</p>` : ''}`; }).join('')}</div>
-      ${r.narrative.length ? `<div class="card"><div class="k">Narrative devices this frame could serve</div>${r.narrative.map(n => `<p><b>${esc(n.n)}.</b> ${esc(n.why)}</p>`).join('')}</div>` : ''}
-      <div class="card"><div class="k">Closest references in the encyclopedia</div><div class="refs">${r.matches.map((m, i) => `
-        <div class="ref"><img src="${up.frameUrl(m.thumb)}" onerror="this.style.display='none'"><div><b>${esc(m.title)}</b> <span class="dim small">${esc(m.section)}</span>
-        <p class="small">${esc(m.reading)}</p>${lookChips(m.looks.slice(0, 4))}
-        <div class="row">${m.link ? `<button data-url="${esc(m.link)}">Real stills (FILMGRAB)</button>` : ''}<button data-matchref="${i}">Match my shot to this</button></div></div></div>`).join('')}</div></div>
-      ${r.auteurs.length ? `<div class="card"><div class="k">Signatures it resembles</div>${r.auteurs.map(a => `<p><b>${esc(a.n)}</b> <span class="dim small">${esc(a.w || '')}</span><br>${esc(a.t)}</p>${lookChips(String(a.l || '').split(/\s*·\s*/).filter(Boolean))}`).join('')}</div>` : ''}
-      ${r.looks.length ? `<div class="card"><div class="k">Lukuluku looks to try</div>${lookChips(r.looks)}</div>` : ''}`;
+      <div class="row"><button id="grab" class="primary">${esc(host.grabLabel || 'Read the frame under the playhead')}</button>${S.frame ? `<span class="small dim">${esc(S.meta.clipName || '')} ${esc(S.meta.timecode || '')}</span>` : ''}</div>
+      ${S.frame ? stageHTML(true, hint) : `<p class="dim">Park the playhead on a shot and read it. Colored Lens tells you what the frame is doing, asks what it is for, and suggests directions you can preview, tweak, apply and save.</p>`}
+      <div id="reading">${r ? readingCard(r, k) : ''}</div>
+      <div class="card"><div class="k">What is this for?</div>
+        <div class="q">The project</div>${chipRow(GENRES, 'genre')}
+        <div class="q">This scene should feel</div>${chipRow(FEELINGS, 'feeling')}
+        <div class="q">This shot is</div>${chipRow(ROLES, 'role')}
+        <div class="q">The footage is</div><div class="chips"><button class="chip ${S.input === 'rec709' ? 'on' : ''}" data-input="rec709">Normal video (Rec.709)</button><button class="chip ${S.input === 'logc3' ? 'on' : ''}" data-input="logc3">Log (ARRI LogC3)</button></div>
+        <div class="row"><input id="note" placeholder="Anything else about this scene? (saved with presets)" value="${esc(I.note)}"></div>
+        ${!S.frame ? '<p class="small dim">Your answers are remembered. Read a frame to get directions.</p>' : ''}</div>
+      <div id="dirs">${directionsHTML()}</div>
+      ${k ? skinCard(k) : ''}
+      ${r && r.matches.length ? `<div class="card"><div class="row tight"><div class="k grow">Similar frames in the encyclopedia</div><button class="small" id="togRefs">${S.showRefs ? 'Hide' : 'Show'}</button></div>${S.showRefs ? refsHTML(r) : ''}</div>` : ''}`;
+    $('#grab', body).onclick = () => busy('Reading frame', async () => { await grab(); await suggest(); render(); });
+    body.querySelectorAll('[data-intent]').forEach(b => b.onclick = () => {
+      const [key, id] = b.dataset.intent.split(':'); S.intent[key] = S.intent[key] === id ? '' : id; settings.set('intent', S.intent);
+      if (key === 'feeling') runSkin();
+      if (S.frame) busy('Finding directions', async () => { await suggest(); S.chosen = -1; render(); }); else render();
+    });
+    body.querySelectorAll('[data-input]').forEach(b => b.onclick = () => { S.input = b.dataset.input; settings.set('input', S.input); runSkin(); stageCache.key = '';
+      if (S.frame) busy('Finding directions', async () => { await suggest(); render(); }); else render(); });
+    $('#note', body).onchange = e => { S.intent.note = e.target.value; settings.set('intent', S.intent); };
+    if ($('#togRefs', body)) $('#togRefs', body).onclick = () => { S.showRefs = !S.showRefs; render(); };
+    if ($('#togSkin', body)) $('#togSkin', body).onclick = () => { S.showSkin = !S.showSkin; render(); };
+    if ($('#autoSkin', body)) $('#autoSkin', body).onclick = () => busy('Checking skin', async () => { S.sample = null; runSkin(); await suggest(); render(); });
+    body.querySelectorAll('[data-fix]').forEach(b => b.onclick = () => {
+      const f = k.fixes[+b.dataset.fix]; if (S.chosen < 0 && !S.recipe.name) { S.look = NEUTRAL_LOOK(); S.recipe = { name: 'Skin fix', presetId: null }; }
+      for (const [key, v] of Object.entries(f.params)) { if (key in S.extra) S.extra[key] = v; else S.look.G[key] = v; }
+      go('tweak'); toast('Fix set in Tweak');
+    });
     body.querySelectorAll('[data-matchref]').forEach(b => b.onclick = () => {
       const m = r.matches[+b.dataset.matchref], ref = refs().frames.find(f => f.id === m.id);
-      S.extra = { ...S.extra, ...computeMatch(matchStats(S.frame), ref.ms) }; S.refName = m.title; S.tab = 'look'; render(); toast(`Match to “${m.title}” set in Look`);
+      S.extra = { ...S.extra, ...computeMatch(matchStats(S.frame), ref.ms) }; S.refName = m.title; go('tweak'); toast(`Match to “${m.title}” set in Tweak`);
     });
+    wireDirections(body);
+    if (S.frame) wireStage(body, (x, y) => busy('Checking skin', async () => { S.sample = [x, y]; runSkin(); await suggest(); S.showSkin = true; render(); toast(S.skin.found ? `Skin sampled: about ${S.skin.ire} IRE` : 'No skin there; try the middle of a cheek'); }));
   }
-
-  // SKIN ------------------------------------------------------------------
-  function renderSkin(body) {
-    const k = S.skin;
-    body.innerHTML = `
-      <div class="row"><button id="grab" class="primary">Check skin in this frame</button>${S.sample ? '<button id="unsample">Use automatic detection</button>' : ''}</div>
-      ${S.frame ? `<div class="dim small">Click a face in the picture to sample its skin directly.</div><img id="skinimg" class="frame click" src="${k && k.mask ? pngDataUrl(k.mask) : preview(S.frame)}">` : '<p class="dim">Skin, Exposure & Equity (§7), as a working check: exposure on the face, density, hue against the skin line, crushed or clipped skin, and two complexions in one frame.</p>'}
-      <div id="sk"></div>`;
-    $('#grab', body).onclick = () => busy('Checking skin', async () => { if (!S.frame || !S.skin) await grab(); S.skin = checkSkin(S.frame, { sample: S.sample }); render(); });
-    if ($('#unsample', body)) $('#unsample', body).onclick = () => { S.sample = null; S.skin = checkSkin(S.frame); render(); };
-    if ($('#skinimg', body)) $('#skinimg', body).onclick = e => { const r = e.target.getBoundingClientRect(); S.sample = [(e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height]; S.skin = checkSkin(S.frame, { sample: S.sample }); render(); };
-    if (!k) return;
+  function readingCard(r, k) {
+    const e = enc(), named = r.hues.filter(h => h.entry && h.share >= 0.03).slice(0, 5), lead = r.lead;
+    const skinLine = !k ? '' : k.mode === 'sampled' && k.found ? `<b>Face (sampled):</b> about ${k.ire} IRE${k.ire < 40 ? ', dark for a key-lit face (40–75)' : k.ire > 80 ? ', hot for a face (40–75)' : ', inside the usual 40–75'}.`
+      : k.found ? `<b>Possible face</b> at about ${k.ire} IRE (found by colour, so it may be a warm object). Click the face in the picture to confirm.` : 'No face found by colour. If there is a person, click their face in the picture.';
+    return `<div class="card"><div class="k">What the frame is doing</div>
+      <p>${esc(frameSummary(r, e))}</p>
+      ${swatchBar(r.swatches)}
+      <div class="small">${named.map(h => `<span class="pill" style="border-color:${h.entry.hex}">${esc(h.entry.name.split(' / ')[0])} ${pct(h.share)}</span>`).join(' ')}</div>
+      <div class="facts small">Deep shadow ${pct(r.tones.shadow)} of the picture${r.tones.highlight > 0.02 ? ` · blown highlights ${pct(r.tones.highlight)}` : ''} · contrast ${r.stats.contrast.toFixed(2)}${r.area.bars ? ` · ${r.area.bars} bars ignored` : ''}</div>
+      ${lead ? `<p class="small"><b>${esc(lead.entry.name)}</b>: ${esc(lead.entry.tag.toLowerCase())}. <a href="#" data-more="${esc(lead.entry.name.split(' / ')[0])}">More</a></p>` : ''}
+      ${r.pal.entry ? `<p class="small"><b>${esc(r.pal.entry.n)}</b> palette${r.pal.confidence < 0.55 ? ' (borderline)' : ''}: ${esc(r.pal.why[r.pal.why.length - 1])} <a href="#" data-more="${esc(r.pal.entry.n)}">More</a></p>` : ''}
+      ${r.confidence.level !== 'high' ? `<p class="small warn">${esc(r.confidence.why.join(' '))}</p>` : ''}
+      <p class="small">${skinLine}</p></div>`;
+  }
+  function skinCard(k) {
     const icon = l => ({ good: '●', warn: '▲', info: '◆' })[l];
-    $('#sk', body).innerHTML = `
-      ${k.L != null ? `<div class="facts small">Skin ${k.mode} · ${pct(k.coverage)} of frame · about ${k.ire} IRE · density ${(k.C * 100).toFixed(1)} · hue ${Math.round(k.H)}° <span class="sw" style="background:${k.swatch}"></span></div>` : ''}
+    return `<div class="card"><div class="row tight"><div class="k grow">Skin check ${k.mode === 'sampled' ? '(sampled)' : '(automatic)'}</div>${k.mode === 'sampled' ? '<button class="small" id="autoSkin">Automatic</button>' : ''}<button class="small" id="togSkin">${S.showSkin ? 'Hide' : 'Show'}</button></div>
+      ${S.showSkin ? `${k.mask ? `<img class="frame" src="${pngDataUrl(k.mask)}">` : ''}
+      ${k.L != null ? `<div class="facts small">${pct(k.coverage)} of the picture · about ${k.ire} IRE · density ${(k.C * 100).toFixed(1)} · hue ${Math.round(k.H)}° <span class="sw" style="background:${k.swatch}"></span></div>` : ''}
       ${k.findings.map(f => `<div class="finding ${f.level}"><b>${icon(f.level)} ${esc(f.title)}</b><p class="small">${esc(f.text)}</p></div>`).join('')}
-      ${k.fixes.length ? `<div class="card"><div class="k">Fixes</div>${k.fixes.map((f, i) => `<button data-fix="${i}">${esc(f.label)}</button>`).join(' ')}
-        <p class="small dim">Fixes go into the Look tab (Skin Guard and exposure), then apply them to clips from there.</p></div>` : ''}
+      ${k.fixes.length ? `<div class="row wrap">${k.fixes.map((f, i) => `<button data-fix="${i}">${esc(f.label)}</button>`).join('')}</div>` : ''}
       <div class="row"><img class="scope" src="${pngDataUrl(vectorscope(S.frame))}"><p class="small dim">Vectorscope. The orange line is the skin-tone line: healthy skin of every complexion sits along it; how far out it reaches is saturation, not complexion.</p></div>
-      <div class="card prose small"><div class="k">Why this matters (§7)</div>${enc().SKIN_HTML}</div>`;
-    body.querySelectorAll('[data-fix]').forEach(b => b.onclick = () => {
-      const f = k.fixes[+b.dataset.fix];
-      for (const [key, v] of Object.entries(f.params)) { if (key in S.extra) S.extra[key] = v; else S.look.G[key] = v; }
-      S.tab = 'look'; render(); toast('Fix set in Look: apply it to your clips from there');
-    });
+      <p class="small"><a href="#" data-more="Skin, Exposure">Skin, exposure and equity (§7)</a></p>` : `<p class="small dim">${esc((k.findings.find(f => f.level === 'warn') || k.findings[0] || {}).title || '')}</p>`}</div>`;
+  }
+  const refsHTML = r => `<div class="refs">${r.matches.map((m, i) => `
+    <div class="ref"><img src="${up.frameUrl(m.thumb)}" onerror="this.style.display='none'"><div><b>${esc(m.title)}</b> <span class="dim small">${esc(m.section)}</span>
+    <p class="small">${esc(m.reading)}</p>${lookChips(m.looks.slice(0, 4))}
+    <div class="row wrap">${m.link ? `<button data-url="${esc(m.link)}">Real stills (FILMGRAB)</button>` : ''}<button data-matchref="${i}">Match my shot to this</button></div></div></div>`).join('')}</div>`;
+  function directionsHTML() {
+    if (!S.frame) return '';
+    if (!S.directions.length) return '<div class="card"><p class="dim small">Finding directions…</p></div>';
+    const ask = !S.intent.feeling ? '<p class="small warn">Pick how the scene should feel for sharper directions. These are based on the frame alone.</p>' : '';
+    return `<div class="k sect">Directions</div><p class="small dim">Click one to preview it on your frame. Apply it, tweak it, or keep it as a preset.</p>${ask}
+      ${S.directions.map((d, i) => `<div class="dir ${S.chosen === i ? 'on' : ''}" data-dir="${i}">
+        <img src="${d.thumb}"><div class="dtext">
+          <div><b>${esc(d.name)}</b> <span class="badge ${d.kind}">${esc(KIND_LABEL[d.kind])}</span></div>
+          <p class="small">${esc(d.why.lines[0])}</p>${d.why.lines[1] ? `<p class="small dim">${esc(d.why.lines[1])}</p>` : ''}
+          <p class="small">${esc([...d.effect, ...d.notes].join(' '))}</p>
+          <div class="small dim mono">${esc(lookCode(d.look, false))}</div>
+          ${S.chosen === i ? `<div class="row wrap"><button class="primary" data-dapply="${i}">Apply to selected clips</button><button data-dtweak="${i}">Tweak</button><button data-dsave="${i}">Save as preset</button>${d.why.hue ? `<button data-more="${esc(d.why.hue.name.split(' / ')[0])}">About ${esc(d.why.hue.name.split(' / ')[0])}</button>` : ''}</div>` : ''}
+        </div></div>`).join('')}`;
+  }
+  function wireDirections(body) {
+    body.querySelectorAll('[data-dir]').forEach(el => el.onclick = e => { if (e.target.closest('button')) return; const i = +el.dataset.dir; if (S.chosen === i) return; choose(i); S.view = 'split'; render(); });
+    body.querySelectorAll('[data-dapply]').forEach(b => b.onclick = () => busy('Applying', () => applyLookToClips(S.look, S.extra, S.input, S.matte)));
+    body.querySelectorAll('[data-dtweak]').forEach(b => b.onclick = () => go('tweak'));
+    body.querySelectorAll('[data-dsave]').forEach(b => b.onclick = () => busy('Saving', async () => {
+      const f = FEELINGS.find(x => x.id === S.intent.feeling); await saveCurrentAsPreset(S.recipe.name + (f ? ' · ' + f.n.toLowerCase() : ''), true); }));
   }
 
-  // SCRIPT ----------------------------------------------------------------
-  function renderScript(body) {
+  // SCENE -----------------------------------------------------------------
+  function renderScene(body) {
     const sh = S.shots;
     body.innerHTML = `
       <div class="row"><input id="tags" placeholder="Tags for this shot: character, place, act…"><button id="add" class="primary">Add this shot</button></div>
-      <div class="row"><button id="load">Load tagged shots from markers</button><button id="scan">Scan the sequence</button><input id="every" type="number" min="1" value="5" style="width:50px"><span class="small dim">s apart</span></div>
-      ${sh.length ? `<img class="strip" src="${pngDataUrl(renderStrip(sh))}"><div class="row"><button id="png">Save strip (PNG)</button><button id="csv">Save as CSV</button><button id="clear">Clear</button></div>
-        <div class="card"><div class="k">What the sequence says</div>${readSequence(sh, enc()).map(o => `<p><b>${esc(o.n)}.</b> ${esc(o.why)}</p>${o.entry ? `<p class="small dim">${esc(o.entry.t)}</p>` : ''}`).join('')}</div>
+      <div class="row wrap"><button id="load">Load tagged shots from markers</button><button id="scan">Scan the sequence</button><span class="row tight"><span class="small dim">every</span><input id="every" type="number" min="1" value="5" style="width:44px"><span class="small dim">s</span></span></div>
+      ${sh.length ? `<img class="strip" src="${pngDataUrl(renderStrip(sh))}"><div class="row wrap"><button id="png">Save strip (PNG)</button><button id="csv">Save as CSV</button><button id="clear">Clear</button></div>
+        <div class="card"><div class="k">What the sequence says</div>${readSequence(sh, enc(), S.intent).map(o => `<p><b>${esc(o.n)}.</b> ${esc(o.why)}</p>${o.entry ? `<p class="small dim">${esc(o.entry.t)}</p>` : ''}`).join('')}
+          ${!S.intent.genre ? '<p class="small dim">Set what the project is in Shot to get story-level readings (motifs, leitmotifs) for narrative work.</p>' : ''}</div>
         <div class="shots">${sh.map((s, i) => `<div class="shot"><span class="tc">${esc(s.tc)}</span>${swatchBar(s.sw)}<span class="small">${esc(cap(s.hue))} · ${esc((enc().PALS.find(p => p.id === s.pal) || {}).n || '')}${s.tags.length ? ' · ' + esc(s.tags.join(', ')) : ''}</span><button data-del="${i}">✕</button></div>`).join('')}</div>`
-        : '<p class="dim">Build a color script as you edit: tag shots (they are saved as markers in your sequence, so they travel with the project), or scan the whole sequence, then read colour across the film.</p>'}`;
+        : '<p class="dim">Build a colour script as you edit: add shots (saved as markers in your sequence, so they travel with the project) or scan the whole sequence, then see how colour moves across it and whether it matches the feeling you set.</p>'}`;
     const addShot = async (g, tags) => { const rd = readFrame(g.frame, enc(), null); const rec = shotRecord(rd, { seconds: g.seconds, timecode: g.timecode, name: g.clipName, tags });
       S.shots.push(rec); S.shots.sort((a, b) => a.t - b.t); return rec; };
     $('#add', body).onclick = () => busy('Adding shot', async () => {
-      const g = await grab(), tags = $('#tags', body).value.split(',').map(t => t.trim()).filter(Boolean), rec = await addShot(g, tags);
+      const g = await host.grabFrame(), tags = $('#tags', body).value.split(',').map(t => t.trim()).filter(Boolean), rec = await addShot(g, tags);
       await host.addMarker({ seconds: g.seconds, name: 'Colored Lens: ' + cap(rec.hue), note: encodeShot(rec), color: 'purple' }).catch(e => toast('Shot added (marker not saved: ' + e.message + ')'));
       render(); });
     $('#load', body).onclick = () => busy('Reading markers', async () => { const ms = await host.listMarkers(); const got = ms.map(m => decodeShot(m.note)).filter(Boolean);
@@ -166,79 +282,105 @@ export async function startApp(host, root) {
     body.querySelectorAll('[data-del]').forEach(b => b.onclick = () => { S.shots.splice(+b.dataset.del, 1); render(); });
   }
 
-  // LOOK ------------------------------------------------------------------
-  function renderLook(body) {
+  // TWEAK -----------------------------------------------------------------
+  function renderTweak(body) {
     const C = cat(), L = S.look, G = L.G, X = S.extra;
     const byNum = o => Object.keys(o).sort((a, b) => +a.replace(/\D/g, '') - +b.replace(/\D/g, ''));
     const sel = (k, table) => `<label>${esc({ K: 'Lens character', D: 'Diffusion', C: 'Colour science', M: 'Film / video medium' }[k])}<select data-axis="${k}">${byNum(table).map(id => `<option value="${id}" ${L[k] === id ? 'selected' : ''}>${id} ${esc(table[id].short || table[id].name)}</option>`).join('')}</select></label>`;
-    const XDEF = { skinGuard: 0, skinHue: 0.8, skinDensity: 0.7, skinLight: 0.5, matchAmt: 1 };
-    const slider = (obj, key, label, min, max, step) => sliderHTML({ id: obj + ':' + key, label: esc(label), min, max, step, value: +(obj === 'G' ? G : X)[key], def: obj === 'G' ? GRADE0[key] : XDEF[key] });
+    const slider = (obj, key, label, min, max, step) => sliderHTML({ id: obj + ':' + key, label: esc(label), min, max, step, value: +(obj === 'G' ? G : X)[key], def: obj === 'G' ? GRADE0[key] : ({ ...XDEF, matchAmt: 1 })[key] });
+    const editing = S.recipe.presetId ? listPresets().find(p => p.id === S.recipe.presetId) : null;
     body.innerHTML = `
-      <div class="row"><input id="code" placeholder="Paste a Lukuluku look code or share link" value="${esc(formatCode(L))}"><button id="parse">Use</button></div>
-      <div class="cols">${sel('K', C.lens)}${sel('D', C.diffusion)}${sel('C', C.color)}${sel('M', C.medium)}
+      ${S.frame ? stageHTML(false, 'Live preview on your frame: colour, grain and vignette. Halation and diffusion glow show on the clip.') : '<p class="dim small">Read a frame in Shot to preview the look live while you adjust it.</p>'}
+      <div class="row"><input id="rname" placeholder="Name this look" value="${esc(S.recipe.name)}"></div>
+      ${editing ? `<p class="small dim">Editing preset “${esc(editing.name)}”.</p>` : ''}
+      <div class="row wrap"><button id="apply" class="primary">Apply to selected clips</button>${editing ? '<button id="update">Update preset</button>' : ''}<button id="saveNew">${editing ? 'Save as new preset' : 'Save as preset'}</button><button id="reset">Start from neutral</button></div>
+      <div class="cols">${sel('C', C.color)}${sel('M', C.medium)}${sel('K', C.lens)}${sel('D', C.diffusion)}
         <label>Footage is<select id="input"><option value="rec709" ${S.input === 'rec709' ? 'selected' : ''}>Normal video (Rec.709)</option><option value="logc3" ${S.input === 'logc3' ? 'selected' : ''}>Log (ARRI LogC3)</option></select></label>
-        <label>Aspect matte<select id="matte"><option value="">None</option>${Object.keys(C.aspect).sort((a, b) => a - b).map(a => `<option value="${a}" ${S.matte && L.A === a ? 'selected' : ''}>${esc(C.aspect[a].name)}</option>`).join('')}</select></label></div>
+        <label>Aspect matte<select id="matte"><option value="none" ${!S.matte ? 'selected' : ''}>No matte</option>${Object.keys(C.aspect).sort((a, b) => a - b).map(a => `<option value="${a}" ${S.matte && L.A === a ? 'selected' : ''}>${esc(C.aspect[a].name)}</option>`).join('')}</select></label></div>
       <p class="small dim">${esc((C.color[L.C] || {}).recipe || '')} ${esc((C.medium[L.M] || {}).recipe || '')}</p>
-      <div id="prev" class="pair"></div>
       <div class="card"><div class="k">Strength</div>${slider('G', 'lutMix', 'Colour look', 0, 1, 0.01)}${slider('G', 'grainK', 'Grain', 0, 2, 0.01)}${slider('G', 'halK', 'Halation', 0, 2, 0.01)}${slider('G', 'diffK', 'Diffusion glow', 0, 2, 0.01)}${slider('G', 'vigK', 'Vignette', 0, 2, 0.01)}</div>
-      <div class="card"><div class="k">Grade</div>${slider('G', 'exp', 'Exposure', -3, 3, 0.05)}${slider('G', 'con', 'Contrast', 0.5, 1.6, 0.01)}${slider('G', 'sat', 'Saturation', 0, 2, 0.01)}${slider('G', 'temp', 'Temperature', -1, 1, 0.01)}${slider('G', 'tint', 'Tint', -1, 1, 0.01)}${slider('G', 'hi', 'Highlights', -1, 1, 0.01)}${slider('G', 'sh', 'Shadows', -1, 1, 0.01)}</div>
-      <div class="card"><div class="k">Skin Guard <span class="dim small">new</span></div><p class="small dim">The look may add to skin, but cannot take away its hue, density or light beyond what you allow (§7: “key the skin and limit how much the look affects it”).</p>
+      <div class="card"><div class="k">Grade</div>${slider('G', 'exp', 'Exposure', -3, 3, 0.05)}${slider('G', 'con', 'Contrast', 0.5, 1.6, 0.01)}${slider('G', 'sat', 'Saturation', 0, 2, 0.01)}${slider('G', 'vib', 'Vibrance', -1, 1, 0.01)}${slider('G', 'temp', 'Temperature', -1, 1, 0.01)}${slider('G', 'tint', 'Tint', -1, 1, 0.01)}${slider('G', 'hi', 'Highlights', -1, 1, 0.01)}${slider('G', 'sh', 'Shadows', -1, 1, 0.01)}${slider('G', 'bk', 'Blacks', -1, 1, 0.01)}${slider('G', 'wh', 'Whites', -1, 1, 0.01)}</div>
+      <div class="card"><div class="k">Skin Guard</div><p class="small dim">The look may add to skin, but cannot take away its hue, density or light beyond what you allow.</p>
         ${slider('X', 'skinGuard', 'Skin Guard', 0, 1, 0.01)}${slider('X', 'skinHue', 'Protect hue', 0, 1, 0.01)}${slider('X', 'skinDensity', 'Protect density', 0, 1, 0.01)}${slider('X', 'skinLight', 'Protect light', 0, 1, 0.01)}</div>
-      <div class="card"><div class="k">Match to Reference <span class="dim small">new</span></div>${X.matchAmt > 0 ? `<p class="small">Matching ${esc(S.refName || 'a reference')}.</p>${slider('X', 'matchAmt', 'Match amount', 0, 1, 0.01)}` : '<p class="small dim">Pick “Match my shot to this” on a reference in Read, or set a frame from your own timeline as the reference.</p>'}
-        <div class="row"><button id="setref">Use the current frame as reference</button><button id="matchref" ${S.refFrameStats ? '' : 'disabled'}>Match this frame to it</button>${X.matchAmt > 0 ? '<button id="nomatch">Clear match</button>' : ''}</div></div>
+      <div class="card"><div class="k">Match to reference</div>${X.matchAmt > 0 ? `<p class="small">Matching ${esc(S.refName || 'a reference')}.</p>${slider('X', 'matchAmt', 'Match amount', 0, 1, 0.01)}` : '<p class="small dim">Set a frame from your timeline as the reference, then park on the shot to match. Or use “Match my shot to this” on a similar frame in Shot.</p>'}
+        <div class="row wrap"><button id="setref">Use the current frame as reference</button><button id="matchref" ${S.refFrameStats ? '' : 'disabled'}>Match this frame to it</button>${X.matchAmt > 0 ? '<button id="nomatch">Clear match</button>' : ''}</div></div>
       ${hasCurves(G) ? '<p class="warn small">This look has curves from Lukuluku. The effect applies everything except curves; the .cube LUT includes them.</p>' : ''}
-      <div class="row wrap"><button id="apply" class="primary">Apply to selected clips</button><button id="cube">Export .cube</button><button id="open">Open in Lukuluku</button></div>
-      <p class="small dim">${esc(host.applyNote || '')}</p>`;
-    const sync = () => { $('#code', body).value = formatCode(S.look); };
-    body.querySelectorAll('[data-axis]').forEach(s => s.onchange = () => { S.look[s.dataset.axis] = s.value; sync(); drawPreview(); });
-    $('#input', body).onchange = e => { S.input = e.target.value; drawPreview(); };
-    $('#matte', body).onchange = e => { S.matte = !!e.target.value; if (e.target.value) S.look.A = e.target.value; sync(); };
-    wireSliders(body, (id, v) => { const [obj, key] = id.split(':'); (obj === 'G' ? S.look.G : S.extra)[key] = v; drawPreview(); });
+      <div class="card"><div class="k">More</div>
+        <div class="row"><input id="code" placeholder="Paste a Lukuluku look code or share link" value="${esc(lookCode(L, S.matte))}"><button id="parse">Use</button></div>
+        <div class="row wrap"><button id="cube">Export .cube</button><button id="open">Open in Lukuluku</button></div>
+        <p class="small dim">${esc(host.applyNote || '')}</p></div>`;
+    const changed = () => { $('#code', body).value = lookCode(S.look, S.matte); drawStage(); };
+    body.querySelectorAll('[data-axis]').forEach(s => s.onchange = () => { S.look[s.dataset.axis] = s.value; changed(); });
+    $('#input', body).onchange = e => { S.input = e.target.value; settings.set('input', S.input); changed(); };
+    $('#matte', body).onchange = e => { S.matte = e.target.value !== 'none'; if (S.matte) S.look.A = e.target.value; changed(); };
+    $('#rname', body).onchange = e => { S.recipe.name = e.target.value; };
+    wireSliders(body.querySelector('.stage') ? body : body, (id, v) => { if (id === 'wipe') { S.wipe = v; composite(); return; } const [obj, key] = id.split(':'); (obj === 'G' ? S.look.G : S.extra)[key] = v; drawStage(); });
+    $('#apply', body).onclick = () => busy('Applying', () => applyLookToClips(S.look, S.extra, S.input, S.matte));
+    if ($('#update', body)) $('#update', body).onclick = () => busy('Saving', () => saveCurrentAsPreset($('#rname', body).value, false));
+    $('#saveNew', body).onclick = () => busy('Saving', async () => { await saveCurrentAsPreset($('#rname', body).value, true); render(); });
+    $('#reset', body).onclick = () => { S.look = NEUTRAL_LOOK(); S.extra = { ...XDEF }; S.matte = false; S.recipe = { name: '', presetId: null }; S.chosen = -1; render(); };
     $('#parse', body).onclick = () => { try { const l = parseLookInput($('#code', body).value, C); S.look = l; toast('Look loaded: ' + formatCode(l)); render(); } catch (e) { toast(e.message, 4000); } };
     $('#setref', body).onclick = () => busy('Grabbing reference', async () => { const g = await host.grabFrame(); S.refFrameStats = matchStats(g.frame); S.refName = `${g.clipName || 'frame'} ${g.timecode || ''}`; toast('Reference set: now park on the shot to match'); render(); });
     $('#matchref', body).onclick = () => busy('Matching', async () => { await grab(); S.extra = { ...S.extra, ...computeMatch(matchStats(S.frame), S.refFrameStats) }; render(); });
     if ($('#nomatch', body)) $('#nomatch', body).onclick = () => { S.extra.matchAmt = 0; render(); };
-    $('#apply', body).onclick = () => busy('Applying', async () => {
-      const params = lookToEngineParams(S.look, C, { matte: S.matte, params: { ...S.extra, input: S.input === 'logc3' ? 1 : 0 } });
-      const res = await host.applyLook({ params, look: S.look, makeCube: async () => bakeCube(S.look, C, await lutsFor(S.look), { input: S.input, keepExposure: true, extra: S.extra }) });
-      toast(res.message, 6000); });
     $('#cube', body).onclick = () => busy('Baking LUT', async () => {
       const cube = bakeCube(S.look, C, await lutsFor(S.look), { input: S.input, extra: S.extra }); const p = await host.saveFile(cube.name + '.cube', cube.text, { title: 'Save the LUT' }); if (p) toast('Saved ' + p); });
     $('#open', body).onclick = () => host.openUrl(shareLink(S.look, up.content.looks.app));
-    drawPreview();
-  }
-  let previewT = 0;
-  function drawPreview() {
-    clearTimeout(previewT); previewT = setTimeout(async () => {
-      const el = $('#prev', root); if (!el || !S.frame) { if (el) el.innerHTML = '<p class="dim small">Read a frame to preview the look on your own shot (colour only; grain, glow and halation show in the effect).</p>'; return; }
-      const small = downsample(S.frame, 300), fn = makePixelFn(S.look, cat(), await lutsFor(S.look), { input: S.input, keepExposure: true, extra: S.extra }), out = { w: small.w, h: small.h, data: new Uint8ClampedArray(small.data.length) };
-      for (let i = 0; i < small.w * small.h; i++) { const o = fn([small.data[i * 4] / 255, small.data[i * 4 + 1] / 255, small.data[i * 4 + 2] / 255]); out.data[i * 4] = o[0] * 255; out.data[i * 4 + 1] = o[1] * 255; out.data[i * 4 + 2] = o[2] * 255; out.data[i * 4 + 3] = 255; }
-      el.innerHTML = `<div><img src="${pngDataUrl(small)}"><div class="small dim">Before</div></div><div><img src="${pngDataUrl(out)}"><div class="small dim">${esc(formatCode(S.look))}</div></div>`;
-    }, 120);
+    if (S.frame) { body.querySelectorAll('[data-view]').forEach(b => b.onclick = () => { S.view = b.dataset.view; render(); }); drawStage(); }
   }
 
-  // LIBRARY ---------------------------------------------------------------
+  // PRESETS ---------------------------------------------------------------
+  const intentText = i => [GENRES, FEELINGS, ROLES].map((l, k) => (l.find(x => x.id === i[['genre', 'feeling', 'role'][k]]) || {}).n).filter(Boolean).join(' · ');
+  function renderPresets(body) {
+    const list = listPresets();
+    body.innerHTML = `
+      <div class="row wrap"><button class="chip ${S.adapt ? 'on' : ''}" id="adapt">Adapt to each shot: ${S.adapt ? 'on' : 'off'}</button></div>
+      <p class="small dim">${S.adapt ? 'Applying a preset first matches the shot under the playhead to the shot the preset was made on (exposure, contrast, balance), so the look lands the same way. Read the frame in Shot first.' : 'Presets are applied exactly as saved.'}</p>
+      ${S.shownCode ? `<div class="card"><div class="k">Preset code</div><p class="small dim">Copy this and paste it into Colored Lens on another machine.</p><textarea id="codeOut" rows="3" readonly>${esc(S.shownCode)}</textarea><div class="row"><button id="hideCode">Done</button></div></div>` : ''}
+      ${list.length ? list.map(p => `<div class="preset">${p.thumb ? `<img src="${p.thumb}">` : '<div class="nothumb"></div>'}<div class="dtext">
+          <b>${esc(p.name)}</b><div class="small dim">${esc(intentText(p.intent || {}) || 'No intent recorded')}${p.from ? ' · made on ' + esc(p.from) : ''}</div>
+          <div class="small dim mono">${esc(lookCode(p.look, p.matte))}${p.input === 'logc3' ? ' · log footage' : ''}${p.extra && p.extra.skinGuard ? ' · Skin Guard ' + p.extra.skinGuard : ''}</div>
+          ${p.intent && p.intent.note ? `<p class="small">${esc(p.intent.note)}</p>` : ''}
+          <div class="row wrap"><button class="primary" data-papply="${p.id}">Apply to selected clips</button><button data-popen="${p.id}">Open in Tweak</button><button data-pcode="${p.id}">Share code</button><button data-pdup="${p.id}">Duplicate</button><button data-pdel="${p.id}">${S.confirmDel === p.id ? 'Confirm delete' : 'Delete'}</button></div>
+        </div></div>`).join('') : '<p class="dim">No presets yet. Pick a direction in Shot or build a look in Tweak, then save it. Presets keep the look, the colour configuration, Skin Guard and what the shot was for, so you can reuse them on other scenes.</p>'}
+      <div class="card"><div class="k">Add a preset from a code</div><div class="row"><input id="pcode" placeholder="Paste a preset code (CLP1:…)"><button id="pimport">Add</button></div></div>`;
+    $('#adapt', body).onclick = () => { S.adapt = !S.adapt; settings.set('adapt', S.adapt); render(); };
+    if ($('#hideCode', body)) $('#hideCode', body).onclick = () => { S.shownCode = ''; render(); };
+    const byId = id => listPresets().find(p => p.id === id);
+    body.querySelectorAll('[data-papply]').forEach(b => b.onclick = () => busy('Applying', async () => { const p = byId(b.dataset.papply);
+      if (S.adapt && !S.frame) toast('Read a frame in Shot first to adapt the preset; applying it as saved.');
+      await applyLookToClips(p.look, presetExtra(p), p.input, p.matte); }));
+    body.querySelectorAll('[data-popen]').forEach(b => b.onclick = () => { const p = byId(b.dataset.popen);
+      S.look = clone(p.look); S.extra = presetExtra(p); S.input = p.input || S.input; S.matte = !!p.matte; S.recipe = { name: p.name, presetId: p.id }; S.chosen = -1; S.view = 'split'; go('tweak'); });
+    body.querySelectorAll('[data-pcode]').forEach(b => b.onclick = () => { S.shownCode = presetCode(byId(b.dataset.pcode)); try { navigator.clipboard.writeText(S.shownCode); toast('Preset code copied'); } catch {} render(); });
+    body.querySelectorAll('[data-pdup]').forEach(b => b.onclick = () => { duplicatePreset(b.dataset.pdup); render(); });
+    body.querySelectorAll('[data-pdel]').forEach(b => b.onclick = () => { const id = b.dataset.pdel; if (S.confirmDel === id) { deletePreset(id); S.confirmDel = ''; toast('Preset deleted'); } else S.confirmDel = id; render(); });
+    $('#pimport', body).onclick = () => { try { const p = importPresetCode($('#pcode', body).value); toast(`Added “${p.name}”`); render(); } catch (e) { toast(e.message, 4000); } };
+  }
+
+  // ENCYCLOPEDIA ----------------------------------------------------------
   function libraryEntries() {
     const e = enc(), out = [];
     e.HUES.forEach(h => out.push({ s: 'Colour psychology', t: h.name + ': ' + h.tag, body: h.p.join(' ') + ' Bright side: ' + h.pos + ' Dark side: ' + h.neg + ' Craft: ' + h.craft, looks: h.looks, ex: h.ex.map(x => `${x[0]} (${x[1]}, ${x[2]}): ${x[3]}`), hex: h.hex }));
+    e.PALS.forEach(p => out.push({ s: 'Palette structures', t: p.n, body: p.t + ' ' + (e.PALI[p.id] || '') + ' Examples: ' + p.ex, looks: p.looks, pal: p.pal }));
     e.DIMS.forEach(d => out.push({ s: 'Dimensions', t: d.n, body: d.t, hex: d.c }));
     e.ITTEN.forEach(d => out.push({ s: "Itten's contrasts", t: d.n, body: d.t, hex: d.c }));
-    e.PALS.forEach(p => out.push({ s: 'Palette structures', t: p.n, body: p.t + ' ' + (e.PALI[p.id] || '') + ' Examples: ' + p.ex, looks: p.looks, pal: p.pal }));
     e.NARR.forEach(n => out.push({ s: 'Narrative devices', t: n.n, body: n.t + ' ' + (e.NARRI[n.n] || '') + ' ' + n.ex, hex: n.c }));
     e.AUTS.forEach(a => out.push({ s: 'Auteurs & cinematographers', t: a.n, body: (a.w || '') + '. ' + a.t + ' ' + (e.AUTI[a.n] || '') + ' Films: ' + a.f, looks: String(a.l || '').split(/\s*·\s*/).filter(Boolean), pal: a.pal }));
     e.TECH.forEach(t => out.push({ s: 'Processes & stocks', t: `${t[1]} (${t[0]})`, body: strip(t[2]), looks: String(t[3] || '').split(/[\s,·]+/).filter(x => /^[LOHKDCM]\d+$/.test(x)) }));
     e.GLOS.forEach(g => out.push({ s: 'Glossary', t: g[0], body: strip(g[1]) }));
-    e.BIB.forEach(b => b.items.forEach(i => out.push({ s: 'Bibliography · ' + b.h, t: strip(i[0]), body: strip(i[1]) })));
     out.push({ s: 'Skin, exposure & equity', t: 'Skin, Exposure & Equity', body: strip(e.SKIN_HTML) });
+    e.BIB.forEach(b => b.items.forEach(i => out.push({ s: 'Bibliography · ' + b.h, t: strip(i[0]), body: strip(i[1]) })));
     return out;
   }
-  let libQ = '';
-  function renderLibrary(body) {
-    const all = libraryEntries(), q = libQ.toLowerCase().trim(), list = q ? all.filter(x => (x.t + ' ' + x.body + ' ' + (x.ex || []).join(' ')).toLowerCase().includes(q)) : all;
-    body.innerHTML = `<div class="row"><input id="q" placeholder="Search the encyclopedia (red, Deakins, bleach bypass, skin…)" value="${esc(libQ)}"></div>
-      <div class="dim small">${list.length} entries · ${esc(enc().title)}${enc().compiled ? ' · compiled ' + esc(enc().compiled) : ''} <a data-url="${esc(config.sources.encyclopedia.app)}" href="#">open the full encyclopedia</a></div>
-      ${list.slice(0, 80).map(x => `<div class="card"><div class="k">${esc(x.s)}</div><h3>${x.hex ? `<span class="sw" style="background:${x.hex}"></span>` : ''}${esc(x.t)}</h3>${x.pal ? swatchBar(x.pal.map(h => ({ hex: h, share: 1 }))) : ''}<p class="small">${esc(x.body)}</p>${x.ex ? `<ul class="small">${x.ex.map(t => `<li>${esc(t)}</li>`).join('')}</ul>` : ''}${lookChips(x.looks || [])}</div>`).join('')}`;
-    const q$ = $('#q', body); q$.oninput = () => { libQ = q$.value; clearTimeout(renderLibrary.t); renderLibrary.t = setTimeout(() => { renderLibrary(body); const n = $('#q', body); n.focus(); try { n.setSelectionRange(libQ.length, libQ.length); } catch {} }, 250); };
+  function renderEnc(body) {
+    const all = libraryEntries(), q = S.encQ.toLowerCase().trim();
+    const list = q ? all.filter(x => x.t.toLowerCase().includes(q)).concat(all.filter(x => !x.t.toLowerCase().includes(q) && (x.body + ' ' + (x.ex || []).join(' ')).toLowerCase().includes(q))) : all;
+    body.innerHTML = `<div class="row"><button id="encBack">← Back</button><input id="q" placeholder="Search the encyclopedia (red, Deakins, bleach bypass, skin…)" value="${esc(S.encQ)}"></div>
+      <div class="dim small">${list.length} entries · ${esc(enc().title)} <a data-url="${esc(config.sources.encyclopedia.app)}" href="#">open the full encyclopedia</a></div>
+      ${list.slice(0, 60).map(x => `<div class="card"><div class="k">${esc(x.s)}</div><h3>${x.hex ? `<span class="sw" style="background:${x.hex}"></span>` : ''}${esc(x.t)}</h3>${x.pal ? swatchBar(x.pal.map(h => ({ hex: h, share: 1 }))) : ''}<p class="small">${esc(x.body)}</p>${x.ex ? `<ul class="small">${x.ex.map(t => `<li>${esc(t)}</li>`).join('')}</ul>` : ''}${lookChips(x.looks || [])}</div>`).join('')}`;
+    $('#encBack', body).onclick = () => go(S.back || 'shot');
+    const q$ = $('#q', body); q$.oninput = () => { S.encQ = q$.value; clearTimeout(renderEnc.t); renderEnc.t = setTimeout(() => { renderEnc(body); const n = $('#q', body); n.focus(); try { n.setSelectionRange(S.encQ.length, S.encQ.length); } catch {} }, 250); };
   }
 
   render();

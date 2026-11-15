@@ -108,7 +108,7 @@ const host = {
       transaction(proj, 'Set Lukuluku Look', ca => {
         for (const [id, value] of Object.entries(params)) {
           const meta = kParamLabels[id]; const p = meta && byLabel[meta.label]; if (!p) continue;
-          const v = meta.kind === 'B' ? !!value : meta.kind === 'P' ? Math.round(value) + 1 : Number(value); // popups are 1-based in Adobe effects
+          const v = meta.kind === 'B' ? !!value : meta.kind === 'P' ? Math.round(value) : Number(value); // Premiere's UXP API takes 0-based popup indices (verified live: +1 landed one item off)
           ca.addAction(p.createSetValueAction(p.createKeyframe(v), true));
         }
       });

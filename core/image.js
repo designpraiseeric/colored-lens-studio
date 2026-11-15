@@ -1,6 +1,6 @@
 // Tiny image helpers that run anywhere (UXP has no canvas pixel access, so we decode ourselves).
 // A Frame is { w, h, data: Uint8ClampedArray (RGBA, 8-bit, display-referred sRGB/Rec.709) }.
-import { unzlibSync } from 'fflate';
+import { unzlibSync, zlibSync } from 'fflate';
 import jpegDecode from 'jpeg-js/lib/decoder.js';
 
 export function makeFrame(w, h, data) { return { w, h, data: data || new Uint8ClampedArray(w * h * 4) }; }
@@ -121,19 +121,13 @@ export function downsample(f, max = 192) {
   return out;
 }
 
-// ---------- PNG encoder (stored deflate blocks: no zlib needed, fine for small previews) ----------
+// ---------- PNG encoder (RGB, deflate via fflate) ----------
 const CRC = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
 function crc32(u8, start, end) { let c = 0xffffffff; for (let i = start; i < end; i++) c = CRC[(c ^ u8[i]) & 255] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; }
 export function encodePNG(f) {
   const raw = new Uint8Array((f.w * 3 + 1) * f.h);
   for (let y = 0, o = 0; y < f.h; y++) { raw[o++] = 0; for (let x = 0; x < f.w; x++) { const i = (y * f.w + x) * 4; raw[o++] = f.data[i]; raw[o++] = f.data[i + 1]; raw[o++] = f.data[i + 2]; } }
-  const blocks = Math.ceil(raw.length / 65535) || 1, z = new Uint8Array(2 + raw.length + blocks * 5 + 4);
-  z[0] = 0x78; z[1] = 0x01; let p = 2, a = 1, b = 0;
-  for (let i = 0; i < blocks; i++) { const s = i * 65535, len = Math.min(65535, raw.length - s);
-    z[p++] = i === blocks - 1 ? 1 : 0; z[p++] = len & 255; z[p++] = len >> 8; z[p++] = ~len & 255; z[p++] = (~len >> 8) & 255;
-    z.set(raw.subarray(s, s + len), p); p += len; }
-  for (let i = 0; i < raw.length; i++) { a = (a + raw[i]) % 65521; b = (b + a) % 65521; }
-  z[p++] = b >> 8; z[p++] = b & 255; z[p++] = a >> 8; z[p++] = a & 255;
+  const z = zlibSync(raw, { level: 2 }), p = z.length; // fast deflate: previews are re-encoded while dragging
   const chunks = [];
   const chunk = (type, data) => { const c = new Uint8Array(12 + data.length), dv = new DataView(c.buffer);
     dv.setUint32(0, data.length); for (let i = 0; i < 4; i++) c[4 + i] = type.charCodeAt(i); c.set(data, 8);
@@ -144,9 +138,10 @@ export function encodePNG(f) {
   out.set(sig, 0); let q = 8; for (const c of chunks) { out.set(c, q); q += c.length; } return out;
 }
 export function toBase64(u8) {
-  const T = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'; let s = '';
+  const T = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/', parts = []; let s = '';
   for (let i = 0; i < u8.length; i += 3) { const n = (u8[i] << 16) | ((u8[i + 1] || 0) << 8) | (u8[i + 2] || 0);
-    s += T[(n >> 18) & 63] + T[(n >> 12) & 63] + (i + 1 < u8.length ? T[(n >> 6) & 63] : '=') + (i + 2 < u8.length ? T[n & 63] : '='); }
-  return s;
+    s += T[(n >> 18) & 63] + T[(n >> 12) & 63] + (i + 1 < u8.length ? T[(n >> 6) & 63] : '=') + (i + 2 < u8.length ? T[n & 63] : '=');
+    if (s.length > 8192) { parts.push(s); s = ''; } }
+  parts.push(s); return parts.join('');
 }
 export const pngDataUrl = f => 'data:image/png;base64,' + toBase64(encodePNG(f));

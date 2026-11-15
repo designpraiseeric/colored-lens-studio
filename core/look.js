@@ -105,6 +105,26 @@ export function lutSample(lut, r, g, b) {
   return out;
 }
 
+/**
+ * Rec.709 footage is already a finished display image, but Lukuluku's colour LUTs include a film-style tone
+ * curve meant for log camera plates. In Rec.709 mode we cancel the baseline (C0) curve with its inverse, so the
+ * neutral look is a true pass-through and every other look keeps only its difference from neutral.
+ * Returns v -> v' for one channel. Mirrored exactly in engine/src/look_engine.cpp (neutralInverse).
+ */
+const INV_N = 1024;
+export function neutralInverse(lut0) {
+  const f = new Float32Array(INV_N);
+  for (let i = 0; i < INV_N; i++) { const g = lin2log(srgb2lin(i / (INV_N - 1))), o = lutSample(lut0, g, g, g); f[i] = (o[0] + o[1] + o[2]) / 3; if (i && f[i] < f[i - 1]) f[i] = f[i - 1]; }
+  const y0 = f[0], y1 = f[INV_N - 1], inv = new Float32Array(INV_N); let j = 0;
+  for (let k = 0; k < INV_N; k++) { const y = y0 + (y1 - y0) * k / (INV_N - 1); while (j < INV_N - 2 && f[j + 1] < y) j++;
+    const d = f[j + 1] - f[j], t = d > 1e-9 ? Math.min(1, Math.max(0, (y - f[j]) / d)) : 0; inv[k] = (j + t) / (INV_N - 1); }
+  const sLo = (inv[1] - inv[0]) / ((y1 - y0) / (INV_N - 1)), sHi = (inv[INV_N - 1] - inv[INV_N - 2]) / ((y1 - y0) / (INV_N - 1));
+  return v => { if (v <= y0) return Math.max(0, inv[0] + (v - y0) * sLo); if (v >= y1) return Math.min(1, inv[INV_N - 1] + (v - y1) * sHi);
+    const x = (v - y0) / (y1 - y0) * (INV_N - 1), i = Math.min(INV_N - 2, Math.floor(x)), t = x - i; return inv[i] + (inv[i + 1] - inv[i]) * t; };
+}
+const invCache = new WeakMap();
+const neutralInverseCached = lut0 => { let f = invCache.get(lut0); if (!f) { f = neutralInverse(lut0); invCache.set(lut0, f); } return f; };
+
 // ------------------------------------------------------------------ helpers mirroring GLSL
 const smooth = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 const WV = [0.2126, 0.7152, 0.0722], dot = (c, w) => c[0] * w[0] + c[1] * w[1] + c[2] * w[2];
@@ -165,7 +185,7 @@ export function applySkinGuard(src, out, p) {
 export function makePixelFn(look, cat, luts, opts = {}) {
   const G = fullGrade(look.G), M = cat.medium[look.M].fx, Dd = cat.diffusion[look.D].fx, K = cat.lens[look.K].fx, dk = G.diffK;
   const lut = luts[look.C], lut0 = luts.C0; if (!lut || !lut0) throw new Error('Colour LUT ' + look.C + ' is not loaded');
-  const in709 = opts.input !== 'logc3', W = wheelUniforms(G), CT = curveTables(G), x = Object.assign({ matchAmt: 0, skinGuard: 0, skinHue: 0.8, skinDensity: 0.7, skinLight: 0.5 }, opts.extra || {});
+  const in709 = opts.input !== 'logc3', inv0 = in709 ? neutralInverseCached(lut0) : null, W = wheelUniforms(G), CT = curveTables(G), x = Object.assign({ matchAmt: 0, skinGuard: 0, skinHue: 0.8, skinDensity: 0.7, skinLight: 0.5 }, opts.extra || {});
   const tk = G.temp * 0.25, tn = G.tint * 0.2; let wb = [1 + tk, 1 - tn, 1 - tk]; const wl = dot(wb, WV); wb = wb.map(v => v / wl);
   const expK = Math.pow(2, in709 && !opts.keepExposure ? 0 : G.exp);
   const lift = (Dd.lift || 0) * dk + (K.lift || 0), flatten = (Dd.flatten || 0) * dk + (K.veil || 0), con = M.con || 0, msat = M.sat != null ? M.sat : 1, clipv = M.clip || 0, warm = M.warm || [1, 1, 1];
@@ -186,6 +206,7 @@ export function makePixelFn(look, cat, luts, opts = {}) {
     if (!W.post) t = wheels(t, W, G.con);
     let col = lutSample(lut, t[0], t[1], t[2]);
     if (G.lutMix < 0.999) { const c0 = lutSample(lut0, t[0], t[1], t[2]); col = col.map((v, i) => c0[i] + (v - c0[i]) * G.lutMix); }
+    if (inv0) col = col.map(inv0);
     if (clipv > 0) col = col.map(v => Math.min(v * (1 + clipv), 1));
     if (G.wh || G.bk) { const Yd = Math.min(1, Math.max(0, dot(col, WV))); col = col.map(v => Math.min(1, Math.max(0, v + G.wh * 0.22 * smooth(0.55, 1, Yd) + G.bk * 0.14 * (1 - smooth(0, 0.38, Yd))))); }
     col = col.map(v => Math.pow(Math.min(1, Math.max(0, v + G.bri * 0.2)), 1 / G.gam));

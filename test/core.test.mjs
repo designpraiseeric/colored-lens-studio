@@ -10,6 +10,8 @@ import { shotRecord, encodeShot, decodeShot, readSequence, scriptCSV } from '../
 import { parseCode, parseLookInput, formatCode, shareLink, bakeCube, lutFromBin, computeMatch, matchStats, makePixelFn } from '../core/look.js';
 import { cmpVersion, Updater } from '../core/updates.js';
 import { hexToRgb } from '../core/color.js';
+import { pickDirections } from '../core/directions.js';
+import { savePreset, presetCode, importPresetCode, listPresets } from '../core/presets.js';
 
 const site = p => new URL('../site/content/' + p, import.meta.url);
 const enc = JSON.parse(fs.readFileSync(site('encyclopedia.json'))), looks = JSON.parse(fs.readFileSync(site('looks.json'))), cat = looks.catalog;
@@ -62,12 +64,39 @@ test('a single-hue frame reads as monochromatic, a grey one as achromatic', () =
 });
 test('skin check finds deep skin and flags it when underexposed', () => {
   const r = checkSkin(solid(120, 80, (x, y) => (x > 0.3 && x < 0.7 && y > 0.2 && y < 0.8 ? [0.2, 0.12, 0.08] : [0.05, 0.06, 0.08])));
-  assert.ok(r.coverage > 0.1, 'skin found'); assert.ok(r.findings.some(f => f.title.includes('low in the exposure')));
+  assert.ok(r.coverage > 0.1, 'skin found'); assert.ok(r.findings.some(f => f.title.includes('underexposed')));
   assert.ok(r.fixes.some(f => f.kind === 'exposure' && f.params.exp > 0));
 });
 test('clicking a point samples skin instead of detecting it', () => {
   const r = checkSkin(solid(120, 80, (x) => (x < 0.5 ? [0.45, 0.3, 0.22] : [0.1, 0.3, 0.5])), { sample: [0.2, 0.5] });
   assert.equal(r.mode, 'sampled'); assert.ok(r.coverage > 0.4 && r.coverage < 0.6);
+});
+test('readings ignore letterbox bars and do not call deep shadow the colour of the shot', () => {
+  const r = readFrame(solid(160, 90, (x, y) => (y < 0.15 || y > 0.85 ? [0, 0, 0] : x < 0.5 ? [0.75, 0.45, 0.2] : [0.045, 0.045, 0.05])), enc);
+  assert.equal(r.area.bars, 'letterbox'); assert.ok(r.lead && ['orange', 'amber'].includes(r.lead.id), 'lead is the lit colour, got ' + (r.lead && r.lead.id));
+  assert.ok(r.tones.shadow > 0.3);
+});
+test('a warm wall is not a face; a face-sized region is', () => {
+  const wall = checkSkin(solid(160, 90, () => [0.62, 0.45, 0.32])); assert.equal(wall.found, false);
+  const face = checkSkin(solid(160, 90, (x, y) => (Math.hypot(x - 0.5, (y - 0.45) * 0.6) < 0.08 ? [0.62, 0.45, 0.35] : [0.12, 0.14, 0.18]))); assert.equal(face.found, true);
+});
+test('directions follow the intent and each is a complete, previewable recipe', () => {
+  const r = readFrame(fixture, enc), sk = checkSkin(fixture);
+  const tense = pickDirections({ genre: 'drama', feeling: 'tense' }, { reading: r, skin: sk }), joy = pickDirections({ genre: 'commercial', feeling: 'joyful' }, { reading: r, skin: sk });
+  assert.ok(tense.length >= 4 && joy.length >= 4);
+  assert.notDeepEqual(tense.map(d => d.id), joy.map(d => d.id));
+  for (const d of [...tense, ...joy]) { assert.ok(d.look.C && d.look.M && d.look.G && d.name && d.line); assert.ok(cat.color[d.look.C] && cat.medium[d.look.M]); }
+  assert.ok(tense.concat(joy).some(d => d.kind === 'natural'), 'a minimal option is always offered');
+});
+test('presets save, share as a code and import', () => {
+  const p = savePreset({ name: 'Test look', look: parseCode('K1·C1·M2'), extra: { skinGuard: 0.5 }, intent: { feeling: 'tender' } });
+  const code = presetCode(p); assert.match(code, /^CLP1:/);
+  const q = importPresetCode(code); assert.equal(q.look.C, 'C1'); assert.equal(q.extra.skinGuard, 0.5); assert.notEqual(q.id, p.id);
+  assert.ok(listPresets().length >= 2);
+});
+test('neutral look is a true pass-through on Rec.709 footage', () => {
+  const fn = makePixelFn(parseCode('C0'), cat, luts, { keepExposure: true });
+  for (const c of [[0, 0, 0], [0.18, 0.18, 0.18], [0.5, 0.5, 0.5], [1, 1, 1], [0.8, 0.55, 0.4], [0.2, 0.4, 0.8]]) fn(c).forEach((v, i) => assert.ok(Math.abs(v - c[i]) < 0.004, `${c} -> ${fn(c)}`));
 });
 test('color script: markers round-trip and the sequence is read', () => {
   const r = readFrame(fixture, enc), shots = [0, 1, 2, 3].map(i => shotRecord(r, { seconds: i, tags: ['Ada'] }));
