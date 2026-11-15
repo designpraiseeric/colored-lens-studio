@@ -130,10 +130,12 @@ export async function startApp(host, root) {
   // ---------- the stage: a large before / after preview with a wipe ----------
   const stageCache = { key: '', before: null, after: null };
   const stageHTML = (clickable, hint) => `<div class="stage">
-      ${S.frame ? `<img id="stage" class="frame ${clickable ? 'click' : ''}" src="">
+      ${S.frame ? `<img id="stage" class="frame ${clickable ? 'click' : ''}" src="" style="${stageStyle()}">
       <div class="row tight">${['before:Before', 'split:Split', 'after:After'].map(v => { const [id, n] = v.split(':'); return `<div role="button" tabindex="0" class="seg ${S.view === id ? 'on' : ''}" data-view="${id}">${n}</div>`; }).join('')}
         <div class="grow">${S.view === 'split' ? sliderHTML({ id: 'wipe', label: 'Wipe', min: 0, max: 1, step: 0.01, value: S.wipe, def: 0.5 }) : ''}</div></div>
       <div class="small dim">${hint || ''}</div>` : ''}</div>`;
+  // Tall (vertical) frames are shown narrower, so the preview never pushes its controls out of the panel.
+  const stageStyle = () => { const a = S.frame ? S.frame.w / S.frame.h : 1.78; return a < 1.2 ? `width:${Math.max(40, Math.round(a * 75))}%;margin-left:auto;margin-right:auto;` : ''; };
   function wireStage(body, onClickImg) {
     body.querySelectorAll('[data-view]').forEach(b => b.onclick = () => { S.view = b.dataset.view; render(); });
     wireSliders(body.querySelector('.stage') || body, (id, v) => { if (id === 'wipe') { S.wipe = v; composite(); } });
@@ -264,7 +266,7 @@ export async function startApp(host, root) {
     const c = S.ctx && S.ctx.counts; if (!c) return '';
     const opts = [['clip', 'This clip', 1], ['source', `Same source${c.source > 1 ? ` (${c.source})` : ''}`, c.source], ['scene', `Whole scene${c.scene ? ` (${c.scene})` : ''}`, c.scene], ['adjust', 'Adjustment layer', c.adjust]];
     if (!opts.find(o => o[0] === S.scope && o[2])) S.scope = 'clip';
-    return `<div class="scope"><span class="small dim">Apply to</span>${opts.map(([id, n, k]) => `<div role="button" tabindex="0" class="chip ${S.scope === id ? 'on' : ''} ${k ? '' : 'off'}" data-scope="${id}" title="${k ? '' : id === 'scene' ? 'Mark scenes with range markers or markers named “Scene …”' : id === 'adjust' ? 'Put an adjustment layer over the shot' : 'Nothing to apply to'}">${S.scope === id ? '✓ ' : ''}${esc(n)}</div>`).join('')}</div>`;
+    return `<div class="applyto"><span class="small dim">Apply to</span>${opts.map(([id, n, k]) => `<div role="button" tabindex="0" class="chip ${S.scope === id ? 'on' : ''} ${k ? '' : 'off'}" data-scope="${id}" title="${k ? '' : id === 'scene' ? 'Mark scenes with range markers or markers named “Scene …”' : id === 'adjust' ? 'Put an adjustment layer over the shot' : 'Nothing to apply to'}">${S.scope === id ? '✓ ' : ''}${esc(n)}</div>`).join('')}</div>`;
   }
   root.addEventListener('click', e => { const b = e.target.closest('[data-scope]'); if (!b || b.classList.contains('off')) return; S.scope = b.dataset.scope; settings.set('scope', S.scope); render(); });
   function readingCard(r, k) {

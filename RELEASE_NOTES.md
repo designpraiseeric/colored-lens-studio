@@ -1,6 +1,11 @@
 # Release notes
 Each `## <version>` block becomes the text of the in-app update banner and the GitHub Release.
 
+## 0.2.6
+Layout fixes from a vertical edit.
+- Vertical (9:16) frames preview at a sensible size, so the buttons stay in view.
+- The "Apply to" choices sit on one row, and choices with nothing to apply to are clearly greyed out.
+
 ## 0.2.5
 Nested sequences, found in a real edit.
 - Colored Lens looks inside nested sequences: a wrapper nest (a B-roll layer, say) that is empty at the playhead is no longer mistaken for the shot, and a nest with content is named with the clip showing inside it.

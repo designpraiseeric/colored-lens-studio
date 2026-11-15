@@ -116,6 +116,8 @@ div.chip.on2 { background: #4a1822; border-color: var(--acc); color: #fff; font-
 .faces .face > * { margin-right: 6px; }
 /* 0.2.4: continuity, apply scope */
 .cont { color: #8fc1f0; }
-.scope { display: flex; flex-direction: row; flex-wrap: wrap; align-items: center; margin: 6px 0 2px; }
-.scope > span { margin-right: 8px; }
-div.chip.off { opacity: .4; cursor: default; }
+.applyto { display: flex; flex-direction: row; flex-wrap: wrap; align-items: center; margin: 6px 0 2px; }
+.applyto > span { margin-right: 8px; }
+div.chip.off { color: #6b6b72; border-style: dashed; background: transparent; cursor: default; }
+/* 0.2.6: Apply-to options on one wrapping row (UXP lays inline-block divs out one per line inside flex) */
+.applyto div.chip { flex: none; }
