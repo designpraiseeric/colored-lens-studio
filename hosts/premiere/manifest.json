@@ -10,12 +10,7 @@
   },
   "requiredPermissions": {
     "network": {
-      "domains": [
-        "https://designpraiseeric.github.io",
-        "https://github.com",
-        "https://objects.githubusercontent.com",
-        "https://release-assets.githubusercontent.com"
-      ]
+      "domains": "all"
     },
     "localFileSystem": "fullAccess",
     "launchProcess": {

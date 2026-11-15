@@ -1,6 +1,14 @@
 # Release notes
 Each `## <version>` block becomes the text of the in-app update banner and the GitHub Release.
 
+## 0.3.0
+Smart mode: an optional AI that looks at the frame, talks it through with you and picks looks. Free to you.
+- Choose where it runs: Ollama on your computer (free and private), a local OpenAI-compatible server such as Microsoft Foundry Local or LM Studio, or Google Gemini with your own key (free tier). "Automatic" uses Ollama when it is running, otherwise your Gemini key.
+- In Shot, ask about the frame or tell it what the scene needs ("warmer, but not nostalgic"). It says what it sees and what the colour is doing, asks short questions you can tap to answer, can suggest answers to "What is this for?" (you decide), and adds Smart picks to the directions.
+- It only picks from Colored Lens's own recipes, with small adjustments inside safe limits, so every Smart pick previews, tweaks, applies and saves like any other direction.
+- API keys are kept in your computer's secure storage. Off by default; with it off, nothing leaves your computer.
+- Apple Intelligence and the Windows AI on Copilot+ PCs come later through a small helper app; on Windows, Foundry Local works now through "Local server".
+
 ## 0.2.9
 The preview can have a panel of its own.
 - "Pop out" opens the preview as its own Premiere panel (Colored Lens Preview): dock it beside the Program Monitor or anywhere you like, and the Colored Lens panel is all options. It is also under Window › UXP Plugins.

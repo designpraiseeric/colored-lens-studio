@@ -131,3 +131,9 @@ div.chip.off { color: #6b6b72; border-style: dashed; background: transparent; cu
 /* 0.2.9: the preview in its own panel */
 .pv { height: 100vh; box-sizing: border-box; padding: 8px 10px; background: var(--bg); color: var(--ink); overflow: hidden; }
 .pvnote { padding: 16px; }
+/* 0.3.0: Smart mode */
+.card.smart { border-left: 3px solid #a98bff; }
+.card.smart .you { color: var(--dim); }
+.badge.smart { border-color: #a98bff; color: #cdbbff; }
+.fld { display: flex; flex-direction: column; margin: 6px 0; }
+.fld input, .fld select { margin-top: 3px; }

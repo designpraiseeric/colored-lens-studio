@@ -136,6 +136,22 @@ export function pickDirections(intent, ctx, n = 5) {
 }
 
 /**
+ * Smart mode's picks as directions: the recipe, shaped by the editor's answers like any other direction, with the
+ * model's small adjustments on top (already validated against TWEAKS) and its reason for this frame.
+ */
+const TWEAK_NAMES = { exp: 'exposure', con: 'contrast', sat: 'saturation', vib: 'vibrance', temp: 'temperature', tint: 'tint', hi: 'highlights', sh: 'shadows', bk: 'blacks', wh: 'whites',
+  lutMix: 'colour look strength', grainK: 'grain', halK: 'halation', diffK: 'diffusion glow', vigK: 'vignette', skinGuard: 'Skin Guard' };
+export function directionsFromPicks(picks, intent, ctx) {
+  return picks.map(p => {
+    const r = RECIPES.find(x => x.id === p.recipe); if (!r) return null;
+    const sh = shape(r, intent, { ...ctx, skinFound: ctx.skin && ctx.skin.found }), G = { ...sh.G }, extra = { ...sh.extra };
+    for (const [k, v] of Object.entries(p.tweaks || {})) { if (k === 'skinGuard') Object.assign(extra, { skinGuard: v, skinHue: extra.skinHue ?? 0.8, skinDensity: extra.skinDensity ?? 0.7, skinLight: extra.skinLight ?? 0.5 }); else G[k] = v; }
+    return { id: r.id, name: r.name, line: p.why || r.line, kind: 'smart', pal: r.pal, hues: r.hues, feel: r.feel, smartWhy: p.why,
+      look: { L: 'L1', O: 'O1', H: 'H0', A: '2.39', ...r.look, G: fullGrade(G) }, extra, notes: Object.keys(p.tweaks || {}).length ? [`Adjusted for this frame: ${Object.entries(p.tweaks).map(([k, v]) => `${TWEAK_NAMES[k] || k} ${+v.toFixed(2)}`).join(', ')}.`] : [] };
+  }).filter(Boolean);
+}
+
+/**
  * What a direction does to this frame, in words: measured by running the look on the frame's own dominant
  * colours (and its skin, if any). fn = the look's per-pixel function.
  */
@@ -216,5 +232,5 @@ export function frameSummary(reading, enc) {
 }
 const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
 export { label as intentLabel };
-export const KIND_LABEL = { lean: 'Works with your frame', counter: 'Pushes against it', natural: 'Minimal', clean: 'Clean' };
+export const KIND_LABEL = { lean: 'Works with your frame', counter: 'Pushes against it', natural: 'Minimal', clean: 'Clean', smart: 'Smart pick' };
 export const isNeutralHue = id => NEUTRAL_IDS.includes(id);

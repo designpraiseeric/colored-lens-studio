@@ -30,7 +30,7 @@ test('Premiere panel: grab, mark, read markers, apply the effect, update', { ski
   const browser = await chromium.launch({ executablePath: chrome, args: ['--no-sandbox'] });
   try {
     const page = await browser.newPage({ viewport: { width: 420, height: 1200 } });
-    const errors = []; page.on('pageerror', e => errors.push(e.message));
+    const errors = [], window_seen = []; page.on('pageerror', e => errors.push(e.message));
     await page.route('https://designpraiseeric.github.io/**', async route => {
       const rel = route.request().url().split('/colored-lens-studio/')[1].split('?')[0], f = path.join(ROOT, 'site', rel);
       if (rel === 'version.json') { const v = JSON.parse(fs.readFileSync(f, 'utf8')); v.version = '9.9.9'; return route.fulfill({ body: JSON.stringify(v), contentType: 'application/json' }); }
@@ -63,6 +63,16 @@ test('Premiere panel: grab, mark, read markers, apply the effect, update', { ski
     assert.match(await page.innerText('#dock'), /in its own panel/);
     await page.click('#dockBack'); await page.waitForSelector('#dock #stage');
     assert.match(await page.innerText('#pvRoot'), /back in the Colored Lens panel/);
+    // Smart mode with a local Ollama (faked): set it up, ask about the frame, get a Smart pick among the directions
+    await page.route('http://localhost:11434/**', route => { const u = route.request().url();
+      if (u.endsWith('/api/tags')) return route.fulfill({ body: JSON.stringify({ models: [{ name: 'llama3:8b' }, { name: 'gemma3:4b' }] }), contentType: 'application/json' });
+      const body = JSON.parse(route.request().postData()); window_seen.push(body);
+      return route.fulfill({ body: JSON.stringify({ message: { content: JSON.stringify({ sees: 'A man selling candy floss on a beach.', reading: 'Warm and busy.', questions: ['Is this the opening?'], answers: { feeling: ['joyful'] }, picks: [{ recipe: 'super8-summer', why: 'Leans into the warm afternoon.', tweaks: { grainK: 0.6 } }] }) } }), contentType: 'application/json' }); });
+    await page.click('#smartBtn'); await page.click('[data-prov="ollama"]'); await page.click('#olTest'); await page.waitForSelector('#olModel');
+    assert.equal(await page.inputValue('#olModel'), 'gemma3:4b', 'the vision model is picked'); await page.click('#smBack');
+    await page.fill('#smMsg', 'make it feel like summer'); await page.click('#smAsk'); await page.waitForSelector('.badge.smart', { timeout: 15000 });
+    assert.match(await page.innerText('.card.smart'), /candy floss/); assert.equal(window_seen[0].model, 'gemma3:4b'); assert.ok(window_seen[0].messages.at(-1).images[0].length > 1000, 'the frame is sent');
+    assert.match(window_seen[0].messages.at(-1).content, /EDITOR'S MESSAGE: make it feel like summer/);
     await page.click('[data-tab=presets]'); await page.waitForSelector('.preset');
     await page.click('[data-tab=scene]'); await page.fill('#tags', 'Ada'); await page.click('#add'); await page.waitForSelector('.shot');
     await page.click('#clear'); await page.click('#load'); await page.waitForSelector('.shot');

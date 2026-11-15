@@ -5,10 +5,11 @@
 // apply to clips -> save as a preset -> apply the preset to other shots.
 import { readFrame, frameStats, labPixels } from '../core/analysis.js';
 import { checkSkin, vectorscope } from '../core/skin.js';
-import { pngDataUrl, encodePNG } from '../core/image.js';
+import { pngDataUrl, encodePNG, downsample, toBase64 } from '../core/image.js';
+import { PROVIDERS, DEFAULTS as SMART0, buildPrompt, parseReply, validate, ask, detectOllama, detectOpenAI, resolveProvider } from '../core/smart.js';
 import { shotRecord, encodeShot, decodeShot, renderStrip, readSequence, scriptCSV } from '../core/script.js';
 import { parseLookInput, formatCode, fullGrade, makePixelFn, bakeCube, lookToEngineParams, shareLink, computeMatch, matchStats, hasCurves, GRADE0 } from '../core/look.js';
-import { GENRES, FEELINGS, ROLES, KIND_LABEL, pickDirections, describeEffect, whyFor, frameSummary, answers, isDark, continuity, pictureOf } from '../core/directions.js';
+import { GENRES, FEELINGS, ROLES, KIND_LABEL, pickDirections, describeEffect, whyFor, frameSummary, answers, isDark, continuity, pictureOf, directionsFromPicks } from '../core/directions.js';
 import { previewer, wipe } from '../core/preview.js';
 import { listPresets, savePreset, deletePreset, duplicatePreset, presetCode, importPresetCode, settings } from '../core/presets.js';
 import { Updater } from '../core/updates.js';
@@ -30,13 +31,14 @@ export async function startApp(host, root) {
   const S = { tab: 'shot', back: 'shot', frame: null, meta: null, reading: null, skin: null, sample: null, shots: [],
     intent: normIntent(settings.get('intent', {})), seqId: '', ctx: null, lead: 0, neigh: [], scope: settings.get('scope', 'clip'), input: settings.get('input', 'rec709'),
     directions: [], chosen: -1, look: NEUTRAL_LOOK(), extra: { ...XDEF }, matte: false, recipe: { name: '', presetId: null }, view: 'split', wipe: 0.5,
-    dockSize: settings.get('dockSize', 'M'), dockHidden: false, detached: false, refFrameStats: null, refName: '', adapt: settings.get('adapt', true), encQ: '', shownCode: '', confirmDel: '', busy: false, showSkin: false, showRefs: false };
+    dockSize: settings.get('dockSize', 'M'), dockHidden: false, detached: false, smartDirs: [],
+    smart: { cfg: { ...SMART0, ...settings.get('smart', {}) }, turns: [], history: [], detect: null, using: '' }, refFrameStats: null, refName: '', adapt: settings.get('adapt', true), encQ: '', shownCode: '', confirmDel: '', busy: false, showSkin: false, showRefs: false };
   let PV = null, pvEl = null; // pvEl: the separate Preview panel's container, once it has been opened
   const up = new Updater(host, config.pagesBase);
   root.innerHTML = `
     <div class="cl">
       <div id="banner" class="banner" hidden></div>
-      <div class="head"><div class="brand">Colored Lens <span class="dim">· ${esc(host.label || host.name)}</span></div><div class="row tight"><span id="status" class="dim small"></span><div role="button" tabindex="0" id="encBtn" class="linkbtn small">Encyclopedia</div></div></div>
+      <div class="head"><div class="brand">Colored Lens <span class="dim">· ${esc(host.label || host.name)}</span></div><div class="row tight"><span id="status" class="dim small"></span><div role="button" tabindex="0" id="smartBtn" class="linkbtn small">Smart</div><div role="button" tabindex="0" id="encBtn" class="linkbtn small">Encyclopedia</div></div></div>
       <div class="tabs">${['shot:Shot', 'scene:Scene', 'tweak:Tweak', 'presets:Presets'].map(t => { const [id, n] = t.split(':'); return `<div data-tab="${id}" class="tab" role="tab" tabindex="0">${n}</div>`; }).join('')}</div>
       <div id="dock" class="dock" hidden></div>
       <div id="body" class="body"></div>
@@ -45,9 +47,10 @@ export async function startApp(host, root) {
   const toast = (t, ms = 2600) => { const e = $('#toast', root); e.textContent = t; e.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => (e.hidden = true), ms); };
   const busy = async (label, fn) => { if (S.busy) return; S.busy = true; status(label + '…'); try { return await fn(); } catch (e) { console.error(e); toast(e.message || String(e), 6000); } finally { S.busy = false; status(); } };
   const status = t => { const c = up.content && up.content.manifest; $('#status', root).textContent = t || `v${host.version}${c ? ' · content ' + c.contentVersion.slice(0, 7) : ''}`; };
-  const go = tab => { if (tab === 'enc' && S.tab !== 'enc') S.back = S.tab; S.tab = tab; render(); };
+  const go = tab => { if ((tab === 'enc' || tab === 'smart') && S.tab !== 'enc' && S.tab !== 'smart') S.back = S.tab; S.tab = tab; render(); };
   root.addEventListener('click', e => { const b = e.target.closest('[data-tab]'); if (b) go(b.dataset.tab); });
   $('#encBtn', root).onclick = () => { S.encQ = ''; go('enc'); };
+  $('#smartBtn', root).onclick = () => go('smart');
 
   // ---------- content + updates (silent) ----------
   await up.load();
@@ -103,6 +106,7 @@ export async function startApp(host, root) {
     if (host.clipContext) try { S.ctx = await host.clipContext(); } catch (e) { console.warn('timeline context', e); }
     // a clean read: our own look on this shot is switched off for the moment of the export
     const g = await host.grabFrame(undefined, { clean: true }); S.frame = g.frame; S.meta = g; S.sample = null; S.chosen = -1; S.lead = 0;
+    S.smartDirs = []; S.smart.turns = []; S.smart.history = [];
     // answers belong to the scene (marker range) when there is one, otherwise to the sequence
     useSequence(S.ctx && S.ctx.scene ? `${g.sequenceId}|${S.ctx.scene.start.toFixed(2)}` : g.sequenceId);
     // the finished shots either side, for continuity
@@ -113,18 +117,22 @@ export async function startApp(host, root) {
   }
   const lowKey = () => isDark(S.intent);
   function runSkin() { if (S.frame) S.skin = checkSkin(S.frame, { sample: S.sample, input: S.input, lowKey: lowKey(), lead: S.lead }); }
-  async function suggest() {
-    if (!S.frame) return;
-    const ds = pickDirections(S.intent, { reading: S.reading, skin: S.skin, input: S.input });
+  const allDirs = () => [...S.smartDirs, ...S.directions]; // Smart picks first, then the rule-based directions
+  async function enrich(ds) {
     for (const d of ds) {
       const fn = makePixelFn(d.look, cat(), await lutsFor(d.look), { input: S.input, keepExposure: true, extra: { ...XDEF, ...d.extra } });
-      d.effect = describeEffect(fn, S.reading, S.skin); d.why = whyFor(d, S.intent, enc()); d.cont = continuity(fn, S.reading, S.neigh);
+      d.effect = describeEffect(fn, S.reading, S.skin); d.why = whyFor(d, S.intent, enc()); if (d.smartWhy) d.why.lines[0] = d.smartWhy; d.cont = continuity(fn, S.reading, S.neigh);
       d.thumb = pngDataUrl(await PV.render(d.look, { ...XDEF, ...d.extra }, S.input, 200));
     }
-    S.directions = ds; if (S.chosen >= ds.length) S.chosen = -1;
+    return ds;
+  }
+  async function suggest() {
+    if (!S.frame) return;
+    S.directions = await enrich(pickDirections(S.intent, { reading: S.reading, skin: S.skin, input: S.input }));
+    if (S.chosen >= allDirs().length) S.chosen = -1;
   }
   function choose(i) {
-    const d = S.directions[i]; if (!d) return; S.chosen = i;
+    const d = allDirs()[i]; if (!d) return; S.chosen = i;
     S.look = clone(d.look); S.extra = { ...XDEF, ...d.extra }; S.matte = false; S.recipe = { name: d.name, presetId: null };
   }
 
@@ -133,7 +141,7 @@ export async function startApp(host, root) {
   // The preview lives in a dock above the scrolling area, so it stays in view while you scroll through the options.
   const DOCK_H = { S: 140, M: 220, L: 330 };
   function dockHTML() {
-    const shot = S.tab === 'shot', d = shot && S.chosen >= 0 ? S.directions[S.chosen] : null;
+    const shot = S.tab === 'shot', d = shot && S.chosen >= 0 ? allDirs()[S.chosen] : null;
     const seg = (id, n, on, attr) => `<div role="button" tabindex="0" class="seg ${on ? 'on' : ''}" ${attr}="${id}">${n}</div>`;
     if (S.dockHidden) return `<div class="row tight"><span class="small dim grow">Preview hidden</span><button id="dockShow" class="small">Show preview</button></div>`;
     const a = S.frame.w / S.frame.h, box = S.detached && pvEl ? pvEl : root, avail = Math.max(160, (box.clientWidth || 360) - 26);
@@ -217,7 +225,7 @@ export async function startApp(host, root) {
     const body = $('#body', root); if (body && render.lastTab !== S.tab) { body.scrollTop = 0; render.lastTab = S.tab; }
     if (!up.content.encyclopedia) return;
     renderDock();
-    ({ shot: renderShot, scene: renderScene, tweak: renderTweak, presets: renderPresets, enc: renderEnc })[S.tab](body);
+    ({ shot: renderShot, scene: renderScene, tweak: renderTweak, presets: renderPresets, enc: renderEnc, smart: renderSmart })[S.tab](body);
   }
 
   // SHOT ------------------------------------------------------------------
@@ -238,10 +246,12 @@ export async function startApp(host, root) {
         <div class="q">The footage is</div><div class="chips"><div role="button" tabindex="0" class="chip ${S.input === 'rec709' ? 'on' : ''}" data-input="rec709">${S.input === 'rec709' ? '✓ ' : ''}Normal video (Rec.709)</div><div role="button" tabindex="0" class="chip ${S.input === 'logc3' ? 'on' : ''}" data-input="logc3">${S.input === 'logc3' ? '✓ ' : ''}Log (ARRI LogC3)</div></div>
         <div class="row"><input id="note" placeholder="Anything else about this scene? (saved with presets)" value="${esc(I.note)}"></div>
         ${!S.frame ? '<p class="small dim">Your answers are remembered. Read a frame to get directions.</p>' : ''}</div>
+      ${S.frame ? smartCard() : ''}
       <div id="dirs">${directionsHTML()}</div>
       ${k ? skinCard(k) : ''}
       ${r && r.matches.length ? `<div class="card"><div class="row tight"><div class="k grow">Similar frames in the encyclopedia</div><button class="small" id="togRefs">${S.showRefs ? 'Hide' : 'Show'}</button></div>${S.showRefs ? refsHTML(r) : ''}</div>` : ''}`;
-    $('#grab', body).onclick = () => busy('Reading frame', async () => { await grab(); await suggest(); render(); });
+    $('#grab', body).onclick = () => busy('Reading frame', async () => { await grab(); await suggest(); render();
+      if (S.smart.cfg.provider !== 'off' && S.smart.cfg.autoAsk) askSmart(''); });
     body.querySelectorAll('[data-intent]').forEach(b => b.onclick = () => {
       const [key, id] = b.dataset.intent.split(':'), cur = answers(S.intent[key]);
       S.intent[key] = cur.includes(id) ? cur.filter(x => x !== id) : cur.length < 2 ? [...cur, id] : [cur[0], id]; saveIntent();
@@ -267,7 +277,7 @@ export async function startApp(host, root) {
       const m = r.matches[+b.dataset.matchref], ref = refs().frames.find(f => f.id === m.id);
       S.extra = { ...S.extra, ...computeMatch(matchStats(S.frame), ref.ms) }; S.refName = m.title; go('tweak'); toast(`Match to “${m.title}” set in Tweak`);
     });
-    wireDirections(body);
+    wireDirections(body); wireSmart(body);
   }
   // What the timeline says about this shot. Context proposes; the editor decides.
   function contextCard(c) {
@@ -329,10 +339,10 @@ export async function startApp(host, root) {
     <div class="row wrap">${m.link ? `<button data-url="${esc(m.link)}">Real stills (FILMGRAB)</button>` : ''}<button data-matchref="${i}">Match my shot to this</button></div></div></div>`).join('')}</div>`;
   function directionsHTML() {
     if (!S.frame) return '';
-    if (!S.directions.length) return '<div class="card"><p class="dim small">Finding directions…</p></div>';
+    if (!allDirs().length) return '<div class="card"><p class="dim small">Finding directions…</p></div>';
     const ask = !answers(S.intent.feeling).length ? '<p class="small warn">Pick how the scene should feel for sharper directions. These are based on the frame alone.</p>' : '';
     return `<div class="k sect">Directions</div><p class="small dim">Click one to preview it on your frame. Apply it, tweak it, or keep it as a preset.</p>${ask}
-      ${S.directions.map((d, i) => `<div class="dir ${S.chosen === i ? 'on' : ''}" data-dir="${i}">
+      ${allDirs().map((d, i) => `<div class="dir ${S.chosen === i ? 'on' : ''}" data-dir="${i}">
         <img src="${d.thumb}"><div class="dtext">
           <div><b>${esc(d.name)}</b> <span class="badge ${d.kind}">${esc(KIND_LABEL[d.kind])}</span></div>
           <p class="small">${esc(d.why.lines[0])}</p>${d.why.lines[1] ? `<p class="small dim">${esc(d.why.lines[1])}</p>` : ''}
@@ -482,6 +492,86 @@ export async function startApp(host, root) {
       ${list.slice(0, 60).map(x => `<div class="card"><div class="k">${esc(x.s)}</div><h3>${x.hex ? `<span class="sw" style="background:${x.hex}"></span>` : ''}${esc(x.t)}</h3>${x.pal ? swatchBar(x.pal.map(h => ({ hex: h, share: 1 }))) : ''}<p class="small">${esc(x.body)}</p>${x.ex ? `<ul class="small">${x.ex.map(t => `<li>${esc(t)}</li>`).join('')}</ul>` : ''}${lookChips(x.looks || [])}</div>`).join('')}`;
     $('#encBack', body).onclick = () => go(S.back || 'shot');
     const q$ = $('#q', body); q$.oninput = () => { S.encQ = q$.value; clearTimeout(renderEnc.t); renderEnc.t = setTimeout(() => { renderEnc(body); const n = $('#q', body); n.focus(); try { n.setSelectionRange(S.encQ.length, S.encQ.length); } catch {} }, 250); };
+  }
+
+  // ---------- Smart mode ----------
+  const httpPost = host.post || (async (url, headers, body) => { const r = await host.fetch(url, { method: 'POST', headers, body }); return { status: r.status, text: await r.text() }; });
+  const httpGet = host.get || (async (url, headers = {}) => { const r = await host.fetch(url, { headers }); return { status: r.status, text: await r.text() }; });
+  const secret = host.secret || { get: async k => settings.get('secret.' + k, ''), set: async (k, v) => settings.set('secret.' + k, v) };
+  async function smartCfg() { const c = { ...S.smart.cfg }; c.geminiKey = await secret.get('gemini'); c.openaiKey = await secret.get('openai'); return c; }
+  function saveSmart() { settings.set('smart', S.smart.cfg); }
+  const provName = id => (PROVIDERS.find(p => p.id === id) || {}).n || id;
+  let smartBusy = false;
+  async function askSmart(message) {
+    if (smartBusy || !S.frame) return; smartBusy = true; S.smart.error = ''; S.smart.pending = message || '(read this frame)'; render();
+    try {
+      const real = await resolveProvider(await smartCfg(), httpGet);
+      if (!real) throw new Error(S.smart.cfg.provider === 'auto' ? 'Automatic found no model: Ollama is not running with a vision model, and no Gemini key is set. See Smart settings.' : 'Smart mode is off.');
+      if (real.provider === 'ollama' && !real.ollamaModel) throw new Error('Choose an Ollama vision model in Smart settings');
+      if (real.provider === 'openai' && !real.openaiModel) throw new Error('Choose a model for your local server in Smart settings');
+      S.smart.using = provName(real.provider) + (real.ollamaModel && real.provider === 'ollama' ? ' · ' + real.ollamaModel : real.provider === 'openai' ? ' · ' + real.openaiModel : real.provider === 'gemini' ? ' · ' + real.geminiModel : '');
+      status('Smart mode is thinking…');
+      const prompt = buildPrompt({ reading: S.reading, skin: S.skin, intent: S.intent, ctx: S.ctx, neigh: S.neigh, message, summary: frameSummary(S.reading, enc()) });
+      const text = await ask(real, { prompt, imageB64: toBase64(encodePNG(downsample(S.frame, 512))), history: S.smart.history }, httpPost);
+      const res = validate(parseReply(text));
+      S.smart.history.push({ role: 'user', text: message || '(read this frame)' }, { role: 'assistant', text: JSON.stringify(res).slice(0, 1500) });
+      S.smart.turns.push({ q: message, res, using: S.smart.using });
+      if (res.picks.length) { const keep = S.chosen >= S.smartDirs.length ? S.chosen - S.smartDirs.length : -1;
+        S.smartDirs = await enrich(directionsFromPicks(res.picks, S.intent, { reading: S.reading, skin: S.skin, input: S.input })); S.chosen = keep >= 0 ? keep + S.smartDirs.length : -1; }
+    } catch (e) { console.error(e); S.smart.error = e.message || String(e); }
+    finally { smartBusy = false; S.smart.pending = ''; status(); render(); }
+  }
+  function smartCard() {
+    const c = S.smart.cfg;
+    if (c.provider === 'off') return `<div class="card smart"><div class="row tight"><div class="k grow">Smart mode</div><button id="smSetup" class="small">Set up</button></div><p class="small dim">Optional: a free AI on this computer (or your own key) that looks at the frame, talks it through with you and picks looks. Off by default.</p></div>`;
+    const t = S.smart.turns, last = t[t.length - 1];
+    return `<div class="card smart"><div class="row tight"><div class="k grow">Smart mode <span class="dim">· ${esc(S.smart.using || provName(c.provider))}</span></div><button id="smSetup" class="small">Settings</button></div>
+      ${t.map(x => `${x.q ? `<p class="small you"><b>You:</b> ${esc(x.q)}</p>` : ''}${x.res.sees ? `<p class="small"><b>Sees:</b> ${esc(x.res.sees)}</p>` : ''}${x.res.reading ? `<p class="small"><b>Reading:</b> ${esc(x.res.reading)}</p>` : ''}${x.res.reply ? `<p class="small">${esc(x.res.reply)}</p>` : ''}${x.res.picks.length ? `<p class="small dim">${x.res.picks.length} Smart pick${x.res.picks.length === 1 ? '' : 's'} added to the directions below.</p>` : ''}`).join('')}
+      ${last && last.res.questions.length ? `<div class="chips">${last.res.questions.map(q => `<div role="button" tabindex="0" class="chip" data-smq="${esc(q)}">${esc(q)}</div>`).join('')}</div>` : ''}
+      ${last && ['genre', 'feeling', 'role'].some(k => last.res.answers[k].length && JSON.stringify(last.res.answers[k]) !== JSON.stringify(answers(S.intent[k]))) ? `<div class="row wrap"><span class="small grow">Suggests answers: ${esc([['genre', GENRES], ['feeling', FEELINGS], ['role', ROLES]].map(([k, l]) => last.res.answers[k].map(id => (l.find(x => x.id === id) || {}).n).join(' + ')).filter(Boolean).join(' · '))}</span><button id="smUse" class="small">Use these answers</button></div>` : ''}
+      ${S.smart.pending ? `<p class="small dim">Thinking about “${esc(S.smart.pending)}”… (a local model can take a minute)</p>` : ''}
+      ${S.smart.error ? `<p class="small warn">${esc(S.smart.error)}</p>` : ''}
+      <textarea id="smMsg" rows="2" placeholder="${t.length ? 'Answer, or ask for something else (e.g. warmer but not nostalgic)' : 'Tell it about the scene, or just ask'}"></textarea>
+      <div class="row wrap"><button id="smAsk" class="primary">${t.length ? 'Send' : 'Ask about this frame'}</button>${t.length ? '<button id="smClear" class="small">New conversation</button>' : ''}</div></div>`;
+  }
+  function wireSmart(body) {
+    if ($('#smSetup', body)) $('#smSetup', body).onclick = () => go('smart');
+    if ($('#smAsk', body)) $('#smAsk', body).onclick = () => { const m = $('#smMsg', body).value.trim(); askSmart(m); };
+    if ($('#smClear', body)) $('#smClear', body).onclick = () => { S.smart.turns = []; S.smart.history = []; S.smartDirs = []; S.chosen = -1; render(); };
+    body.querySelectorAll('[data-smq]').forEach(b => b.onclick = () => { const t = $('#smMsg', body); t.value = b.dataset.smq + ' '; t.focus(); });
+    if ($('#smUse', body)) $('#smUse', body).onclick = () => { const a = S.smart.turns[S.smart.turns.length - 1].res.answers;
+      for (const k of ['genre', 'feeling', 'role']) if (a[k].length) S.intent[k] = a[k]; saveIntent(); busy('Finding directions', async () => { await suggest(); render(); }); };
+  }
+  function renderSmart(body) {
+    const c = S.smart.cfg, d = S.smart.detect || {};
+    if (S.smart.hasGemini == null) { S.smart.hasGemini = false; secret.get('gemini').then(k => { if (k) { S.smart.hasGemini = true; if (S.tab === 'smart') render(); } }); }
+    const field = (id, label, val, ph, type = 'text') => `<label class="fld"><span class="small dim">${label}</span><input id="${id}" type="${type}" value="${esc(val || '')}" placeholder="${esc(ph || '')}"></label>`;
+    body.innerHTML = `<div class="row"><button id="smBack">← Back</button><b class="grow">Smart mode</b></div>
+      <p class="small">Optional, and free to you: an AI that looks at the frame, reads what the scene is doing, talks it through with you and picks looks from Colored Lens's own recipes. Every pick is checked and previewed like any other direction; nothing is applied until you say so.</p>
+      <div class="chips">${PROVIDERS.map(p => `<div role="button" tabindex="0" class="chip ${c.provider === p.id ? 'on' : ''}" data-prov="${p.id}">${c.provider === p.id ? '✓ ' : ''}${esc(p.n)}</div>`).join('')}</div>
+      <p class="small dim">${esc((PROVIDERS.find(p => p.id === c.provider) || {}).where || '')}</p>
+      ${c.provider === 'ollama' || c.provider === 'auto' ? `<div class="card"><div class="k">Ollama</div>${field('olUrl', 'Address', c.ollamaUrl, SMART0.ollamaUrl)}
+        ${d.ollama ? (d.ollama.ok ? (d.ollama.vision.length ? `<label class="fld"><span class="small dim">Vision model</span><select id="olModel">${d.ollama.vision.map(m => `<option ${m === c.ollamaModel ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select></label>` : `<p class="small warn">Ollama is running, but none of its models can see images. In a terminal: ollama pull gemma3:4b</p>`) : '<p class="small warn">Ollama is not answering at that address. Install it from ollama.com and open it.</p>') : ''}
+        <button id="olTest" class="small">Find Ollama and its models</button></div>` : ''}
+      ${c.provider === 'openai' ? `<div class="card"><div class="k">Local server</div>${field('oaUrl', 'Address (ends in /v1)', c.openaiUrl, SMART0.openaiUrl)}
+        <p class="small dim">Foundry Local: run <span class="mono">foundry service status</span> to see its address. LM Studio: Developer › Start server (usually http://localhost:1234/v1).</p>
+        ${d.openai ? (d.openai.ok ? `<label class="fld"><span class="small dim">Model (pick one that can see images)</span><select id="oaModel">${d.openai.models.map(m => `<option ${m === c.openaiModel ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select></label>` : '<p class="small warn">Nothing answered at that address.</p>') : field('oaModel', 'Model', c.openaiModel, 'model id')}
+        ${field('oaKey', 'Key (only if your server needs one)', '', '••••', 'password')}<button id="oaTest" class="small">Find the server and its models</button></div>` : ''}
+      ${c.provider === 'gemini' || c.provider === 'auto' ? `<div class="card"><div class="k">Google Gemini</div>${field('gmKey', 'Your API key (from aistudio.google.com)', '', S.smart.hasGemini ? 'saved: paste to replace' : 'paste your key', 'password')}
+        ${field('gmModel', 'Model', c.geminiModel, SMART0.geminiModel)}<p class="small dim">Your key stays on this computer. Check Google's pricing page for which models are free on your account.</p><button id="gmSave" class="small">Save key</button></div>` : ''}
+      <div class="card"><div class="k">Built-in AI on your computer</div><p class="small">Apple Intelligence on recent Macs and the Windows AI on Copilot+ PCs can see images too. Colored Lens will use them through a small helper app in a later update. Until then: on Windows, Microsoft Foundry Local works through “Local server”; on Mac, use Ollama.</p></div>
+      ${c.provider !== 'off' ? `<div role="button" tabindex="0" class="chip ${c.autoAsk ? 'on' : ''}" id="smAuto">${c.autoAsk ? '✓ ' : ''}Ask Smart mode every time I read a frame</div>` : ''}`;
+    $('#smBack', body).onclick = () => go(S.back || 'shot');
+    body.querySelectorAll('[data-prov]').forEach(b => b.onclick = () => { c.provider = b.dataset.prov; saveSmart(); S.smart.detect = null; render(); });
+    const v = id => ($('#' + id, body) || {}).value;
+    const keep = () => { if (v('olUrl') != null) c.ollamaUrl = v('olUrl'); if (v('olModel') != null) c.ollamaModel = v('olModel'); if (v('oaUrl') != null) c.openaiUrl = v('oaUrl'); if (v('oaModel') != null) c.openaiModel = v('oaModel'); if (v('gmModel') != null) c.geminiModel = v('gmModel'); saveSmart(); };
+    body.querySelectorAll('input, select').forEach(i => i.onchange = keep);
+    if ($('#olTest', body)) $('#olTest', body).onclick = () => busy('Looking for Ollama', async () => { keep(); const r = await detectOllama(c.ollamaUrl, httpGet); S.smart.detect = { ...d, ollama: r };
+      if (r.ok && r.vision.length && !r.vision.includes(c.ollamaModel)) { c.ollamaModel = r.vision[0]; saveSmart(); } render(); });
+    if ($('#oaTest', body)) $('#oaTest', body).onclick = () => busy('Looking for the server', async () => { keep(); if (v('oaKey')) await secret.set('openai', v('oaKey')); const r = await detectOpenAI(c.openaiUrl, await secret.get('openai'), httpGet);
+      S.smart.detect = { ...d, openai: r }; if (r.ok && r.models.length && !r.models.includes(c.openaiModel)) { c.openaiModel = r.models[0]; saveSmart(); } render(); });
+    if ($('#gmSave', body)) $('#gmSave', body).onclick = () => busy('Saving', async () => { keep(); if (v('gmKey')) { await secret.set('gemini', v('gmKey')); S.smart.hasGemini = true; toast('Gemini key saved on this computer'); } render(); });
+    if ($('#smAuto', body)) $('#smAuto', body).onclick = () => { c.autoAsk = !c.autoAsk; saveSmart(); render(); };
   }
 
   /** Called by the host when the separate Preview panel shows: the preview moves there. */

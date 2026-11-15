@@ -57,6 +57,11 @@ function downloadTo(url, dest, onProgress, depth = 0) {
 
 // ---- the API the panel uses (see hosts/README.md)
 const api = {
+  /** Smart mode's requests go out from here (no page CORS or content policy in the way). */
+  async http(url, method, headers, body) {
+    const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 180000);
+    try { const r = await fetch(url, { method, headers, body, signal: ctl.signal }); return { status: r.status, text: await r.text() }; } finally { clearTimeout(t); }
+  },
   async info() { return { version: require('./package.json').version, os: IS_WIN ? 'win' : 'mac' }; },
   async readBundled(name, type) { const p = path.join(__dirname, 'content', name); if (!fs.existsSync(p)) return null; return type === 'binary' ? new Uint8Array(fs.readFileSync(p)) : fs.readFileSync(p, 'utf8'); },
   async cacheRead(name, type) { const p = path.join(dataDir(), 'cache', name); if (!fs.existsSync(p)) return null; return type === 'binary' ? new Uint8Array(fs.readFileSync(p)) : fs.readFileSync(p, 'utf8'); },

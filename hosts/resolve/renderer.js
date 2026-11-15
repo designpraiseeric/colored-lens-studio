@@ -24,6 +24,8 @@ H.onProgress(p => progressCb(p));
     async applyLook({ makeCube }) { const c = await makeCube(); return H.invoke('applyLut', c.name, c.text); },
     saveFile: (name, data, o = {}) => H.invoke('saveFile', name, typeof data === 'string' ? data : new Uint8Array(data), o.title),
     openUrl: url => H.invoke('openUrl', url),
+    post: (url, headers, body) => H.invoke('http', url, 'POST', headers, body),
+    get: (url, headers = {}) => H.invoke('http', url, 'GET', headers),
     installUpdate: (url, filename, onProgress) => { progressCb = onProgress || (() => {}); return H.invoke('installUpdate', url, filename); },
   };
   await startApp(host, document.getElementById('root'));

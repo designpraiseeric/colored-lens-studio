@@ -11,7 +11,9 @@ DaVinci Resolve. By DesignPraise Studio.
 - **Presets**: saved looks with what they were for. Apply to other shots (optionally adapting to each shot's exposure and balance first), open and edit with live preview, share as a code.
 - **Encyclopedia**: the whole encyclopedia, searchable, offline, one tap from any reading or direction.
 
-Everything above is rules running on your machine: free, offline after the first launch, and the same answer every time.
+**Smart mode** (optional, off by default): an AI that looks at the frame, reads what the scene is doing, talks it through with you and picks looks from the same recipes, with small adjustments inside safe limits. It runs on Ollama on your computer, a local OpenAI-compatible server (Microsoft Foundry Local, LM Studio), or Google Gemini with your own key, so it costs you nothing. Keys stay in the OS keychain.
+
+Everything else is rules running on your machine: free, offline after the first launch, and the same answer every time.
 
 **Lukuluku Look effect** (OpenFX for Resolve free and Studio; Adobe effect for Premiere Pro)
 - Lukuluku's pipeline, ported line for line: 17 colour sciences, 11 film/video media (grain, halation, softness, gate, VHS…), lens character, diffusion filters, aspect mattes, anamorphic streaks, the full grade including colour wheels.

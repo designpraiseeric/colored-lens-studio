@@ -239,6 +239,11 @@ const host = {
     await f.write(data, { format: typeof data === 'string' ? formats.utf8 : formats.binary }); return f.nativePath;
   },
   openUrl: url => uxp.shell.openExternal(url, 'Opens in your browser'),
+  /** API keys for Smart mode live in UXP's secure storage (the OS keychain), not in plain settings. */
+  secret: {
+    async get(k) { try { const v = await uxp.storage.secureStorage.getItem('coloredlens.' + k); return v ? new TextDecoder().decode(v) : ''; } catch { return ''; } },
+    async set(k, v) { await uxp.storage.secureStorage.setItem('coloredlens.' + k, v); },
+  },
 
   /**
    * Downloads the installer from GitHub Releases and opens it. The whole file is fetched in one go (UXP's streamed
