@@ -25,7 +25,8 @@
     },
     "ipc": {
       "enablePluginCommunication": true
-    }
+    },
+    "clipboard": "readAndWrite"
   },
   "entrypoints": [
     {

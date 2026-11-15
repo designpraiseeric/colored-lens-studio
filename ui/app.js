@@ -15,6 +15,7 @@ import { listPresets, savePreset, deletePreset, duplicatePreset, presetCode, imp
 import { Updater } from '../core/updates.js';
 import config from '../studio.config.json';
 import { sliderHTML, wireSliders } from './slider.js';
+import { TOUR, routes, helpPrompt } from './guide.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -31,14 +32,15 @@ export async function startApp(host, root) {
   const S = { tab: 'shot', back: 'shot', frame: null, meta: null, reading: null, skin: null, sample: null, shots: [],
     intent: normIntent(settings.get('intent', {})), seqId: '', ctx: null, lead: 0, neigh: [], scope: settings.get('scope', 'clip'), input: settings.get('input', 'rec709'),
     directions: [], chosen: -1, look: NEUTRAL_LOOK(), extra: { ...XDEF }, matte: false, recipe: { name: '', presetId: null }, view: 'split', wipe: 0.5,
-    dockSize: settings.get('dockSize', 'M'), dockHidden: false, detached: false, smartDirs: [],
+    guide: { view: 'tour', step: 0, route: '' }, dockSize: settings.get('dockSize', 'M'), dockHidden: false, detached: false, smartDirs: [],
     smart: { cfg: { ...SMART0, ...settings.get('smart', {}) }, turns: [], history: [], detect: null, using: '' }, refFrameStats: null, refName: '', adapt: settings.get('adapt', true), encQ: '', shownCode: '', confirmDel: '', busy: false, showSkin: false, showRefs: false };
   let PV = null, pvEl = null; // pvEl: the separate Preview panel's container, once it has been opened
   const up = new Updater(host, config.pagesBase);
   root.innerHTML = `
     <div class="cl">
       <div id="banner" class="banner" hidden></div>
-      <div class="head"><div class="brand">Colored Lens <span class="dim">· ${esc(host.label || host.name)}</span></div><div class="row tight"><span id="status" class="dim small"></span><div role="button" tabindex="0" id="smartBtn" class="linkbtn small">Smart</div><div role="button" tabindex="0" id="encBtn" class="linkbtn small">Encyclopedia</div></div></div>
+      <div class="head"><div class="brand">Colored Lens <span class="dim">· ${esc(host.label || host.name)}</span></div><span id="status" class="dim small"></span></div>
+      <div class="links"><div role="button" tabindex="0" id="guideBtn" class="linkbtn small">Guide</div><div role="button" tabindex="0" id="smartBtn" class="linkbtn small">Smart</div><div role="button" tabindex="0" id="encBtn" class="linkbtn small">Encyclopedia</div></div>
       <div class="tabs">${['shot:Shot', 'scene:Scene', 'tweak:Tweak', 'presets:Presets'].map(t => { const [id, n] = t.split(':'); return `<div data-tab="${id}" class="tab" role="tab" tabindex="0">${n}</div>`; }).join('')}</div>
       <div id="dock" class="dock" hidden></div>
       <div id="body" class="body"></div>
@@ -47,10 +49,12 @@ export async function startApp(host, root) {
   const toast = (t, ms = 2600) => { const e = $('#toast', root); e.textContent = t; e.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => (e.hidden = true), ms); };
   const busy = async (label, fn) => { if (S.busy) return; S.busy = true; status(label + '…'); try { return await fn(); } catch (e) { console.error(e); toast(e.message || String(e), 6000); } finally { S.busy = false; status(); } };
   const status = t => { const c = up.content && up.content.manifest; $('#status', root).textContent = t || `v${host.version}${c ? ' · content ' + c.contentVersion.slice(0, 7) : ''}`; };
-  const go = tab => { if ((tab === 'enc' || tab === 'smart') && S.tab !== 'enc' && S.tab !== 'smart') S.back = S.tab; S.tab = tab; render(); };
+  const SIDE = ['enc', 'smart', 'guide'];
+  const go = tab => { if (SIDE.includes(tab) && !SIDE.includes(S.tab)) S.back = S.tab; S.tab = tab; render(); };
   root.addEventListener('click', e => { const b = e.target.closest('[data-tab]'); if (b) go(b.dataset.tab); });
   $('#encBtn', root).onclick = () => { S.encQ = ''; go('enc'); };
   $('#smartBtn', root).onclick = () => go('smart');
+  $('#guideBtn', root).onclick = () => { S.guide = { view: 'home', step: 0, route: '' }; go('guide'); };
 
   // ---------- content + updates (silent) ----------
   await up.load();
@@ -144,8 +148,9 @@ export async function startApp(host, root) {
     const shot = S.tab === 'shot', d = shot && S.chosen >= 0 ? allDirs()[S.chosen] : null;
     const seg = (id, n, on, attr) => `<div role="button" tabindex="0" class="seg ${on ? 'on' : ''}" ${attr}="${id}">${n}</div>`;
     if (S.dockHidden) return `<div class="row tight"><span class="small dim grow">Preview hidden</span><button id="dockShow" class="small">Show preview</button></div>`;
-    const a = S.frame.w / S.frame.h, box = S.detached && pvEl ? pvEl : root, avail = Math.max(160, (box.clientWidth || 360) - 26);
-    let h = S.detached && pvEl ? Math.max(120, (pvEl.clientHeight || 400) - (shot && S.chosen >= 0 ? 190 : 90)) : Math.min(DOCK_H[S.dockSize] || 220, Math.round((window.innerHeight || 800) * 0.42));
+    const pvBox = S.detached && pvEl ? pvSize() : null;
+    const a = S.frame.w / S.frame.h, avail = Math.max(80, (pvBox ? pvBox.w : (root.clientWidth || 360)) - 26);
+    let h = pvBox ? Math.max(60, pvBox.h - (shot && S.chosen >= 0 ? 200 : 100)) : Math.min(DOCK_H[S.dockSize] || 220, Math.round((window.innerHeight || 800) * 0.42));
     let w = Math.round(h * a); if (w > avail) { w = avail; h = Math.round(w / a); }
     return `<img id="stage" class="frame ${shot ? 'click' : ''}" src="" style="width:${w}px;height:${h}px;margin:0 auto 4px;display:block;">
       <div class="row tight"><div class="segs">${['before:Before', 'split:Split', 'after:After'].map(v => { const [id, n] = v.split(':'); return seg(id, n, S.view === id, 'data-view'); }).join('')}</div>
@@ -156,6 +161,10 @@ export async function startApp(host, root) {
         ${scopeRow()}<div class="row wrap"><button class="primary" data-dapply="${S.chosen}">${S.scope === 'clip' ? 'Apply to selected clips' : 'Apply'}</button><button data-dtweak="${S.chosen}">Tweak</button><button data-dsave="${S.chosen}">Save as preset</button><button id="dclear">Back to the original</button></div>`
         : `<div class="small dim">${shot ? 'Click a face in the picture to check its skin. Pick a direction below to preview it here.' : 'Live preview: colour, grain and vignette. Halation and diffusion glow show on the clip.'}</div>`}`;
   }
+  // the Preview panel's real size (its own root node), re-checked while it is open so the picture follows a resize
+  const pvSize = () => { const n = pvEl.parentNode || pvEl, r = n.getBoundingClientRect ? n.getBoundingClientRect() : {}; return { w: Math.round(r.width || n.clientWidth || 320), h: Math.round(r.height || n.clientHeight || 240) }; };
+  let pvLast = '';
+  setInterval(() => { if (!S.detached || !pvEl || !S.frame) return; const z = pvSize(), k = z.w + 'x' + z.h; if (k !== pvLast) { pvLast = k; renderDock(); } }, 800);
   const dockEl = () => (S.detached && pvEl ? pvEl : $('#dock', root));
   function renderDock() {
     const main = $('#dock', root), show = !!S.frame && (S.tab === 'shot' || S.tab === 'tweak' || S.detached);
@@ -225,7 +234,7 @@ export async function startApp(host, root) {
     const body = $('#body', root); if (body && render.lastTab !== S.tab) { body.scrollTop = 0; render.lastTab = S.tab; }
     if (!up.content.encyclopedia) return;
     renderDock();
-    ({ shot: renderShot, scene: renderScene, tweak: renderTweak, presets: renderPresets, enc: renderEnc, smart: renderSmart })[S.tab](body);
+    ({ shot: renderShot, scene: renderScene, tweak: renderTweak, presets: renderPresets, enc: renderEnc, smart: renderSmart, guide: renderGuide })[S.tab](body);
   }
 
   // SHOT ------------------------------------------------------------------
@@ -463,7 +472,7 @@ export async function startApp(host, root) {
       await applyLookToClips(p.look, presetExtra(p), p.input, p.matte); }));
     body.querySelectorAll('[data-popen]').forEach(b => b.onclick = () => { const p = byId(b.dataset.popen);
       S.look = clone(p.look); S.extra = presetExtra(p); S.input = p.input || S.input; S.matte = !!p.matte; S.recipe = { name: p.name, presetId: p.id }; S.chosen = -1; S.view = 'split'; go('tweak'); });
-    body.querySelectorAll('[data-pcode]').forEach(b => b.onclick = () => { S.shownCode = presetCode(byId(b.dataset.pcode)); try { navigator.clipboard.writeText(S.shownCode); toast('Preset code copied'); } catch {} render(); });
+    body.querySelectorAll('[data-pcode]').forEach(b => b.onclick = () => { S.shownCode = presetCode(byId(b.dataset.pcode)); copyText(S.shownCode).then(ok => ok && toast('Preset code copied')); render(); });
     body.querySelectorAll('[data-pdup]').forEach(b => b.onclick = () => { duplicatePreset(b.dataset.pdup); render(); });
     body.querySelectorAll('[data-pdel]').forEach(b => b.onclick = () => { const id = b.dataset.pdel; if (S.confirmDel === id) { deletePreset(id); S.confirmDel = ''; toast('Preset deleted'); } else S.confirmDel = id; render(); });
     $('#pimport', body).onclick = () => { try { const p = importPresetCode($('#pcode', body).value); toast(`Added “${p.name}”`); render(); } catch (e) { toast(e.message, 4000); } };
@@ -535,7 +544,7 @@ export async function startApp(host, root) {
       <div class="row wrap"><button id="smAsk" class="primary">${t.length ? 'Send' : 'Ask about this frame'}</button>${t.length ? '<button id="smClear" class="small">New conversation</button>' : ''}</div></div>`;
   }
   function wireSmart(body) {
-    if ($('#smSetup', body)) $('#smSetup', body).onclick = () => go('smart');
+    if ($('#smSetup', body)) $('#smSetup', body).onclick = () => { if (S.smart.cfg.provider === 'off') { S.guide = { view: 'smart', step: 0, route: '' }; go('guide'); } else go('smart'); };
     if ($('#smAsk', body)) $('#smAsk', body).onclick = () => { const m = $('#smMsg', body).value.trim(); askSmart(m); };
     if ($('#smClear', body)) $('#smClear', body).onclick = () => { S.smart.turns = []; S.smart.history = []; S.smartDirs = []; S.chosen = -1; render(); };
     body.querySelectorAll('[data-smq]').forEach(b => b.onclick = () => { const t = $('#smMsg', body); t.value = b.dataset.smq + ' '; t.focus(); });
@@ -546,7 +555,7 @@ export async function startApp(host, root) {
     const c = S.smart.cfg, d = S.smart.detect || {};
     if (S.smart.hasGemini == null) { S.smart.hasGemini = false; secret.get('gemini').then(k => { if (k) { S.smart.hasGemini = true; if (S.tab === 'smart') render(); } }); }
     const field = (id, label, val, ph, type = 'text') => `<label class="fld"><span class="small dim">${label}</span><input id="${id}" type="${type}" value="${esc(val || '')}" placeholder="${esc(ph || '')}"></label>`;
-    body.innerHTML = `<div class="row"><button id="smBack">← Back</button><b class="grow">Smart mode</b></div>
+    body.innerHTML = `<div class="row"><button id="smBack">← Back</button><b class="grow">Smart mode</b><button id="smGuide" class="small">Step-by-step setup</button></div>
       <p class="small">Optional, and free to you: an AI that looks at the frame, reads what the scene is doing, talks it through with you and picks looks from Colored Lens's own recipes. Every pick is checked and previewed like any other direction; nothing is applied until you say so.</p>
       <div class="chips">${PROVIDERS.map(p => `<div role="button" tabindex="0" class="chip ${c.provider === p.id ? 'on' : ''}" data-prov="${p.id}">${c.provider === p.id ? '✓ ' : ''}${esc(p.n)}</div>`).join('')}</div>
       <p class="small dim">${esc((PROVIDERS.find(p => p.id === c.provider) || {}).where || '')}</p>
@@ -562,6 +571,7 @@ export async function startApp(host, root) {
       <div class="card"><div class="k">Built-in AI on your computer</div><p class="small">Apple Intelligence on recent Macs and the Windows AI on Copilot+ PCs can see images too. Colored Lens will use them through a small helper app in a later update. Until then: on Windows, Microsoft Foundry Local works through “Local server”; on Mac, use Ollama.</p></div>
       ${c.provider !== 'off' ? `<div role="button" tabindex="0" class="chip ${c.autoAsk ? 'on' : ''}" id="smAuto">${c.autoAsk ? '✓ ' : ''}Ask Smart mode every time I read a frame</div>` : ''}`;
     $('#smBack', body).onclick = () => go(S.back || 'shot');
+    $('#smGuide', body).onclick = () => { S.guide = { view: 'smart', step: 0, route: '' }; S.tab = 'guide'; render(); };
     body.querySelectorAll('[data-prov]').forEach(b => b.onclick = () => { c.provider = b.dataset.prov; saveSmart(); S.smart.detect = null; render(); });
     const v = id => ($('#' + id, body) || {}).value;
     const keep = () => { if (v('olUrl') != null) c.ollamaUrl = v('olUrl'); if (v('olModel') != null) c.ollamaModel = v('olModel'); if (v('oaUrl') != null) c.openaiUrl = v('oaUrl'); if (v('oaModel') != null) c.openaiModel = v('oaModel'); if (v('gmModel') != null) c.geminiModel = v('gmModel'); saveSmart(); };
@@ -574,8 +584,91 @@ export async function startApp(host, root) {
     if ($('#smAuto', body)) $('#smAuto', body).onclick = () => { c.autoAsk = !c.autoAsk; saveSmart(); render(); };
   }
 
+  // ---------- Guide: first-run tour, Smart mode setup, prompts for an AI assistant ----------
+  async function copyText(t) {
+    try { await navigator.clipboard.writeText(t); return true; } catch {}
+    try { await navigator.clipboard.setContent({ 'text/plain': t }); return true; } catch {}
+    return false;
+  }
+  async function testSmart() { // a tiny real request: proves the whole path works
+    const real = await resolveProvider(await smartCfg(), httpGet); if (!real) throw new Error('No model is set up yet');
+    const px = { w: 8, h: 8, data: new Uint8ClampedArray(8 * 8 * 4).fill(128) };
+    const text = await ask(real, { prompt: 'This is a connection test. Reply with exactly this JSON: {"sees":"ok","picks":[]}', imageB64: toBase64(encodePNG(px)) }, httpPost);
+    parseReply(text); return real;
+  }
+  function renderGuide(body) {
+    const G = S.guide, done = () => { settings.set('guideSeen', 1); };
+    const info = { os: host.os === 'win' ? 'win' : 'mac', hostLabel: host.label || host.name, version: host.version, route: G.route };
+    const promptBox = (kind, label) => `<div class="card"><div class="k">${label}</div><p class="small dim">Copy this and paste it into any AI assistant (ChatGPT, Claude, Gemini, Copilot…). It will walk you through, one step at a time.</p>
+      <textarea class="prompt" rows="5" readonly data-prompt="${kind}">${esc(helpPrompt(kind, info))}</textarea><div class="row"><button data-copyprompt="${kind}">Copy the prompt</button></div></div>`;
+    if (G.view === 'tour') {
+      const st = TOUR[G.step], last = G.step === TOUR.length - 1;
+      body.innerHTML = `<div class="card tour"><div class="k">Getting started · ${G.step + 1} of ${TOUR.length}</div><h3>${esc(st.t)}</h3><p>${esc(st.b)}</p><p class="small tip">${esc(st.tip)}</p>
+        <div class="dots">${TOUR.map((_, i) => `<span class="dot ${i === G.step ? 'on' : ''}"></span>`).join('')}</div>
+        <div class="row wrap">${G.step ? '<button id="gBack">Back</button>' : ''}${last ? '<button id="gSmart" class="primary">Set up Smart mode</button><button id="gDone">Start without it</button>' : '<button id="gNext" class="primary">Next</button>'}${last ? '' : '<button id="guideSkip">Skip the tour</button>'}</div></div>`;
+      if ($('#gBack', body)) $('#gBack', body).onclick = () => { G.step--; render(); };
+      if ($('#gNext', body)) $('#gNext', body).onclick = () => { G.step++; render(); };
+      if ($('#guideSkip', body)) $('#guideSkip', body).onclick = () => { done(); go('shot'); };
+      if ($('#gDone', body)) $('#gDone', body).onclick = () => { done(); go('shot'); };
+      if ($('#gSmart', body)) $('#gSmart', body).onclick = () => { done(); G.view = 'smart'; G.route = ''; render(); };
+      return;
+    }
+    if (G.view === 'home') {
+      body.innerHTML = `<div class="row"><button id="gClose">← Back</button><b class="grow">Guide</b></div>
+        <div class="card"><h3>Take the one-minute tour</h3><p class="small">How to read a shot, pick a direction, apply it and save it.</p><button id="gTour" class="primary">Start the tour</button></div>
+        <div class="card"><h3>Set up Smart mode</h3><p class="small">Step by step, for your ${info.os === 'win' ? 'Windows PC' : 'Mac'}. No technical knowledge needed.</p><button id="gSetup">Show me how</button></div>
+        ${promptBox('use', 'Want a patient teacher?')}`;
+      $('#gClose', body).onclick = () => go(S.back || 'shot');
+      $('#gTour', body).onclick = () => { G.view = 'tour'; G.step = 0; render(); };
+      $('#gSetup', body).onclick = () => { G.view = 'smart'; G.route = ''; render(); };
+    } else { // Smart mode setup
+      const R = routes(info.os), r = R.find(x => x.id === G.route);
+      body.innerHTML = `<div class="row"><button id="gHome">← Guide</button><b class="grow">Set up Smart mode</b></div>
+        ${!r ? `<p class="small">Smart mode needs an AI model to talk to. Pick the way that suits you; you can change it later.</p>
+          ${R.map(x => `<div class="card route ${x.steps.length ? '' : 'soon'}" data-route="${x.id}"><h3>${esc(x.n)}</h3><div class="small tag">${esc(x.tag)}</div><p class="small">${esc(x.who)}</p>${x.steps.length ? `<button data-route="${x.id}">Choose this</button>` : ''}</div>`).join('')}
+          ${promptBox('smart', 'Not sure which to choose?')}`
+        : `<div class="card"><h3>${esc(r.n)}</h3><div class="small tag">${esc(r.tag)}</div>
+            ${r.steps.map((st, i) => `<div class="step"><div class="num">${i + 1}</div><div class="grow"><p class="small">${esc(st.t)}</p>
+              ${st.url ? `<button data-url="${esc(st.url)}">${esc(st.label)}</button>` : ''}${st.copy ? `<div class="row"><span class="mono code grow">${esc(st.copy)}</span><button data-copy="${esc(st.copy)}">Copy</button></div>` : ''}
+              ${st.key ? `<div class="row"><input id="gKey" type="password" placeholder="Paste your key here"><button id="gKeySave">Save</button></div>` : ''}</div></div>`).join('')}
+            ${r.check === 'settings' ? '<button id="gSettings" class="primary">Open Smart settings</button>' : `<button id="gCheck" class="primary">${r.check === 'ollama' ? 'Find Ollama and switch Smart mode on' : 'Test my key and switch Smart mode on'}</button>`}
+            ${G.msg ? `<p class="small ${G.ok ? 'okmsg' : 'warn'}">${esc(G.msg)}</p>` : ''}${G.ok ? '<div class="row"><button id="gGo" class="primary">Try it on a shot</button></div>' : ''}
+            ${r.trouble ? `<p class="small dim">${esc(r.trouble)}</p>` : ''}</div>
+          <div class="row"><button id="gOther">Choose a different way</button></div>
+          ${promptBox('smart', 'Stuck? Get a hand-held walkthrough')}`}`;
+      $('#gHome', body).onclick = () => { G.view = 'home'; G.msg = ''; render(); };
+      body.querySelectorAll('button[data-route]').forEach(b => b.onclick = () => { G.route = b.dataset.route; G.msg = ''; G.ok = false; render(); });
+      if ($('#gOther', body)) $('#gOther', body).onclick = () => { G.route = ''; G.msg = ''; G.ok = false; render(); };
+      if ($('#gSettings', body)) $('#gSettings', body).onclick = () => { S.smart.cfg.provider = 'openai'; saveSmart(); go('smart'); };
+      if ($('#gGo', body)) $('#gGo', body).onclick = () => go('shot');
+      if ($('#gKeySave', body)) $('#gKeySave', body).onclick = async () => { const k = $('#gKey', body).value.trim(); if (!k) return toast('Paste your key first'); await secret.set('gemini', k); S.smart.hasGemini = true; toast('Key saved on this computer'); };
+      if ($('#gCheck', body)) $('#gCheck', body).onclick = () => busy('Checking', async () => {
+        const c = S.smart.cfg; G.ok = false;
+        try {
+          if (r.check === 'ollama') {
+            const d = await detectOllama(c.ollamaUrl || SMART0.ollamaUrl, httpGet);
+            if (!d.ok) throw new Error('Ollama is not answering yet. Is the llama icon showing? Open Ollama, then press the button again.');
+            if (!d.vision.length) throw new Error('Ollama is running, but it has no model that can see pictures yet. Do step 3, wait for the download to finish, then try again.');
+            c.provider = 'ollama'; c.ollamaModel = d.vision.includes(c.ollamaModel) ? c.ollamaModel : d.vision[0]; saveSmart();
+            G.msg = `Found Ollama with ${c.ollamaModel}. Smart mode is on, and your frames stay on this computer.`; G.ok = true;
+          } else {
+            const k = ($('#gKey', body) || {}).value; if (k && k.trim()) { await secret.set('gemini', k.trim()); S.smart.hasGemini = true; }
+            if (!(await secret.get('gemini'))) throw new Error('Paste your key in step 3 first.');
+            c.provider = 'gemini'; saveSmart(); await testSmart();
+            G.msg = 'Your key works. Smart mode is on.'; G.ok = true;
+          }
+        } catch (e) { G.msg = e.message || String(e); if (r.check === 'gemini') { c.provider = 'off'; saveSmart(); } }
+        render();
+      });
+    }
+    body.querySelectorAll('[data-copy]').forEach(b => b.onclick = async () => toast((await copyText(b.dataset.copy)) ? 'Copied' : 'Select the text and copy it by hand'));
+    body.querySelectorAll('[data-copyprompt]').forEach(b => b.onclick = async () => { const t = body.querySelector(`textarea[data-prompt="${b.dataset.copyprompt}"]`);
+      if (await copyText(t.value)) toast('Prompt copied: paste it into your AI assistant'); else { t.focus(); t.select && t.select(); toast('Press Cmd/Ctrl + C to copy the selected text'); } });
+  }
+
   /** Called by the host when the separate Preview panel shows: the preview moves there. */
   function attachPreview(el) { pvEl = el; S.detached = true; render(); }
+  if (!settings.get('guideSeen', 0)) { S.back = 'shot'; S.tab = 'guide'; S.guide = { view: 'tour', step: 0, route: '' }; }
   render();
   return { state: S, updater: up, render, attachPreview };
 }

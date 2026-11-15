@@ -1,6 +1,13 @@
 # Release notes
 Each `## <version>` block becomes the text of the in-app update banner and the GitHub Release.
 
+## 0.3.1
+A guide for new users, and Smart mode setup anyone can follow.
+- A one-minute tour opens the first time you use Colored Lens, and is always under "Guide" at the top of the panel.
+- Set up Smart mode step by step for your computer: plain-language steps, buttons that open the right pages, one-tap copy for the one line you paste, and a button that checks it worked and switches Smart mode on.
+- Prompts you can copy into any AI assistant for a patient, hand-held walkthrough of the plugin or of the Smart mode setup.
+- The pop-out preview now fits its panel and follows it when you resize.
+
 ## 0.3.0
 Smart mode: an optional AI that looks at the frame, talks it through with you and picks looks. Free to you.
 - Choose where it runs: Ollama on your computer (free and private), a local OpenAI-compatible server such as Microsoft Foundry Local or LM Studio, or Google Gemini with your own key (free tier). "Automatic" uses Ollama when it is running, otherwise your Gemini key.

@@ -43,6 +43,12 @@ test('Premiere panel: grab, mark, read markers, apply the effect, update', { ski
     await page.route(`http://127.0.0.1:${port}/mock.js`, r => r.fulfill({ path: path.join(ROOT, 'test/mocks/premiere_mock.js') }));
     await page.addInitScript(({ bmp, params }) => { window.__bmp = new Uint8Array(bmp); window.__effectParams = params; }, { bmp: [...fs.readFileSync(FRAME)], params: kParams });
     await page.goto(`http://127.0.0.1:${port}/test.html`);
+    // first run: the tour opens; walk it to the end, look at the Smart setup, then start
+    await page.waitForSelector('#gNext', { timeout: 15000 }); for (let i = 0; i < 6; i++) await page.click('#gNext');
+    await page.click('#gSmart'); await page.waitForSelector('.card.route'); assert.match(await page.innerText('#body'), /Apple Intelligence/);
+    await page.click('button[data-route="ollama"]'); assert.match(await page.innerText('#body'), /ollama pull gemma3:4b/);
+    assert.match(await page.inputValue('textarea[data-prompt="smart"]'), /one small step at a time/);
+    await page.click('[data-tab=shot]');
     await page.waitForSelector('#grab', { timeout: 15000 });
     await page.click('#grab'); await page.waitForSelector('#reading .card', { timeout: 15000 });
     assert.match(await page.innerText('#body'), /A001_C003 00:00:12:12/);
