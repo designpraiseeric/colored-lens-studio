@@ -1,11 +1,12 @@
 // The C++ Look Engine and the JS port (core/look.js) must agree on the per-pixel transform,
 // so a .cube baked by a panel looks the same as the effect. Skips if the engine is not built.
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { parseCode, makePixelFn, lutFromBin, lookToEngineParams, fullGrade } from '../core/look.js';
-const bin = new URL('../engine/build/lkpixel', import.meta.url).pathname;
+const bin = fileURLToPath(new URL('../engine/build/lkpixel', import.meta.url));
 const looks = JSON.parse(fs.readFileSync(new URL('../site/content/looks.json', import.meta.url))), cat = looks.catalog;
 const luts = {}; for (const id of Object.keys(looks.luts)) luts[id] = lutFromBin(fs.readFileSync(new URL(`../site/content/luts/${id}.bin`, import.meta.url)));
 const CASES = [

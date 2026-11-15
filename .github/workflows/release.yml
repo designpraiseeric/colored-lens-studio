@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs: { version: '${{ steps.v.outputs.version }}', release: '${{ steps.v.outputs.release }}' }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - id: v
         env: { GH_TOKEN: '${{ github.token }}' }
         run: |
@@ -20,14 +20,14 @@ jobs:
   mac:
     needs: check
     if: needs.check.outputs.release == 'true'
-    runs-on: macos-14
+    runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+      - uses: actions/checkout@v5
         with: { repository: designpraiseeric/chroma-encyclopedia, path: sources/chroma-encyclopedia }
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with: { repository: designpraiseeric/lukuluku, path: sources/lukuluku, sparse-checkout: src }
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with: { node-version: 22, cache: npm }
       - run: npm ci
       - run: node tools/build_content.mjs --enc sources/chroma-encyclopedia --luk sources/lukuluku && node tools/gen_engine.mjs
@@ -48,7 +48,7 @@ jobs:
           APPLE_TEAM_ID: '${{ secrets.APPLE_TEAM_ID }}'
           APPLE_APP_PASSWORD: '${{ secrets.APPLE_APP_PASSWORD }}'
         run: ./installer/mac/build_pkg.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with: { name: mac, path: 'dist/release/*' }
 
   windows:
@@ -56,12 +56,12 @@ jobs:
     if: needs.check.outputs.release == 'true'
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+      - uses: actions/checkout@v5
         with: { repository: designpraiseeric/chroma-encyclopedia, path: sources/chroma-encyclopedia }
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with: { repository: designpraiseeric/lukuluku, path: sources/lukuluku, sparse-checkout: src }
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with: { node-version: 22, cache: npm }
       - run: npm ci
       - run: node tools/build_content.mjs --enc sources/chroma-encyclopedia --luk sources/lukuluku && node tools/gen_engine.mjs
@@ -82,15 +82,15 @@ jobs:
         run: |
           $v = node -p "require('./package.json').version"
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DVersion=$v" "/DRoot=$PWD" installer\windows\ColoredLensStudio.iss
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with: { name: windows, path: 'dist/release/*.exe' }
 
   publish:
     needs: [check, mac, windows]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v5
         with: { path: out, merge-multiple: true }
       - name: Create the GitHub Release
         env: { GH_TOKEN: '${{ github.token }}', V: '${{ needs.check.outputs.version }}' }

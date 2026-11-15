@@ -5,12 +5,12 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+      - uses: actions/checkout@v5
         with: { repository: designpraiseeric/chroma-encyclopedia, path: sources/chroma-encyclopedia }
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with: { repository: designpraiseeric/lukuluku, path: sources/lukuluku, sparse-checkout: src }
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with: { node-version: 22, cache: npm }
       - run: npm ci
       - run: node tools/build_content.mjs --enc sources/chroma-encyclopedia --luk sources/lukuluku

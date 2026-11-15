@@ -1,10 +1,11 @@
 // Builds the panels into dist/: one bundle of ui/ + core/ per host, plus the content they ship with
 // (so they work offline from the first launch; newer content then arrives from GitHub Pages).
 // Usage: node tools/build_hosts.mjs [web|premiere|resolve ...]   (needs `npm run content` first)
+import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 import path from 'node:path';
 import * as esbuild from 'esbuild';
-const ROOT = path.dirname(path.dirname(new URL(import.meta.url).pathname));
+const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
 const cfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'studio.config.json'), 'utf8'));
 const SITE = path.join(ROOT, 'site', 'content');

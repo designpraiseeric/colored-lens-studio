@@ -1,5 +1,6 @@
 // Host contract tests: the built Premiere and Resolve panels run against mock versions of the host APIs
 // (shaped after @adobe/premierepro 27 and Resolve's scripting API). Needs `npm run build` and Chrome.
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -9,7 +10,7 @@ import Module from 'node:module';
 import { kParams } from '../engine/src/generated/params.generated.js';
 import { parseCode, lookToEngineParams } from '../core/look.js';
 
-const ROOT = path.dirname(path.dirname(new URL(import.meta.url).pathname));
+const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const FRAME = path.join(ROOT, 'test', 'fixtures', 'frame.bmp');
 const chrome = ['/usr/bin/google-chrome', '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'].find(p => fs.existsSync(p));
 

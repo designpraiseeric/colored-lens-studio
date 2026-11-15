@@ -1,8 +1,9 @@
 // Generates engine/src/generated/catalog.h from Lukuluku's catalog and LUTs (site/content/looks.json + luts/*.bin),
 // so the C++ Look Engine uses exactly the same looks as the web app and the panels.
+import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 import path from 'node:path';
-const ROOT = path.dirname(path.dirname(new URL(import.meta.url).pathname));
+const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const C = path.join(ROOT, 'site', 'content'), looks = JSON.parse(fs.readFileSync(path.join(C, 'looks.json'), 'utf8')), cat = looks.catalog;
 const byNum = o => Object.keys(o).sort((a, b) => +a.replace(/\D/g, '') - +b.replace(/\D/g, ''));
 const f = v => (v === undefined || v === null ? '0.0f' : (Number(v).toString().includes('.') || Number(v).toString().includes('e') ? Number(v).toString() : Number(v) + '.0') + 'f');

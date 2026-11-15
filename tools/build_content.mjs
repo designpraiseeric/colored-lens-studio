@@ -3,6 +3,7 @@
 //   site/content/manifest.json    content version + file list (plugins refresh their cache from this)
 //   site/content/encyclopedia.json, refs.json, looks.json, luts/*.bin, frames/*.jpg
 // Usage: node tools/build_content.mjs [--enc ../chroma-encyclopedia] [--luk ../lukuluku] [--out site]
+import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
@@ -13,7 +14,7 @@ import { labPixels, signature } from '../core/analysis.js';
 import { downsample } from '../core/image.js';
 import { matchStats } from '../core/look.js';
 
-const ROOT = path.dirname(path.dirname(new URL(import.meta.url).pathname));
+const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const arg = (k, d) => { const i = process.argv.indexOf(k); return i > 0 ? process.argv[i + 1] : d; };
 const ENC = path.resolve(arg('--enc', process.env.ENC_DIR || path.join(ROOT, '..', 'chroma-encyclopedia')));
 const LUK = path.resolve(arg('--luk', process.env.LUK_DIR || path.join(ROOT, '..', 'lukuluku')));
