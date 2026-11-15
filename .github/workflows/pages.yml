@@ -1,0 +1,43 @@
+# The live content feed every installed plugin reads (https://designpraiseeric.github.io/colored-lens-studio/):
+# encyclopedia, reference frames, Lukuluku looks and LUTs, and version.json (the latest PUBLISHED release).
+# Rebuilt on every push, after every release, every 6 hours (to pick up changes in chroma-encyclopedia and
+# lukuluku), and instantly when those repos send a "content-updated" dispatch (docs/RELEASING.md).
+name: Live content
+on:
+  push: { branches: [main] }
+  workflow_run: { workflows: [Release], types: [completed] }
+  schedule: [{ cron: '17 */6 * * *' }]
+  repository_dispatch: { types: [content-updated] }
+  workflow_dispatch:
+permissions: { contents: read, pages: write, id-token: write }
+concurrency: { group: pages, cancel-in-progress: true }
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with: { repository: designpraiseeric/chroma-encyclopedia, path: sources/chroma-encyclopedia }
+      - uses: actions/checkout@v4
+        with: { repository: designpraiseeric/lukuluku, path: sources/lukuluku, sparse-checkout: src }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - name: Latest published release
+        id: rel
+        env: { GH_TOKEN: '${{ github.token }}' }
+        run: echo "version=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName -q .tagName 2>/dev/null || echo v0.0.0)" >> "$GITHUB_OUTPUT"
+      - name: Build the content feed
+        env: { RELEASE_VERSION: '${{ steps.rel.outputs.version }}' }
+        run: node tools/build_content.mjs --enc sources/chroma-encyclopedia --luk sources/lukuluku
+      - name: Web version of the panel (for CapCut / OpenCut users)
+        run: node tools/gen_engine.mjs && node tools/build_hosts.mjs web && cp -R dist/web site/panel
+      - uses: actions/upload-pages-artifact@v3
+        with: { path: site }
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: { name: github-pages, url: '${{ steps.d.outputs.page_url }}' }
+    steps:
+      - id: d
+        uses: actions/deploy-pages@v4

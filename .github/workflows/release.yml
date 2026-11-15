@@ -1,0 +1,100 @@
+# Builds and publishes a release when the version in package.json changes on main (or by hand).
+# Installed plugins see it within minutes: the Live content workflow runs after this one and updates version.json.
+name: Release
+on:
+  push: { branches: [main], paths: [package.json] }
+  workflow_dispatch:
+permissions: { contents: write }
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs: { version: '${{ steps.v.outputs.version }}', release: '${{ steps.v.outputs.release }}' }
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        env: { GH_TOKEN: '${{ github.token }}' }
+        run: |
+          V=$(node -p "require('./package.json').version"); echo "version=$V" >> "$GITHUB_OUTPUT"
+          if gh release view "v$V" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then echo "release=false" >> "$GITHUB_OUTPUT"; echo "v$V already released"; else echo "release=true" >> "$GITHUB_OUTPUT"; fi
+
+  mac:
+    needs: check
+    if: needs.check.outputs.release == 'true'
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with: { repository: designpraiseeric/chroma-encyclopedia, path: sources/chroma-encyclopedia }
+      - uses: actions/checkout@v4
+        with: { repository: designpraiseeric/lukuluku, path: sources/lukuluku, sparse-checkout: src }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: node tools/build_content.mjs --enc sources/chroma-encyclopedia --luk sources/lukuluku && node tools/gen_engine.mjs
+      - run: node tools/build_hosts.mjs premiere resolve && node tools/package.mjs
+      - run: ./tools/fetch_sdks.sh
+      - name: After Effects SDK (optional; enables the Premiere Pro effect)
+        env: { AE_SDK_ZIP_URL: '${{ secrets.AE_SDK_ZIP_URL }}' }
+        run: |
+          if [ -n "$AE_SDK_ZIP_URL" ]; then curl -sSL -o aesdk.zip "$AE_SDK_ZIP_URL" && unzip -q aesdk.zip -d aesdk
+            H=$(find aesdk -path '*Examples/Headers/AE_Effect.h' | head -1); echo "AE_SDK=${H%/Examples/Headers/AE_Effect.h}" >> "$GITHUB_ENV"; fi
+      - name: Build the Look Engine, universal for Apple silicon and Intel
+        run: cmake -S engine -B engine/build -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DAE_SDK="${AE_SDK:-}" && cmake --build engine/build -j4
+      - name: Build the installer
+        env:
+          MAC_APP_IDENTITY: '${{ secrets.MAC_APP_IDENTITY }}'
+          MAC_INSTALLER_IDENTITY: '${{ secrets.MAC_INSTALLER_IDENTITY }}'
+          APPLE_ID: '${{ secrets.APPLE_ID }}'
+          APPLE_TEAM_ID: '${{ secrets.APPLE_TEAM_ID }}'
+          APPLE_APP_PASSWORD: '${{ secrets.APPLE_APP_PASSWORD }}'
+        run: ./installer/mac/build_pkg.sh
+      - uses: actions/upload-artifact@v4
+        with: { name: mac, path: 'dist/release/*' }
+
+  windows:
+    needs: check
+    if: needs.check.outputs.release == 'true'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with: { repository: designpraiseeric/chroma-encyclopedia, path: sources/chroma-encyclopedia }
+      - uses: actions/checkout@v4
+        with: { repository: designpraiseeric/lukuluku, path: sources/lukuluku, sparse-checkout: src }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: node tools/build_content.mjs --enc sources/chroma-encyclopedia --luk sources/lukuluku && node tools/gen_engine.mjs
+      - run: node tools/build_hosts.mjs premiere resolve && node tools/package.mjs
+      - run: bash tools/fetch_sdks.sh
+      - name: After Effects SDK (optional)
+        shell: pwsh
+        env: { AE_SDK_ZIP_URL: '${{ secrets.AE_SDK_ZIP_URL_WIN || secrets.AE_SDK_ZIP_URL }}' }
+        run: |
+          if ($env:AE_SDK_ZIP_URL) { Invoke-WebRequest $env:AE_SDK_ZIP_URL -OutFile aesdk.zip; Expand-Archive aesdk.zip aesdk
+            $h = Get-ChildItem -Recurse aesdk -Filter AE_Effect.h | Where-Object { $_.FullName -like '*Examples\Headers*' } | Select-Object -First 1
+            "AE_SDK=$($h.Directory.Parent.Parent.FullName)" | Out-File -Append $env:GITHUB_ENV }
+      - name: Build the Look Engine
+        shell: pwsh
+        run: cmake -S engine -B engine/build -A x64 "-DAE_SDK=$env:AE_SDK"; cmake --build engine/build --config Release -j 4
+      - name: Build the installer
+        shell: pwsh
+        run: |
+          $v = node -p "require('./package.json').version"
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DVersion=$v" "/DRoot=$PWD" installer\windows\ColoredLensStudio.iss
+      - uses: actions/upload-artifact@v4
+        with: { name: windows, path: 'dist/release/*.exe' }
+
+  publish:
+    needs: [check, mac, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { path: out, merge-multiple: true }
+      - name: Create the GitHub Release
+        env: { GH_TOKEN: '${{ github.token }}', V: '${{ needs.check.outputs.version }}' }
+        run: |
+          awk -v v="## $V" '$0==v{f=1;next} /^## /{f=0} f' RELEASE_NOTES.md > notes.md
+          printf '\n\n**Install:** macOS: ColoredLensStudio-%s-mac.pkg · Windows: ColoredLensStudio-%s-win.exe · Premiere panel only: ColoredLens-Premiere-%s.ccx\nAlready installed? Open the Colored Lens panel: it offers this update with one click.\n' "$V" "$V" "$V" >> notes.md
+          gh release create "v$V" out/* --repo "$GITHUB_REPOSITORY" --title "Colored Lens Studio $V" --notes-file notes.md

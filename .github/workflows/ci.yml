@@ -1,0 +1,25 @@
+# Every push and pull request: build everything that can be built on Linux and run all tests.
+name: CI
+on: [push, pull_request, workflow_dispatch]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with: { repository: designpraiseeric/chroma-encyclopedia, path: sources/chroma-encyclopedia }
+      - uses: actions/checkout@v4
+        with: { repository: designpraiseeric/lukuluku, path: sources/lukuluku, sparse-checkout: src }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: node tools/build_content.mjs --enc sources/chroma-encyclopedia --luk sources/lukuluku
+      - run: node tools/gen_engine.mjs
+      - run: ./tools/fetch_sdks.sh
+      - name: Build the Look Engine (core, test tools, OpenFX plugin)
+        run: cmake -S engine -B engine/build && cmake --build engine/build -j4
+      - run: node tools/build_hosts.mjs
+      - name: Unit, parity and host tests
+        run: node --test test/
+      - name: OpenFX plugin in the OpenFX reference host
+        run: node tools/make_test_ppm.mjs engine/build/test_720x576.ppm && engine/tests/ofx_host_test.sh "$PWD/engine/build/test_720x576.ppm"

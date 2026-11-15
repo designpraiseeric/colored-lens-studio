@@ -1,0 +1,7 @@
+{
+  "name": "com.designpraise.coloredlens",
+  "version": "0.0.0",
+  "description": "Colored Lens for DaVinci Resolve Studio (Workflow Integration)",
+  "main": "main.js",
+  "private": true
+}

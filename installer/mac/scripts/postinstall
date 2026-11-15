@@ -1,0 +1,30 @@
+#!/bin/bash
+# Colored Lens Studio postinstall (runs as root after the files are copied).
+LOG=/tmp/ColoredLensStudio-install.log
+exec >>"$LOG" 2>&1
+echo "== $(date) postinstall"
+SUPPORT="/Library/Application Support/ColoredLens"
+
+# 1. A LUT folder Resolve lists and the panel can write to without admin rights.
+LUTDIR="/Library/Application Support/Blackmagic Design/DaVinci Resolve/LUT/ColoredLens"
+mkdir -p "$LUTDIR" && chmod 777 "$LUTDIR"
+
+# 2. The Premiere Pro panel: Adobe's own installer agent installs the .ccx for the logged-in user.
+CCX="$(ls "$SUPPORT"/ColoredLens-Premiere-*.ccx 2>/dev/null | tail -1)"
+UPIA="/Library/Application Support/Adobe/Adobe Desktop Common/RemoteComponents/UPI/UnifiedPluginInstallerAgent/UnifiedPluginInstallerAgent.app/Contents/MacOS/UnifiedPluginInstallerAgent"
+USER_NAME="$(stat -f%Su /dev/console)"; USER_ID="$(id -u "$USER_NAME" 2>/dev/null)"
+if [ -n "$CCX" ]; then
+  if [ -x "$UPIA" ] && [ -n "$USER_ID" ] && [ "$USER_NAME" != "root" ]; then
+    launchctl asuser "$USER_ID" sudo -u "$USER_NAME" "$UPIA" --install "$CCX" && echo "Premiere panel installed with UPIA" || {
+      echo "UPIA failed; opening the .ccx with Creative Cloud instead"; launchctl asuser "$USER_ID" sudo -u "$USER_NAME" open "$CCX"; }
+  else
+    echo "Creative Cloud installer agent not found; opening the .ccx"; [ -n "$USER_ID" ] && launchctl asuser "$USER_ID" sudo -u "$USER_NAME" open "$CCX"
+  fi
+fi
+
+# 3. Resolve loads WorkflowIntegration.node from its own Developer folder (nothing to copy). Clear quarantine on our bundles.
+xattr -dr com.apple.quarantine "/Library/OFX/Plugins/LukulukuLook.ofx.bundle" 2>/dev/null
+xattr -dr com.apple.quarantine "/Library/Application Support/Adobe/Common/Plug-ins/7.0/MediaCore/LukulukuLook.plugin" 2>/dev/null
+xattr -dr com.apple.quarantine "/Library/Application Support/Blackmagic Design/DaVinci Resolve/Workflow Integration Plugins/com.designpraise.coloredlens" 2>/dev/null
+echo "done"
+exit 0

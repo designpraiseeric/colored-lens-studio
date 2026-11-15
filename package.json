@@ -1,0 +1,18 @@
+{
+  "name": "colored-lens-studio",
+  "version": "0.1.0",
+  "description": "Colored Lens + Lukuluku inside Premiere Pro and DaVinci Resolve. By DesignPraise Studio.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "content": "node tools/build_content.mjs",
+    "build": "node tools/build_hosts.mjs",
+    "test": "node --test test/",
+    "package": "node tools/package.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0",
+    "jpeg-js": "^0.4.4",
+    "playwright-core": "^1.63.0"
+  }
+}

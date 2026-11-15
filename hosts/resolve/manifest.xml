@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<BlackmagicDesign>
+    <Plugin>
+        <Id>__ID__</Id>
+        <Name>Colored Lens</Name>
+        <Version>__VERSION__</Version>
+        <Description>Colored Lens: read frames in the language of the Cinematic Color Encyclopedia, check skin, build colour scripts and apply Lukuluku looks. By DesignPraise Studio.</Description>
+        <FilePath>main.js</FilePath>
+    </Plugin>
+</BlackmagicDesign>
