@@ -1,6 +1,11 @@
 # Release notes
 Each `## <version>` block becomes the text of the in-app update banner and the GitHub Release.
 
+## 0.4.2
+- Mac: if Adobe's plugin installer fails (it does when the Creative Cloud app is closed), the installer now hands the panel to Creative Cloud itself, which asks you to confirm. Before, the panel could silently stay on the old version.
+- The installer no longer gets stuck on "Running package scripts".
+- Everything in 0.4.0: Apple Intelligence through the Colored Lens Helper, the hands-on tour, step-by-step Smart setup, and a wipe you can drag.
+
 ## 0.4.1
 - The Mac installer no longer gets stuck on "Running package scripts" when the Creative Cloud app is closed. It finishes straight away and the Premiere panel is installed in the background.
 - Everything in 0.4.0: Apple Intelligence through the Colored Lens Helper, the hands-on tour, step-by-step Smart setup, and a wipe you can drag.

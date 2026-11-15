@@ -27,10 +27,14 @@ CCX="$(ls "$SUPPORT"/ColoredLens-Premiere-*.ccx 2>/dev/null | sort -V | tail -1)
 UPIA="/Library/Application Support/Adobe/Adobe Desktop Common/RemoteComponents/UPI/UnifiedPluginInstallerAgent/UnifiedPluginInstallerAgent.app/Contents/MacOS/UnifiedPluginInstallerAgent"
 if [ -n "$CCX" ] && [ -n "$USER_ID" ] && [ "$USER_NAME" != "root" ]; then
   if [ -x "$UPIA" ]; then
-    ( launchctl asuser "$USER_ID" sudo -u "$USER_NAME" "$UPIA" --install "$CCX" & PID=$!
+    ( UOUT="$(mktemp)"; launchctl asuser "$USER_ID" sudo -u "$USER_NAME" "$UPIA" --install "$CCX" >"$UOUT" 2>&1 & PID=$!
       for i in $(seq 1 180); do kill -0 $PID 2>/dev/null || break; sleep 1; done
       if kill -0 $PID 2>/dev/null; then echo "UPIA still waiting after 3 minutes; opening the .ccx with Creative Cloud"; kill $PID 2>/dev/null; launchctl asuser "$USER_ID" sudo -u "$USER_NAME" open "$CCX"
-      else wait $PID && echo "Premiere panel installed with UPIA" || { echo "UPIA failed; opening the .ccx"; launchctl asuser "$USER_ID" sudo -u "$USER_NAME" open "$CCX"; }; fi
+      else wait $PID; RC=$?; cat "$UOUT"
+        # the agent can print "Failed to install" and still exit 0
+        if [ $RC -eq 0 ] && ! grep -qi "failed" "$UOUT"; then echo "Premiere panel installed with UPIA"
+        else echo "UPIA failed; opening the .ccx with Creative Cloud"; launchctl asuser "$USER_ID" sudo -u "$USER_NAME" open "$CCX"; fi; fi
+      rm -f "$UOUT"
     ) </dev/null >>"$LOG" 2>&1 &
     disown 2>/dev/null
   else echo "Creative Cloud installer agent not found; opening the .ccx"; launchctl asuser "$USER_ID" sudo -u "$USER_NAME" open "$CCX"; fi
