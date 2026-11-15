@@ -2,6 +2,7 @@
 // (the narrative devices that only show up across many shots).
 import { makeFrame } from './image.js';
 import { hexToRgb } from './color.js';
+const answers = v => (Array.isArray(v) ? v : v ? [v] : []).filter(Boolean);
 
 /** One shot record, small enough to store in a marker's note. */
 export function shotRecord(reading, meta = {}) {
@@ -43,12 +44,12 @@ const STORY = ['drama', 'thriller', 'music'];
  */
 export function readSequence(shots, enc, intent = {}) {
   const out = []; if (shots.length < 3) return [{ n: 'Add more shots', why: 'Add at least three shots (or scan the sequence) to read colour across it.' }];
-  const story = STORY.includes(intent.genre), avg = k => shots.reduce((a, s) => a + s[k], 0) / shots.length;
+  const story = answers(intent.genre).some(g => STORY.includes(g)), feel = answers(intent.feeling)[0], avg = k => shots.reduce((a, s) => a + s[k], 0) / shots.length;
   const chrom = enc.HUES.filter(h => !['white', 'black', 'grey', 'bw'].includes(h.id));
   const maxShare = id => Math.max(...shots.map(s => s.hues[id] || 0));
   const dC = trend(shots.map(s => s.C)), dT = trend(shots.map(s => s.T)), T = avg('T');
-  if (intent.feeling && WARM_FEEL.includes(intent.feeling) && T < -0.25) out.push({ n: 'Against the feeling you set', why: `You set ${intent.feeling}, but the sequence reads cool on average. Warm looks (print film, golden green, warm print) would bring it in line.` });
-  if (intent.feeling && COOL_FEEL.includes(intent.feeling) && T > 0.25) out.push({ n: 'Against the feeling you set', why: `You set ${intent.feeling}, but the sequence reads warm on average. Cooler looks (Nordic grey, faded Eterna) would bring it in line.` });
+  if (feel && WARM_FEEL.includes(feel) && T < -0.25) out.push({ n: 'Against the feeling you set', why: `You set ${feel}, but the sequence reads cool on average. Warm looks (print film, golden green, warm print) would bring it in line.` });
+  if (feel && COOL_FEEL.includes(feel) && T > 0.25) out.push({ n: 'Against the feeling you set', why: `You set ${feel}, but the sequence reads warm on average. Cooler looks (Nordic grey, faded Eterna) would bring it in line.` });
   if (Math.abs(dC) > 0.04) out.push({ n: story ? 'Temporal evolution' : 'Saturation changes', why: dC > 0 ? 'Saturation rises across the sequence' + (story ? ': colour as awakening.' : '.') : 'Saturation drains across the sequence' + (story ? ': colour as loss.' : '.') });
   if (Math.abs(dT) > 0.5) out.push({ n: story ? 'Emotional thermometer' : 'Temperature changes', why: dT > 0 ? 'The sequence warms as it goes.' : 'The sequence cools as it goes.' });
   const runs = []; for (const s of shots) { const last = runs[runs.length - 1]; if (last && last.hue === s.hue) last.n++; else runs.push({ hue: s.hue, n: 1 }); }

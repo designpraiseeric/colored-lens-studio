@@ -9,10 +9,17 @@
     return { getMatchName: async () => 'AE.DesignPraise Lukuluku Look', getParamCount: () => params.length, getParam: i => params[i] }; };
   const chain = { comps: [{ getMatchName: async () => 'AE.ADBE Motion' }], getComponentCount() { return this.comps.length; }, getComponentAtIndex(i) { return this.comps[i]; },
     createAppendComponentAction(c) { return { type: 'append', c }; } };
-  const clip = { getName: async () => 'A001_C003', getComponentChain: async () => chain, createAddVideoTransitionAction() {} };
+  const T = v => ({ seconds: v });
+  const projItem = path => ({ path });
+  const clip = { getName: async () => 'A001_C003', getComponentChain: async () => chain, createAddVideoTransitionAction() {}, getStartTime: async () => T(10), getEndTime: async () => T(20),
+    isDisabled: async () => false, isAdjustmentLayer: async () => false, getProjectItem: async () => projItem('/media/A001_C003.mov'), getIsSelected: async () => true };
+  const title = { getName: async () => 'Lower third', getComponentChain: async () => ({ getComponentCount: () => 0 }), getStartTime: async () => T(11), getEndTime: async () => T(14),
+    isDisabled: async () => false, isAdjustmentLayer: async () => false, getProjectItem: async () => projItem(''), getIsSelected: async () => false };
+  const tracks = [{ isMuted: async () => false, getTrackItems: () => [clip] }, { isMuted: async () => false, getTrackItems: () => [] }, { isMuted: async () => false, getTrackItems: () => [title] }];
   const markersObj = { createAddMarkerAction: (name, type, start, dur, comments) => ({ type: 'marker', name, start, comments }), getMarkers: () => log.markers.map(m => ({ getStart: () => m.start, getName: () => m.name, getComments: () => m.comments })) };
   const seq = { name: 'Main edit', getPlayerPosition: async () => TickTime.createWithSeconds(12.5), getFrameSize: async () => ({ width: 1920, height: 1080 }), getTimebase: async () => String(254016000000 / 24),
-    getEndTime: async () => TickTime.createWithSeconds(30), getSelection: async () => ({ getTrackItems: async () => [clip] }) };
+    getEndTime: async () => TickTime.createWithSeconds(30), getSelection: async () => ({ getTrackItems: async () => [clip] }), guid: 'seq-guid-1',
+    getVideoTrackCount: async () => tracks.length, getVideoTrack: async i => tracks[i] };
   const project = { getActiveSequence: async () => seq, lockedAccess: fn => fn(),
     executeTransaction(build, label) { const ca = { addAction: a => {
       log.calls.push(label);
@@ -29,7 +36,7 @@
   const rfolder = prefix => ({ async getEntry(n) { if (/\.[a-z]+$/.test(n)) { const r = await fetch(prefix + n); if (!r.ok) throw new Error('missing ' + n);
       const blob = await r.arrayBuffer(); return { name: n, read: async o => (o && o.format === 'binary' ? blob : new TextDecoder().decode(blob)) }; } return rfolder(prefix + n + '/'); } });
   const modules = {
-    premierepro: { Project: { getActiveProject: async () => project }, TickTime, Marker: { MARKER_TYPE_COMMENT: 'Comment' }, Markers: { getMarkers: async () => markersObj },
+    premierepro: { Constants: { TrackItemType: { CLIP: 1 } }, ClipProjectItem: { cast: pi => ({ isSequence: async () => false, getMediaFilePath: async () => pi.path, getInputLUTID: async () => '' }) }, Project: { getActiveProject: async () => project }, TickTime, Marker: { MARKER_TYPE_COMMENT: 'Comment' }, Markers: { getMarkers: async () => markersObj },
       Exporter: { exportSequenceFrame: async (s, t, fname, dir) => { log.calls.push('export ' + fname + ' @' + t.seconds); files['tmp/' + fname] = bmp.buffer; return true; } },
       VideoFilterFactory: { getMatchNames: async () => ['AE.ADBE Motion', 'AE.DesignPraise Lukuluku Look'], createComponent: async n => ({ n }) } },
     uxp: { storage: { formats: { binary: 'binary', utf8: 'utf8' }, localFileSystem: { getTemporaryFolder: async () => folder('tmp'), getDataFolder: async () => folder('data'),

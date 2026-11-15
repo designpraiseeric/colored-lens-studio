@@ -10,7 +10,7 @@ import { shotRecord, encodeShot, decodeShot, readSequence, scriptCSV } from '../
 import { parseCode, parseLookInput, formatCode, shareLink, bakeCube, lutFromBin, computeMatch, matchStats, makePixelFn } from '../core/look.js';
 import { cmpVersion, Updater } from '../core/updates.js';
 import { hexToRgb } from '../core/color.js';
-import { pickDirections } from '../core/directions.js';
+import { pickDirections, answers, whyFor } from '../core/directions.js';
 import { savePreset, presetCode, importPresetCode, listPresets } from '../core/presets.js';
 
 const site = p => new URL('../site/content/' + p, import.meta.url);
@@ -87,6 +87,22 @@ test('directions follow the intent and each is a complete, previewable recipe', 
   assert.notDeepEqual(tense.map(d => d.id), joy.map(d => d.id));
   for (const d of [...tense, ...joy]) { assert.ok(d.look.C && d.look.M && d.look.G && d.name && d.line); assert.ok(cat.color[d.look.C] && cat.medium[d.look.M]); }
   assert.ok(tense.concat(joy).some(d => d.kind === 'natural'), 'a minimal option is always offered');
+});
+test('two answers per question: both shape the directions, the first leads', () => {
+  const r = readFrame(fixture, enc), sk = checkSkin(fixture);
+  assert.deepEqual(answers('tense'), ['tense']); assert.deepEqual(answers(['a', 'b', 'c']), ['a', 'b']); assert.deepEqual(answers(''), []);
+  const one = pickDirections({ feeling: ['tender'] }, { reading: r, skin: sk }), two = pickDirections({ feeling: ['tender', 'nostalgic'] }, { reading: r, skin: sk });
+  assert.ok(two.some(d => d.feel.includes('tender') && d.feel.includes('nostalgic')), 'a recipe serving both feelings is offered');
+  const d = two.find(x => x.feel.includes('tender') && x.feel.includes('nostalgic')); assert.match(whyFor(d, { feeling: ['tender', 'nostalgic'] }, enc).lines[0], /tender \/ intimate and nostalgic scene.*serves both/);
+  assert.notDeepEqual(one.map(x => x.id), two.map(x => x.id));
+  const roles = pickDirections({ role: ['product', 'face'] }, { reading: r, skin: sk }); assert.ok(roles.every(x => x.extra.skinGuard >= 0.7), 'a face as second role still guards skin');
+});
+test('several faces: each has its own reading, and the lead face drives the checks', () => {
+  const f = solid(200, 112, (x, y) => (Math.hypot(x - 0.3, (y - 0.45) * 0.6) < 0.07 ? [0.7, 0.52, 0.42] : Math.hypot(x - 0.72, (y - 0.45) * 0.6) < 0.05 ? [0.3, 0.2, 0.14] : [0.1, 0.12, 0.16]));
+  const a = checkSkin(f), b = checkSkin(f, { lead: 1 });
+  assert.equal(a.faces.length, 2); assert.ok(a.faces[0].ire > 45 && a.faces[1].ire < 30);
+  assert.ok(!a.findings.some(x => /underexposed/.test(x.title))); assert.ok(b.findings.some(x => /underexposed/.test(x.title)));
+  assert.ok(a.findings.some(x => /Face 2 \(\d+ IRE\) and face 1/.test(x.text)));
 });
 test('presets save, share as a code and import', () => {
   const p = savePreset({ name: 'Test look', look: parseCode('K1·C1·M2'), extra: { skinGuard: 0.5 }, intent: { feeling: 'tender' } });

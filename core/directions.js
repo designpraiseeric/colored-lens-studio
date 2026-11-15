@@ -21,6 +21,9 @@ export const ROLES = [
   { id: 'product', n: 'Product / hero object' }, { id: 'action', n: 'Action / movement' }, { id: 'graphic', n: 'Title / screen / graphic' },
 ];
 export const DARK_FEELINGS = ['tense', 'menacing', 'melancholy', 'lonely', 'mysterious'];
+/** Every answer can hold up to two choices, primary first. Older saved answers were single strings. */
+export const answers = v => (Array.isArray(v) ? v : v ? [v] : []).filter(Boolean).slice(0, 2);
+export const isDark = intent => answers(intent.feeling).some(f => DARK_FEELINGS.includes(f)) && !answers(intent.feeling).some(f => ['joyful', 'energetic', 'hopeful'].includes(f));
 const label = (list, id) => (list.find(x => x.id === id) || {}).n || '';
 
 // The recipe library. `feel` = feelings it serves; `hues` = encyclopedia hues it leans on; `pal` = palette structure.
@@ -61,36 +64,45 @@ const WARM_FEEL = ['tender', 'nostalgic', 'joyful', 'hopeful', 'luxurious'], COO
 
 /** Genre and role shape every recipe: corporate work stays cleaner, music videos go further, faces get guarded. */
 function shape(r, intent, ctx) {
-  const G = { ...r.G }, extra = {}; const g = intent.genre, role = intent.role; const notes = [];
+  const G = { ...r.G }, extra = {}; const genres = answers(intent.genre), roles = answers(intent.role), g = genres[0], notes = [];
+  const has = id => roles.includes(id), role = roles[0];
   const scale = (k, f, d = 1) => { G[k] = (G[k] ?? d) * f; };
-  if (['commercial', 'explainer', 'social'].includes(g)) { scale('grainK', 0.5); scale('halK', 0.7); scale('lutMix', 0.85); }
-  if (g === 'doc') { scale('lutMix', 0.7); scale('grainK', 0.8); }
+  if (genres.some(x => ['commercial', 'explainer', 'social'].includes(x))) { scale('grainK', 0.5); scale('halK', 0.7); scale('lutMix', 0.85); }
+  if (genres.includes('doc')) { scale('lutMix', 0.7); scale('grainK', 0.8); }
   if (g === 'music') { scale('sat', 1.04); }
-  if (role === 'product') { scale('grainK', 0.5); G.vib = Math.max(G.vib || 0, 0.2); notes.push('Grain is halved and vibrance raised so the product stays crisp and true.'); }
-  if (role === 'graphic') { scale('lutMix', 0.5); notes.push('This shot carries graphics or a screen: the look runs at half strength so brand colours and text stay legible.'); }
-  if (role === 'place') scale('vigK', 1.2);
+  if (has('product')) { scale('grainK', 0.5); G.vib = Math.max(G.vib || 0, 0.2); notes.push('Grain is halved and vibrance raised so the product stays crisp and true.'); }
+  if (has('graphic')) { scale('lutMix', 0.5); notes.push('This shot carries graphics or a screen: the look runs at half strength so brand colours and text stay legible.'); }
+  if (has('place')) scale('vigK', 1.2);
   // faces: guard skin whenever a face may be present and the recipe would move it
   let skin = r.skin || 0;
-  if (ctx.skinFound || role === 'face' || role === 'dialogue') skin = Math.max(skin, role === 'face' || role === 'dialogue' ? 0.7 : 0.5);
+  const faceShot = has('face') || has('dialogue');
+  if (ctx.skinFound || faceShot) skin = Math.max(skin, faceShot ? 0.7 : 0.5);
   if (skin) Object.assign(extra, { skinGuard: skin, skinHue: 0.8, skinDensity: 0.7, skinLight: 0.5 });
   // exposure: lift an underexposed face unless the mood wants it dark
-  const faceSure = ctx.skin && ctx.skin.found && (ctx.skin.confidence === 'high' || role === 'face' || role === 'dialogue');
-  if (faceSure && ctx.skin.ire < 35 && !DARK_FEELINGS.includes(intent.feeling) && ctx.input !== 'logc3') {
+  const faceSure = ctx.skin && ctx.skin.found && (ctx.skin.confidence === 'high' || faceShot);
+  if (faceSure && ctx.skin.ire < 35 && !isDark(intent) && ctx.input !== 'logc3') {
     const fix = (ctx.skin.fixes || []).find(f => f.kind === 'exposure'); if (fix) { G.exp = +((G.exp || 0) + fix.params.exp * 0.7).toFixed(2); notes.push(`The face sits at ${ctx.skin.ire} IRE, so exposure is lifted ${G.exp > 0 ? '+' : ''}${G.exp} EV.`); }
   }
   return { G, extra, notes };
 }
 
 function score(r, intent, reading) {
-  let s = 0; const f = intent.feeling, g = intent.genre, lead = reading && reading.lead ? reading.lead.id : null;
-  if (f) s += r.feel.includes(f) ? 4 - r.feel.indexOf(f) * 0.5 : -3;
-  if (r.bold && ['doc', 'explainer', 'commercial'].includes(g)) s -= 1.5;
-  if (r.bold && ['music', 'thriller'].includes(g)) s += 0.6;
-  if (g === 'thriller' && r.feel.some(x => ['tense', 'menacing', 'mysterious'].includes(x))) s += 0.8;
-  if (['commercial', 'social', 'explainer'].includes(g) && ['clean-vivid', 'true-neutral', 'rich-print', 'blockbuster', 'golden-green', 'soft-dawn', 'clinical-white'].includes(r.id)) s += 0.8;
-  if (g === 'doc' && ['doc-16', 'true-neutral', 'gentle-film', 'faded-eterna'].includes(r.id)) s += 1;
+  let s = 0; const fs = answers(intent.feeling), gs = answers(intent.genre), g = gs[0], lead = reading && reading.lead ? reading.lead.id : null;
+  const fit = f => r.feel.includes(f) ? 4 - r.feel.indexOf(f) * 0.5 : null;
+  if (fs.length) { // the primary feeling counts fully, the secondary about two thirds; a recipe that serves both gets a bonus
+    const a = fit(fs[0]), b = fs[1] ? fit(fs[1]) : null;
+    if (a == null && b == null) s -= 3; else s += Math.max(a ?? 0, (b ?? 0) * 0.65) + (a != null && b != null ? 1.2 : 0);
+  }
+  const gw = (id, w) => {
+    if (r.bold && ['doc', 'explainer', 'commercial'].includes(id)) s -= 1.5 * w;
+    if (r.bold && ['music', 'thriller'].includes(id)) s += 0.6 * w;
+    if (id === 'thriller' && r.feel.some(x => ['tense', 'menacing', 'mysterious'].includes(x))) s += 0.8 * w;
+    if (['commercial', 'social', 'explainer'].includes(id) && ['clean-vivid', 'true-neutral', 'rich-print', 'blockbuster', 'golden-green', 'soft-dawn', 'clinical-white'].includes(r.id)) s += 0.8 * w;
+    if (id === 'doc' && ['doc-16', 'true-neutral', 'gentle-film', 'faded-eterna'].includes(r.id)) s += 1 * w;
+  };
+  gs.forEach((id, i) => gw(id, i ? 0.5 : 1));
   if (lead && r.hues.includes(lead)) s += 0.7; // leans into what is already there
-  if (!f && reading) { const w = reading.stats.warmth; if (w === 'warm' && r.hues.some(h => WARM.includes(h))) s += 0.5; if (w === 'cool' && r.hues.some(h => COOL.includes(h))) s += 0.5; }
+  if (!fs.length && reading) { const w = reading.stats.warmth; if (w === 'warm' && r.hues.some(h => WARM.includes(h))) s += 0.5; if (w === 'cool' && r.hues.some(h => COOL.includes(h))) s += 0.5; }
   return s;
 }
 
@@ -105,11 +117,11 @@ export function pickDirections(intent, ctx, n = 5) {
   const take = r => { if (out.find(o => o.r.id === r.id)) return; out.push({ r }); usedC.add(r.look.C); };
   for (const { r } of ranked) { if (out.length >= n - 1) break; if (usedC.has(r.look.C) && out.length < 3) continue; take(r); }
   // always one minimal option, so "do less" is on the table
-  const minimal = ['doc', 'explainer'].includes(intent.genre) || intent.feeling === 'natural' ? 'true-neutral' : 'gentle-film';
+  const minimal = ['doc', 'explainer'].includes(answers(intent.genre)[0]) || answers(intent.feeling)[0] === 'natural' ? 'true-neutral' : 'gentle-film';
   take(RECIPES.find(r => r.id === minimal));
   // make sure one option pushes against the frame when everything leans the same way
   const isWarm = r => r.hues.some(h => WARM.includes(h)), isCool = r => r.hues.some(h => COOL.includes(h));
-  if (reading && out.length >= 3 && intent.feeling) {
+  if (reading && out.length >= 3 && answers(intent.feeling).length) {
     const w = reading.stats.warmth, all = out.filter(o => o.r.look.C !== 'C0');
     const sameWay = w === 'warm' ? all.every(o => isWarm(o.r)) : w === 'cool' ? all.every(o => isCool(o.r)) : false;
     if (sameWay) { const c = ranked.find(x => x.s > -1 && !out.find(o => o.r.id === x.r.id) && (w === 'warm' ? isCool(x.r) : isWarm(x.r))); if (c) { out.splice(out.length - 1, 0, { r: c.r }); } }
@@ -153,11 +165,13 @@ const labToRgb = (L, a, b) => oklabToSrgb(L, a, b);
 
 /** The short "why" for a direction, tied to the intent and the encyclopedia's meanings. */
 export function whyFor(d, intent, enc) {
-  const out = [], f = label(FEELINGS, intent.feeling).toLowerCase(), g = label(GENRES, intent.genre), role = label(ROLES, intent.role).toLowerCase();
+  const out = [], names = (list, v) => answers(v).map(id => label(list, id).toLowerCase()).filter(Boolean);
+  const f = names(FEELINGS, intent.feeling).join(' and '), g = names(GENRES, intent.genre).join(' and '), role = names(ROLES, intent.role).map(x => x.split(' / ')[0]).join(' and ');
   const pal = d.pal ? enc.PALS.find(p => p.id === d.pal) : null, hue = d.hues.map(id => enc.HUES.find(h => h.id === id)).find(Boolean);
-  const what = [f && `a ${f} scene`, role && `this ${role.split(' / ')[0]} shot`].filter(Boolean).join(', ');
-  const forWhat = what ? what + (g ? ` in a ${g.toLowerCase()} piece` : '') : g ? `a ${g.toLowerCase()} piece` : '';
-  out.push(forWhat ? `For ${forWhat}: ${d.line.charAt(0).toLowerCase() + d.line.slice(1)}` : d.line);
+  const what = [f && `a ${f} scene`, role && `this ${role} shot`].filter(Boolean).join(', ');
+  const forWhat = what ? what + (g ? ` in a ${g} piece` : '') : g ? `a ${g} piece` : '';
+  const fs = answers(intent.feeling), both = fs.length === 2 && fs.every(x => d.feel.includes(x));
+  out.push(forWhat ? `For ${forWhat}: ${d.line.charAt(0).toLowerCase() + d.line.slice(1)}${both ? ' It serves both feelings.' : ''}` : d.line);
   if (hue || pal) out.push([hue && `${hue.name}: ${hue.tag.toLowerCase()}`, pal && `${pal.n} palette`].filter(Boolean).join(' · '));
   return { lines: out, hue, pal };
 }

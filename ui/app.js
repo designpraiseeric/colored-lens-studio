@@ -8,7 +8,7 @@ import { checkSkin, vectorscope } from '../core/skin.js';
 import { pngDataUrl, encodePNG } from '../core/image.js';
 import { shotRecord, encodeShot, decodeShot, renderStrip, readSequence, scriptCSV } from '../core/script.js';
 import { parseLookInput, formatCode, fullGrade, makePixelFn, bakeCube, lookToEngineParams, shareLink, computeMatch, matchStats, hasCurves, GRADE0 } from '../core/look.js';
-import { GENRES, FEELINGS, ROLES, DARK_FEELINGS, KIND_LABEL, pickDirections, describeEffect, whyFor, frameSummary } from '../core/directions.js';
+import { GENRES, FEELINGS, ROLES, KIND_LABEL, pickDirections, describeEffect, whyFor, frameSummary, answers, isDark } from '../core/directions.js';
 import { previewer, wipe } from '../core/preview.js';
 import { listPresets, savePreset, deletePreset, duplicatePreset, presetCode, importPresetCode, settings } from '../core/presets.js';
 import { Updater } from '../core/updates.js';
@@ -23,11 +23,12 @@ const pct = v => Math.round(v * 100) + '%';
 const clone = o => JSON.parse(JSON.stringify(o));
 const XDEF = { skinGuard: 0, skinHue: 0.8, skinDensity: 0.7, skinLight: 0.5, matchAmt: 0, mLg: 1, mLo: 0, mA: 0, mB: 0, mCg: 1 };
 const NEUTRAL_LOOK = () => ({ L: 'L1', O: 'O1', H: 'H0', K: 'K0', D: 'D0', C: 'C0', M: 'M0', A: '2.39', G: fullGrade({}) });
+const normIntent = i => ({ genre: answers(i.genre), feeling: answers(i.feeling), role: answers(i.role), note: i.note || '' });
 const lookCode = (l, matte) => { const c = formatCode(l); return matte ? c : c.replace(/·[\d.]+$/, ''); };
 
 export async function startApp(host, root) {
   const S = { tab: 'shot', back: 'shot', frame: null, meta: null, reading: null, skin: null, sample: null, shots: [],
-    intent: Object.assign({ genre: '', feeling: '', role: '', note: '' }, settings.get('intent', {})), input: settings.get('input', 'rec709'),
+    intent: normIntent(settings.get('intent', {})), seqId: '', ctx: null, lead: 0, input: settings.get('input', 'rec709'),
     directions: [], chosen: -1, look: NEUTRAL_LOOK(), extra: { ...XDEF }, matte: false, recipe: { name: '', presetId: null }, view: 'split', wipe: 0.5,
     refFrameStats: null, refName: '', adapt: settings.get('adapt', true), encQ: '', shownCode: '', confirmDel: '', busy: false, showSkin: false, showRefs: false };
   let PV = null;
@@ -90,13 +91,21 @@ export async function startApp(host, root) {
   root.addEventListener('click', e => { const a = e.target.closest('[data-more]'); if (a) { e.preventDefault(); S.encQ = a.dataset.more; go('enc'); } });
 
   // ---------- reading ----------
+  // answers are remembered per sequence: switching sequences brings back that sequence's answers
+  function saveIntent() { settings.set('intent', S.intent); if (S.seqId) { const m = settings.get('intentBySeq', {}); m[S.seqId] = S.intent; settings.set('intentBySeq', m); } }
+  function useSequence(id) {
+    if (!id || id === S.seqId) return; S.seqId = id; const m = settings.get('intentBySeq', {});
+    if (m[id]) S.intent = normIntent(m[id]); else saveIntent();
+  }
   async function grab() {
-    const g = await host.grabFrame(); S.frame = g.frame; S.meta = g; S.sample = null; S.chosen = -1;
+    const g = await host.grabFrame(); S.frame = g.frame; S.meta = g; S.sample = null; S.chosen = -1; S.lead = 0;
+    useSequence(g.sequenceId); S.ctx = null;
+    if (host.clipContext) try { S.ctx = await host.clipContext(); } catch (e) { console.warn('timeline context', e); }
     PV = previewer(S.frame, cat(), lutsFor); stageCache.key = '';
     S.reading = readFrame(S.frame, enc(), refs()); runSkin(); return g;
   }
-  const lowKey = () => DARK_FEELINGS.includes(S.intent.feeling);
-  function runSkin() { if (S.frame) S.skin = checkSkin(S.frame, { sample: S.sample, input: S.input, lowKey: lowKey() }); }
+  const lowKey = () => isDark(S.intent);
+  function runSkin() { if (S.frame) S.skin = checkSkin(S.frame, { sample: S.sample, input: S.input, lowKey: lowKey(), lead: S.lead }); }
   async function suggest() {
     if (!S.frame) return;
     const ds = pickDirections(S.intent, { reading: S.reading, skin: S.skin, input: S.input });
@@ -154,7 +163,7 @@ export async function startApp(host, root) {
   async function saveCurrentAsPreset(name, asNew) {
     const thumb = S.frame && PV ? pngDataUrl(await PV.render(S.look, S.extra, S.input, 120)) : '';
     const p = savePreset({ id: asNew ? null : S.recipe.presetId, name: name || S.recipe.name || 'Untitled look', look: S.look, extra: S.extra, input: S.input, matte: S.matte,
-      intent: { ...S.intent }, from: S.meta ? `${S.meta.clipName || ''} ${S.meta.timecode || ''}`.trim() : '', ref: S.frame ? matchStats(S.frame) : null, thumb });
+      intent: clone(S.intent), from: S.meta ? `${S.meta.clipName || ''} ${S.meta.timecode || ''}`.trim() : '', ref: S.frame ? matchStats(S.frame) : null, thumb });
     S.recipe = { name: p.name, presetId: p.id }; toast(`Saved preset “${p.name}”`); return p;
   }
   function presetExtra(p) {
@@ -172,7 +181,8 @@ export async function startApp(host, root) {
   }
 
   // SHOT ------------------------------------------------------------------
-  const chipRow = (list, key) => `<div class="chips">${list.map(x => `<div role="button" tabindex="0" class="chip ${S.intent[key] === x.id ? 'on' : ''}" data-intent="${key}:${x.id}">${S.intent[key] === x.id ? '✓ ' : ''}${esc(x.n)}</div>`).join('')}</div>`;
+  const chipRow = (list, key) => { const cur = answers(S.intent[key]);
+    return `<div class="chips">${list.map(x => { const k = cur.indexOf(x.id); return `<div role="button" tabindex="0" class="chip ${k === 0 ? 'on' : k === 1 ? 'on2' : ''}" data-intent="${key}:${x.id}" title="${k === 0 ? 'Main answer' : k === 1 ? 'Second answer' : 'Tap to add (up to two)'}">${k === 0 ? '✓ ' : k === 1 ? '+ ' : ''}${esc(x.n)}</div>`; }).join('')}</div>`; };
   function renderShot(body) {
     const r = S.reading, k = S.skin, I = S.intent;
     const hint = S.chosen >= 0 ? `Previewing <b>${esc(S.directions[S.chosen].name)}</b> (colour, grain and vignette; halation and glow show on the clip).
@@ -180,8 +190,10 @@ export async function startApp(host, root) {
     body.innerHTML = `
       <div class="row"><button id="grab" class="primary">${esc(host.grabLabel || 'Read the frame under the playhead')}</button>${S.frame ? `<span class="small dim">${esc(S.meta.clipName || '')} ${esc(S.meta.timecode || '')}</span>` : ''}</div>
       ${S.frame ? stageHTML(true, hint) : `<p class="dim">Park the playhead on a shot and read it. Colored Lens tells you what the frame is doing, asks what it is for, and suggests directions you can preview, tweak, apply and save.</p>`}
+      ${S.ctx ? contextCard(S.ctx) : ''}
       <div id="reading">${r ? readingCard(r, k) : ''}</div>
       <div class="card"><div class="k">What is this for?</div>
+        <p class="small dim">Tap up to two answers per question when a shot is more than one thing; the first is the main one.${S.seqId ? ` Remembered for the sequence “${esc(S.meta && S.meta.sequenceName || '')}”.` : ''}</p>
         <div class="q">The project</div>${chipRow(GENRES, 'genre')}
         <div class="q">This scene should feel</div>${chipRow(FEELINGS, 'feeling')}
         <div class="q">This shot is</div>${chipRow(ROLES, 'role')}
@@ -193,13 +205,18 @@ export async function startApp(host, root) {
       ${r && r.matches.length ? `<div class="card"><div class="row tight"><div class="k grow">Similar frames in the encyclopedia</div><button class="small" id="togRefs">${S.showRefs ? 'Hide' : 'Show'}</button></div>${S.showRefs ? refsHTML(r) : ''}</div>` : ''}`;
     $('#grab', body).onclick = () => busy('Reading frame', async () => { await grab(); await suggest(); render(); });
     body.querySelectorAll('[data-intent]').forEach(b => b.onclick = () => {
-      const [key, id] = b.dataset.intent.split(':'); S.intent[key] = S.intent[key] === id ? '' : id; settings.set('intent', S.intent);
+      const [key, id] = b.dataset.intent.split(':'), cur = answers(S.intent[key]);
+      S.intent[key] = cur.includes(id) ? cur.filter(x => x !== id) : cur.length < 2 ? [...cur, id] : [cur[0], id]; saveIntent();
       if (key === 'feeling') runSkin();
       if (S.frame) busy('Finding directions', async () => { await suggest(); S.chosen = -1; render(); }); else render();
     });
     body.querySelectorAll('[data-input]').forEach(b => b.onclick = () => { S.input = b.dataset.input; settings.set('input', S.input); runSkin(); stageCache.key = '';
       if (S.frame) busy('Finding directions', async () => { await suggest(); render(); }); else render(); });
-    $('#note', body).onchange = e => { S.intent.note = e.target.value; settings.set('intent', S.intent); };
+    $('#note', body).onchange = e => { S.intent.note = e.target.value; saveIntent(); };
+    body.querySelectorAll('[data-suggest]').forEach(b => b.onclick = () => { const [k, v] = b.dataset.suggest.split(':');
+      if (k === 'input') { S.input = v; settings.set('input', v); stageCache.key = ''; } else { S.intent[k] = [v, ...answers(S.intent[k]).filter(x => x !== v)].slice(0, 2); saveIntent(); }
+      runSkin(); busy('Finding directions', async () => { await suggest(); render(); }); });
+    body.querySelectorAll('[data-lead]').forEach(b => b.onclick = () => busy('Checking skin', async () => { S.lead = +b.dataset.lead; S.sample = null; runSkin(); await suggest(); render(); }));
     if ($('#togRefs', body)) $('#togRefs', body).onclick = () => { S.showRefs = !S.showRefs; render(); };
     if ($('#togSkin', body)) $('#togSkin', body).onclick = () => { S.showSkin = !S.showSkin; render(); };
     if ($('#autoSkin', body)) $('#autoSkin', body).onclick = () => busy('Checking skin', async () => { S.sample = null; runSkin(); await suggest(); render(); });
@@ -215,10 +232,25 @@ export async function startApp(host, root) {
     wireDirections(body);
     if (S.frame) wireStage(body, (x, y) => busy('Checking skin', async () => { S.sample = [x, y]; runSkin(); await suggest(); S.showSkin = true; render(); toast(S.skin.found ? `Skin sampled: about ${S.skin.ire} IRE` : 'No skin there; try the middle of a cheek'); }));
   }
+  // What the timeline says about this shot. Context proposes; the editor decides.
+  function contextCard(c) {
+    const sub = c.subject, kinds = { video: 'footage', nested: 'nested sequence', graphic: 'graphic / title', adjustment: 'adjustment layer' };
+    if (!sub) return `<div class="card ctx"><p class="small">No clip under the playhead on an enabled video track.</p></div>`;
+    const lines = [], tips = [];
+    lines.push(`Reading <b>V${sub.track} · ${esc(sub.name)}</b> (${kinds[sub.kind]})${sub.selected ? ', selected' : ', under the playhead'}.`);
+    if (c.above.length) lines.push(`Also in the picture above it: ${c.above.map(l => `V${l.track} ${esc(kinds[l.kind])} “${esc(l.name)}”`).join(', ')}. The reading includes ${c.above.length === 1 ? 'it' : 'them'}.`);
+    if (sub.lumetri) lines.push('This clip already has a Lumetri grade, so the reading is of the graded image.');
+    if (sub.look) lines.push('This clip already has Lukuluku Look: Apply will update it rather than add a second one.');
+    if (sub.inputLUT && S.input === 'logc3') tips.push(['input:rec709', 'Premiere already converts this clip with an input LUT, so it plays as normal video.', 'Set footage to normal video']);
+    if (sub.kind === 'graphic' && !answers(S.intent.role).includes('graphic')) tips.push(['role:graphic', `V${sub.track} holds a graphic or still, not camera footage.`, 'Mark this shot as title / graphic']);
+    if (sub.kind === 'adjustment') lines.push('This is an adjustment layer: a look here colours every track beneath it.');
+    return `<div class="card ctx"><div class="k">On the timeline</div>${lines.map(l => `<p class="small">${l}</p>`).join('')}
+      ${tips.map(([key, why, label]) => `<div class="row wrap"><span class="small grow">${esc(why)}</span><button data-suggest="${key}">${esc(label)}</button></div>`).join('')}</div>`;
+  }
   function readingCard(r, k) {
     const e = enc(), named = r.hues.filter(h => h.entry && h.share >= 0.03).slice(0, 5), lead = r.lead;
     const skinLine = !k ? '' : k.mode === 'sampled' && k.found ? `<b>Face (sampled):</b> about ${k.ire} IRE${k.ire < 40 ? ', dark for a key-lit face (40–75)' : k.ire > 80 ? ', hot for a face (40–75)' : ', inside the usual 40–75'}.`
-      : k.found ? `<b>Possible face</b> at about ${k.ire} IRE (found by colour, so it may be a warm object). Click the face in the picture to confirm.` : 'No face found by colour. If there is a person, click their face in the picture.';
+      : k.found ? `<b>${k.faces.length > 1 ? `${k.faces.length} possible faces` : 'Possible face'}</b>${k.faces.length > 1 ? `; face ${k.lead + 1} at about ${k.ire} IRE` : ` at about ${k.ire} IRE`} (found by colour, so it may be a warm object). Click a face in the picture to confirm${k.faces.length > 1 ? ', or pick the lead face in Skin check' : ''}.` : 'No face found by colour. If there is a person, click their face in the picture.';
     return `<div class="card"><div class="k">What the frame is doing</div>
       <p>${esc(frameSummary(r, e))}</p>
       ${swatchBar(r.swatches)}
@@ -233,6 +265,7 @@ export async function startApp(host, root) {
     const icon = l => ({ good: '●', warn: '▲', info: '◆' })[l];
     return `<div class="card"><div class="row tight"><div class="k grow">Skin check ${k.mode === 'sampled' ? '(sampled)' : '(automatic)'}</div>${k.mode === 'sampled' ? '<button class="small" id="autoSkin">Automatic</button>' : ''}<button class="small" id="togSkin">${S.showSkin ? 'Hide' : 'Show'}</button></div>
       ${S.showSkin ? `${k.mask ? `<img class="frame" src="${pngDataUrl(k.mask)}">` : ''}
+      ${k.faces && k.faces.length > 1 ? `<div class="faces">${k.faces.map((f, i) => `<div class="face ${i === k.lead ? 'on' : ''}"><span class="sw" style="background:${f.swatch}"></span><b>Face ${f.n}</b> <span class="small">${f.ire} IRE · ${f.ire < 40 ? 'dark' : f.ire > 80 ? 'hot' : 'in range'}${i === 0 ? ' · largest' : ''}</span>${i === k.lead ? '<span class="small dim"> · lead</span>' : `<button class="small" data-lead="${i}">Make lead</button>`}</div>`).join('')}<p class="small dim">Boxes on the picture: red is the lead face, white the others; ticks count the face number.</p></div>` : ''}
       ${k.L != null ? `<div class="facts small">${pct(k.coverage)} of the picture · about ${k.ire} IRE · density ${(k.C * 100).toFixed(1)} · hue ${Math.round(k.H)}° <span class="sw" style="background:${k.swatch}"></span></div>` : ''}
       ${k.findings.map(f => `<div class="finding ${f.level}"><b>${icon(f.level)} ${esc(f.title)}</b><p class="small">${esc(f.text)}</p></div>`).join('')}
       ${k.fixes.length ? `<div class="row wrap">${k.fixes.map((f, i) => `<button data-fix="${i}">${esc(f.label)}</button>`).join('')}</div>` : ''}
@@ -246,7 +279,7 @@ export async function startApp(host, root) {
   function directionsHTML() {
     if (!S.frame) return '';
     if (!S.directions.length) return '<div class="card"><p class="dim small">Finding directions…</p></div>';
-    const ask = !S.intent.feeling ? '<p class="small warn">Pick how the scene should feel for sharper directions. These are based on the frame alone.</p>' : '';
+    const ask = !answers(S.intent.feeling).length ? '<p class="small warn">Pick how the scene should feel for sharper directions. These are based on the frame alone.</p>' : '';
     return `<div class="k sect">Directions</div><p class="small dim">Click one to preview it on your frame. Apply it, tweak it, or keep it as a preset.</p>${ask}
       ${S.directions.map((d, i) => `<div class="dir ${S.chosen === i ? 'on' : ''}" data-dir="${i}">
         <img src="${d.thumb}"><div class="dtext">
@@ -263,7 +296,7 @@ export async function startApp(host, root) {
     body.querySelectorAll('[data-dapply]').forEach(b => b.onclick = () => busy('Applying', () => applyLookToClips(S.look, S.extra, S.input, S.matte)));
     body.querySelectorAll('[data-dtweak]').forEach(b => b.onclick = () => go('tweak'));
     body.querySelectorAll('[data-dsave]').forEach(b => b.onclick = () => busy('Saving', async () => {
-      const f = FEELINGS.find(x => x.id === S.intent.feeling); await saveCurrentAsPreset(S.recipe.name + (f ? ' · ' + f.n.toLowerCase() : ''), true); }));
+      const f = FEELINGS.find(x => x.id === answers(S.intent.feeling)[0]); await saveCurrentAsPreset(S.recipe.name + (f ? ' · ' + f.n.toLowerCase() : ''), true); }));
   }
 
   // SCENE -----------------------------------------------------------------
@@ -274,7 +307,7 @@ export async function startApp(host, root) {
       <div class="row wrap"><button id="load">Load tagged shots from markers</button><button id="scan">Scan the sequence</button><span class="row tight"><span class="small dim">every</span><input id="every" type="number" min="1" value="5" style="width:44px"><span class="small dim">s</span></span></div>
       ${sh.length ? `<img class="strip" src="${pngDataUrl(renderStrip(sh))}"><div class="row wrap"><button id="png">Save strip (PNG)</button><button id="csv">Save as CSV</button><button id="clear">Clear</button></div>
         <div class="card"><div class="k">What the sequence says</div>${readSequence(sh, enc(), S.intent).map(o => `<p><b>${esc(o.n)}.</b> ${esc(o.why)}</p>${o.entry ? `<p class="small dim">${esc(o.entry.t)}</p>` : ''}`).join('')}
-          ${!S.intent.genre ? '<p class="small dim">Set what the project is in Shot to get story-level readings (motifs, leitmotifs) for narrative work.</p>' : ''}</div>
+          ${!answers(S.intent.genre).length ? '<p class="small dim">Set what the project is in Shot to get story-level readings (motifs, leitmotifs) for narrative work.</p>' : ''}</div>
         <div class="shots">${sh.map((s, i) => `<div class="shot"><span class="tc">${esc(s.tc)}</span>${swatchBar(s.sw)}<span class="small">${esc(cap(s.hue))} · ${esc((enc().PALS.find(p => p.id === s.pal) || {}).n || '')}${s.tags.length ? ' · ' + esc(s.tags.join(', ')) : ''}</span><button data-del="${i}">✕</button></div>`).join('')}</div>`
         : '<p class="dim">Build a colour script as you edit: add shots (saved as markers in your sequence, so they travel with the project) or scan the whole sequence, then see how colour moves across it and whether it matches the feeling you set.</p>'}`;
     const addShot = async (g, tags) => { const rd = readFrame(g.frame, enc(), null); const rec = shotRecord(rd, { seconds: g.seconds, timecode: g.timecode, name: g.clipName, tags });
@@ -344,7 +377,7 @@ export async function startApp(host, root) {
   }
 
   // PRESETS ---------------------------------------------------------------
-  const intentText = i => [GENRES, FEELINGS, ROLES].map((l, k) => (l.find(x => x.id === i[['genre', 'feeling', 'role'][k]]) || {}).n).filter(Boolean).join(' · ');
+  const intentText = i => [GENRES, FEELINGS, ROLES].map((l, k) => answers(i[['genre', 'feeling', 'role'][k]]).map(id => (l.find(x => x.id === id) || {}).n).filter(Boolean).join(' + ')).filter(Boolean).join(' · ');
   function renderPresets(body) {
     const list = listPresets();
     body.innerHTML = `

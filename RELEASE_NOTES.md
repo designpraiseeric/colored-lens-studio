@@ -1,6 +1,15 @@
 # Release notes
 Each `## <version>` block becomes the text of the in-app update banner and the GitHub Release.
 
+## 0.2.3
+Shots that are more than one thing, several faces, and the timeline around the shot.
+- Up to two answers per question (for example tender and tense, or commercial and documentary). The first leads; directions that serve both say so.
+- Your answers are remembered per sequence.
+- Every face in the frame gets its own exposure reading. Pick the lead face and the skin checks follow it.
+- Colored Lens names the clip it is reading (track and name) and anything above it, such as titles or adjustment layers, and notices an existing Lumetri grade or Lukuluku Look.
+- It suggests, never decides: mark a still or graphic as a title shot, or switch to normal video when Premiere already converts a log clip.
+- Apply works without a selection: it uses the clip under the playhead, and updates a look that is already there.
+
 ## 0.2.2
 Polish from the first session with 0.2.1 in Premiere Pro.
 - Your answers in "What is this for?" are clearly marked (filled red, with a tick); Premiere had been hiding the selected state.

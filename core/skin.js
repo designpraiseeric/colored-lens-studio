@@ -58,7 +58,7 @@ function regions(f, mask, info) {
     const bigOk = area <= 0.2 || (area <= 0.45 && fill > 0.5 && bw < f.w * 0.62); // close-ups can fill a lot of frame, but compactly
     if (!bigOk || fill < 0.28 || aspect > 3 || aspect < 0.25 || bw > f.w * 0.7) { dropped += area; continue; }
     for (const i of px) out[i] = 1;
-    kept.push({ area, L: median(px.map(i => info[i].lab[0])) });
+    kept.push({ area, px, box: [x0, y0, x1, y1], L: median(px.map(i => info[i].lab[0])) });
   }
   return { mask: out, kept: kept.sort((a, b) => b.area - a.area), dropped };
 }
@@ -77,21 +77,31 @@ export function checkSkin(frame, opts = {}) {
     const sx = (opts.sample[0] * full.w - a.x0) / (a.x1 - a.x0 + 1), sy = (opts.sample[1] * full.h - a.y0) / (a.y1 - a.y0 + 1);
     mask = sampleMask(f, info, Math.min(1, Math.max(0, sx)), Math.min(1, Math.max(0, sy))); }
   else ({ mask, kept, dropped } = regions(f, detectMask(f, info), info));
-  const pts = []; for (let i = 0; i < mask.length; i++) if (mask[i]) pts.push(info[i]);
-  const coverage = pts.length / mask.length;
-  const result = { coverage, mode: opts.sample ? 'sampled' : 'detected', findings: [], fixes: [], ok: true, regions: kept.length, found: false,
-    confidence: opts.sample ? 'high' : kept.length ? 'medium' : 'none' }; // detection by colour alone is a hint; a click makes it sure
+  // Each face-sized region is a face of its own: stats per face, and the checks below run on the lead face
+  // (the largest, unless the editor picked another), so one dark background face cannot hide a well-lit lead.
+  const faces = kept.map((k, n) => {
+    const P = k.px.map(i => info[i]), L = median(P.map(p => p.lab[0])), C = median(P.map(p => p.lch[1])), H = circMean(P.map(p => p.lch[2])), Y = median(P.map(p => p.y));
+    const X = v => (a.x0 + v) / full.w, Yc = v => (a.y0 + v) / full.h;
+    return { n: n + 1, area: k.area, L, C, H, ire: Math.round(Y * 100), box: [X(k.box[0]), Yc(k.box[1]), X(k.box[2] + 1), Yc(k.box[3] + 1)],
+      swatch: rgbToHex(...oklabToSrgb(L, C * Math.cos(H * Math.PI / 180), C * Math.sin(H * Math.PI / 180))), px: k.px };
+  });
+  const lead = faces.length ? Math.min(faces.length - 1, Math.max(0, opts.lead || 0)) : -1;
+  const pts = []; if (lead >= 0 && faces.length > 1) for (const i of faces[lead].px) pts.push(info[i]); else for (let i = 0; i < mask.length; i++) if (mask[i]) pts.push(info[i]);
+  const coverage = faces.length ? faces.reduce((s0, x) => s0 + x.area, 0) : pts.length / mask.length;
+  const result = { coverage, mode: opts.sample ? 'sampled' : 'detected', findings: [], fixes: [], ok: true, regions: kept.length, found: false, lead,
+    faces: faces.map(({ px, ...x }) => x), confidence: opts.sample ? 'high' : kept.length ? 'medium' : 'none' }; // detection by colour alone is a hint; a click makes it sure
+  const preview = () => maskPreview(f, mask, kept, lead);
   if (pts.length < 25) {
     result.findings.push({ level: 'info', title: 'No face found', text: opts.sample ? 'The point you clicked did not grow into a skin region. Try the middle of a cheek or forehead.'
       : `No face-sized skin region was found${dropped > 0.05 ? ' (large warm areas such as walls, wood or lamplight were ignored)' : ''}. If there is a person in the shot, click their face in the picture.` });
-    result.mask = maskPreview(f, mask); return result;
+    result.mask = preview(); return result;
   }
   result.found = true;
   const Ls = pts.map(p => p.lab[0]), Cs = pts.map(p => p.lch[1]), Hs = pts.map(p => p.lch[2]), Ys = pts.map(p => p.y);
   const L = median(Ls), C = median(Cs), H = circMean(Hs), Y = median(Ys);
   const crushed = Ys.filter(y => y < 0.07).length / Ys.length, clipped = Ys.filter(y => y > 0.97).length / Ys.length;
   const detail = Math.sqrt(Ls.reduce((s, v) => s + (v - L) ** 2, 0) / Ls.length);
-  const mix = kept.length >= 2 && kept[1].area >= 0.004 && Math.abs(kept[0].L - kept[1].L) > 0.18 ? { light: Math.max(kept[0].L, kept[1].L), dark: Math.min(kept[0].L, kept[1].L) } : null;
+  const fl = faces.filter(x => x.area >= 0.004), mix = fl.length >= 2 && Math.max(...fl.map(x => x.L)) - Math.min(...fl.map(x => x.L)) > 0.18 ? { light: Math.max(...fl.map(x => x.L)), dark: Math.min(...fl.map(x => x.L)) } : null;
   Object.assign(result, { L, C, H, ire: Math.round(Y * 100), crushed, clipped, detail, complexions: mix,
     swatch: rgbToHex(...oklabToSrgb(L, C * Math.cos(H * Math.PI / 180), C * Math.sin(H * Math.PI / 180))) });
   const add = (level, title, text) => { result.findings.push({ level, title, text }); if (level === 'warn') result.ok = false; };
@@ -99,7 +109,7 @@ export function checkSkin(frame, opts = {}) {
 
   if (opts.input === 'logc3') {
     add('info', 'Log footage: check skin after the look', `Skin found at about ${result.ire} IRE in the log image. Log skin always looks pale and grey; Colored Lens checks colour and exposure on the preview once a look is applied.`);
-    result.mask = maskPreview(f, mask); result.guard = { hueCentre: H, L, C }; return result;
+    result.mask = preview(); result.guard = { hueCentre: H, L, C }; return result;
   }
 
   // 1. Exposure, against the usual range for a key-lit face in Rec.709 (about 40-75 IRE).
@@ -129,10 +139,12 @@ export function checkSkin(frame, opts = {}) {
   } else add('good', 'Skin sits on the skin line', `Skin hue is within ${Math.abs(off).toFixed(0)}° of the skin line.`);
 
   // 4. Mixed complexions: two separate faces with clearly different lightness.
-  if (mix) add('info', 'Two complexions share this frame', 'Two faces sit far apart in lightness. Light for the darker face and flag or net the lighter one, rather than exposing for the middle.');
+  if (mix) { const dark = fl.reduce((m, x) => x.L < m.L ? x : m), light = fl.reduce((m, x) => x.L > m.L ? x : m);
+    add('info', 'Two complexions share this frame', `Face ${dark.n} (${dark.ire} IRE) and face ${light.n} (${light.ire} IRE) sit far apart in lightness. Light for the darker face and flag or net the lighter one, rather than exposing for the middle.`); }
   if (detail < 0.025 && pts.length > 200) add('info', 'Skin detail is very flat', 'Little tonal variation across the face. Shape it with specular highlights and large soft sources for wrap.');
 
-  result.mask = maskPreview(f, mask);
+  if (faces.length > 1) result.findings.unshift({ level: 'info', title: `${faces.length} faces found; checking face ${lead + 1}`, text: `Face ${lead + 1} is the ${lead === 0 ? 'largest' : 'one you picked'}, so exposure, density and hue below are about that face. Pick another face as the lead to check it instead.` });
+  result.mask = preview();
   result.guard = { hueCentre: H, L, C };
   return result;
 }
@@ -144,10 +156,15 @@ function crop(f, a) {
 function signedHue(h, c) { let d = h - c; while (d > 180) d -= 360; while (d < -180) d += 360; return d; }
 function lStar(L) { return oklabToSrgb(L, 0, 0)[0]; } // grey with Oklab lightness L, in display terms
 
-function maskPreview(f, mask) {
+function maskPreview(f, mask, faces = [], lead = -1) {
   const out = makeFrame(f.w, f.h);
   for (let i = 0; i < mask.length; i++) { const k = mask[i] ? 1 : 0.28;
     out.data[i * 4] = f.data[i * 4] * k; out.data[i * 4 + 1] = f.data[i * 4 + 1] * k; out.data[i * 4 + 2] = f.data[i * 4 + 2] * k + (mask[i] ? 0 : 20); out.data[i * 4 + 3] = 255; }
+  // a box round each face: the lead face in red, the others in white
+  faces.forEach((fc, n) => { const [x0, y0, x1, y1] = fc.box, c = n === lead ? [227, 24, 55] : [240, 240, 240];
+    const put = (x, y) => { if (x < 0 || y < 0 || x >= f.w || y >= f.h) return; const o = (y * f.w + x) * 4; out.data[o] = c[0]; out.data[o + 1] = c[1]; out.data[o + 2] = c[2]; };
+    for (let x = x0 - 1; x <= x1 + 1; x++) { put(x, y0 - 1); put(x, y1 + 1); } for (let y = y0 - 1; y <= y1 + 1; y++) { put(x0 - 1, y); put(x1 + 1, y); }
+    for (let d = 0; d < n + 1; d++) for (let y = y0 + 1; y < y0 + 4; y++) put(x0 + 1 + d * 3, y); }); // tick marks = face number
   return out;
 }
 

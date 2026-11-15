@@ -108,3 +108,9 @@ div.seg { display: inline-block; background: var(--p2); color: var(--ink); borde
 div.seg:first-child { border-radius: 6px 0 0 6px; } div.seg:nth-child(3) { border-radius: 0 6px 6px 0; margin-right: 8px; }
 div.seg.on { background: var(--acc); border-color: var(--acc); color: #fff; font-weight: 700; }
 .linkbtn { color: var(--info); cursor: pointer; padding: 2px 4px; margin-left: 6px; }
+/* 0.2.3: second answers, timeline context, faces */
+div.chip.on2 { background: #4a1822; border-color: var(--acc); color: #fff; font-weight: 600; }
+.card.ctx { border-left: 3px solid var(--info); }
+.faces .face { display: flex; flex-direction: row; align-items: center; margin: 4px 0; padding: 3px 6px; border-radius: 6px; }
+.faces .face.on { background: #2a2124; border: 1px solid var(--acc); }
+.faces .face > * { margin-right: 6px; }

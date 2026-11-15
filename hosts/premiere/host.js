@@ -39,9 +39,46 @@ async function findEffect() {
   return effectMatchName;
 }
 
+// ---- timeline context: what sits under the playhead on each video track
+const CLIP = (ppro.Constants && ppro.Constants.TrackItemType && ppro.Constants.TrackItemType.CLIP != null) ? ppro.Constants.TrackItemType.CLIP : 1;
+const GRAPHIC_EXT = /\.(png|jpe?g|tiff?|psd|ai|eps|svg|gif|bmp|mogrt|aegraphic)$/i;
+async function effectsOn(item) {
+  const out = { look: false, lumetri: false };
+  try { const ch = await item.getComponentChain(); for (let i = 0; i < ch.getComponentCount(); i++) { const m = await ch.getComponentAtIndex(i).getMatchName();
+    if (m.endsWith(config.ids.adobeMatchName)) out.look = true; if (/Lumetri/i.test(m)) out.lumetri = true; } } catch { /* optional */ }
+  return out;
+}
+/** Every enabled clip under the playhead, top track first, with what kind of thing it is. */
+async function layersAt(seq, t) {
+  const n = await seq.getVideoTrackCount(), layers = [];
+  for (let i = n - 1; i >= 0; i--) {
+    let track; try { track = await seq.getVideoTrack(i); } catch { continue; }
+    try { if (await track.isMuted()) continue; } catch { /* older builds */ }
+    let items = []; try { items = track.getTrackItems(CLIP, false) || []; } catch { continue; }
+    for (const it of items) {
+      const s0 = (await it.getStartTime()).seconds, e0 = (await it.getEndTime()).seconds; if (t < s0 || t >= e0) continue;
+      let disabled = false; try { disabled = await it.isDisabled(); } catch {} if (disabled) continue;
+      let kind = 'video', path = '', inputLUT = '', nested = false;
+      try { if (await it.isAdjustmentLayer()) kind = 'adjustment'; } catch {}
+      if (kind !== 'adjustment') try {
+        const pi = await it.getProjectItem(), clip = ppro.ClipProjectItem.cast(pi);
+        try { nested = await clip.isSequence(); } catch {}
+        try { path = await clip.getMediaFilePath(); } catch {}
+        try { inputLUT = await clip.getInputLUTID(); } catch {}
+        kind = nested ? 'nested' : !path || GRAPHIC_EXT.test(path) ? 'graphic' : 'video';
+      } catch {}
+      let selected = false; try { selected = await it.getIsSelected(); } catch {}
+      layers.push({ item: it, track: i + 1, name: await it.getName(), kind, path, inputLUT: inputLUT && !/^0+(-0+)*$/.test(inputLUT) ? inputLUT : '', selected, start: s0, end: e0, ...(await effectsOn(it)) });
+    }
+  }
+  return layers;
+}
+/** The shot the editor means: a selected clip under the playhead, else the top footage clip under it. */
+const subjectOf = layers => layers.find(l => l.selected && l.kind !== 'adjustment') || layers.find(l => l.kind === 'video' || l.kind === 'nested') || layers.find(l => l.kind !== 'adjustment') || null;
+
 const host = {
   name: 'premiere', label: 'Premiere Pro', version: pkg.version, os, preferCcx: false,
-  applyNote: 'Adds the Lukuluku Look effect to the selected clips (or updates it if it is already there). Without the effect installed, the look is saved as a .cube for Lumetri.',
+  applyNote: 'Adds the Lukuluku Look effect to the selected clips, or to the clip under the playhead when none are selected, and updates it where it is already there. Without the effect installed, the look is saved as a .cube for Lumetri.',
   fetch: (url, o) => fetch(url, o),
   async readBundled(name, type) { return readEntry(await entryAt(await lfs.getPluginFolder(), 'content/' + name), type); },
   cache: {
@@ -71,9 +108,17 @@ const host = {
     try { await entry.delete(); } catch { /* temp folder is cleaned by UXP */ }
     let clipName = '';
     try { const items = await (await seq.getSelection()).getTrackItems(); if (items[0] && items[0].getName) clipName = await items[0].getName(); } catch { /* optional */ }
-    return { frame, seconds: t.seconds, timecode: timecode(t.seconds, rate), clipName: clipName || seq.name };
+    return { frame, seconds: t.seconds, timecode: timecode(t.seconds, rate), clipName: clipName || seq.name, sequenceId: String(seq.guid || seq.name), sequenceName: seq.name };
   },
   async sequenceDuration() { return (await (await sequence()).getEndTime()).seconds; },
+
+  /** What is under the playhead: every layer (top first) and the shot the editor most likely means. */
+  async clipContext() {
+    const seq = await sequence(), t = (await seq.getPlayerPosition()).seconds, layers = await layersAt(seq, t), subject = subjectOf(layers);
+    const plain = l => l && (({ item, ...rest }) => rest)(l);
+    return { sequenceId: String(seq.guid || seq.name), sequenceName: seq.name, seconds: t, layers: layers.map(plain), subject: plain(subject),
+      above: subject ? layers.filter(l => l.track > subject.track).map(plain) : [] };
+  },
 
   async addMarker({ seconds, name, note }) {
     const proj = await project(), seq = await sequence(), markers = await ppro.Markers.getMarkers(seq);
@@ -92,13 +137,18 @@ const host = {
       return { ok: !!path, message: path ? 'The Lukuluku Look effect is not installed, so the look was saved as a .cube. In Lumetri Color → Creative → Look → Browse, pick it.' : 'Cancelled' };
     }
     const proj = await project(), seq = await sequence();
-    const items = (await (await seq.getSelection()).getTrackItems()).filter(it => typeof it.createAddVideoTransitionAction === 'function');
-    if (!items.length) return { ok: false, message: 'Select one or more video clips in the timeline first.' };
-    let done = 0;
+    let items = (await (await seq.getSelection()).getTrackItems()).filter(it => typeof it.createAddVideoTransitionAction === 'function'), fallback = '';
+    if (!items.length) { // nothing selected: the shot under the playhead
+      const subject = subjectOf(await layersAt(seq, (await seq.getPlayerPosition()).seconds));
+      if (!subject) return { ok: false, message: 'There is no clip under the playhead. Select clips in the timeline, or park on a shot.' };
+      items = [subject.item]; fallback = ` (V${subject.track} · ${subject.name}, under the playhead)`;
+    }
+    let done = 0, updated = 0;
     for (const it of items) {
       const chain = await it.getComponentChain();
       let comp = null;
       for (let i = 0; i < chain.getComponentCount(); i++) { const c = chain.getComponentAtIndex(i); if ((await c.getMatchName()) === match) comp = c; }
+      if (comp) updated++;
       if (!comp) {
         const created = await ppro.VideoFilterFactory.createComponent(match);
         transaction(proj, 'Add Lukuluku Look', ca => ca.addAction(chain.createAppendComponentAction(created)));
@@ -114,7 +164,8 @@ const host = {
       });
       done++;
     }
-    return { ok: true, message: `Lukuluku Look applied to ${done} clip${done === 1 ? '' : 's'}.` };
+    const added = done - updated, parts = [added && `added to ${added} clip${added === 1 ? '' : 's'}`, updated && `updated on ${updated} clip${updated === 1 ? '' : 's'}`].filter(Boolean);
+    return { ok: true, message: `Lukuluku Look ${parts.join(', ')}${fallback}.` };
   },
 
   async saveFile(name, data, { title } = {}) {

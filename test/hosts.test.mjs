@@ -46,8 +46,13 @@ test('Premiere panel: grab, mark, read markers, apply the effect, update', { ski
     await page.waitForSelector('#grab', { timeout: 15000 });
     await page.click('#grab'); await page.waitForSelector('#reading .card', { timeout: 15000 });
     assert.match(await page.innerText('#body'), /A001_C003 00:00:12:12/);
+    // timeline context: the selected V1 clip is the shot, the V3 title above it is named
+    const ctx = await page.innerText('.card.ctx'); assert.match(ctx, /V1 · A001_C003/); assert.match(ctx, /V3 graphic \/ title “Lower third”/);
+    // two answers per question
+    await page.click('[data-intent="feeling:tender"]'); await page.waitForTimeout(300);
     // the loop: answer what the shot is for, get directions, preview one, apply it, save it as a preset
     await page.click('[data-intent="feeling:tense"]'); await page.waitForSelector('.dir', { timeout: 20000 });
+    assert.equal(await page.innerText('[data-intent="feeling:tense"]'), '+ Tense', 'second answer marked');
     assert.ok((await page.$$('.dir')).length >= 4, 'at least four directions');
     await page.locator('.dir .dtext b').first().click(); await page.waitForSelector('[data-dapply]');
     await page.waitForFunction(() => document.querySelector('#stage') && document.querySelector('#stage').src.startsWith('data:image/png'), null, { timeout: 15000 });
