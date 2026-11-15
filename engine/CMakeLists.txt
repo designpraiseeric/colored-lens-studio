@@ -72,6 +72,7 @@ if(AE_SDK AND EXISTS "${AE_SDK}/Examples/Headers/AE_Effect.h")
   target_link_libraries(LukulukuLook_ae lukuluku_core)
   target_compile_definitions(LukulukuLook_ae PRIVATE LK_VMAJOR=${LK_VMAJOR} LK_VMINOR=${LK_VMINOR})
   if(APPLE)
+    file(WRITE "${CMAKE_BINARY_DIR}/PkgInfo" "eFKTFXTC")  # Adobe effect bundle type + creator
     set_target_properties(LukulukuLook_ae PROPERTIES BUNDLE TRUE BUNDLE_EXTENSION "plugin" OUTPUT_NAME "LukulukuLook"
       MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/adobe/Info.plist.in")
     target_link_libraries(LukulukuLook_ae "-framework CoreFoundation")
@@ -80,7 +81,7 @@ if(AE_SDK AND EXISTS "${AE_SDK}/Examples/Headers/AE_Effect.h")
       COMMAND xcrun Rez -o "$<TARGET_BUNDLE_DIR:LukulukuLook_ae>/Contents/Resources/LukulukuLook.rsrc" -define __MACH__ -arch arm64 -arch x86_64
               -i "${AE_SDK}/Examples/Headers" -i "${AE_SDK}/Examples/Resources" -i "${CMAKE_CURRENT_SOURCE_DIR}/adobe" -i "${CMAKE_BINARY_DIR}"
               -useDF "${CMAKE_CURRENT_SOURCE_DIR}/adobe/LukulukuLookPiPL.r"
-      COMMAND /bin/sh -c "printf eFKTFXTC > '$<TARGET_BUNDLE_DIR:LukulukuLook_ae>/Contents/PkgInfo'")
+      COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_BINARY_DIR}/PkgInfo" "$<TARGET_BUNDLE_DIR:LukulukuLook_ae>/Contents/PkgInfo")
   elseif(WIN32)
     # PiPLtool turns the .r into an .rc that the resource compiler links in
     add_custom_command(OUTPUT "${CMAKE_BINARY_DIR}/LukulukuLookPiPL.rc"

@@ -1,8 +1,11 @@
 # Release notes
 Each `## <version>` block becomes the text of the in-app update banner and the GitHub Release.
 
+## 0.1.3
+The Lukuluku Look effect for Premiere Pro now installs on Mac too (0.1.1 and 0.1.2 brought it to Windows only).
+
 ## 0.1.2
-The Lukuluku Look effect for Premiere Pro now installs on Mac too (0.1.1 brought it to Windows only).
+Build fixes for the Mac Premiere effect.
 
 ## 0.1.1
 The Lukuluku Look effect now comes to Premiere Pro.
