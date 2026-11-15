@@ -35,7 +35,7 @@ export async function startApp(host, root) {
   root.innerHTML = `
     <div class="cl">
       <div id="banner" class="banner" hidden></div>
-      <div class="head"><div class="brand">Colored Lens <span class="dim">· ${esc(host.label || host.name)}</span></div><div class="row tight"><span id="status" class="dim small"></span><button id="encBtn" class="link small">Encyclopedia</button></div></div>
+      <div class="head"><div class="brand">Colored Lens <span class="dim">· ${esc(host.label || host.name)}</span></div><div class="row tight"><span id="status" class="dim small"></span><div role="button" tabindex="0" id="encBtn" class="linkbtn small">Encyclopedia</div></div></div>
       <div class="tabs">${['shot:Shot', 'scene:Scene', 'tweak:Tweak', 'presets:Presets'].map(t => { const [id, n] = t.split(':'); return `<div data-tab="${id}" class="tab" role="tab" tabindex="0">${n}</div>`; }).join('')}</div>
       <div id="body" class="body"></div>
       <div id="toast" class="toast" hidden></div>
@@ -116,7 +116,7 @@ export async function startApp(host, root) {
   const stageCache = { key: '', before: null, after: null };
   const stageHTML = (clickable, hint) => `<div class="stage">
       ${S.frame ? `<img id="stage" class="frame ${clickable ? 'click' : ''}" src="">
-      <div class="row tight">${['before:Before', 'split:Split', 'after:After'].map(v => { const [id, n] = v.split(':'); return `<button class="seg ${S.view === id ? 'on' : ''}" data-view="${id}">${n}</button>`; }).join('')}
+      <div class="row tight">${['before:Before', 'split:Split', 'after:After'].map(v => { const [id, n] = v.split(':'); return `<div role="button" tabindex="0" class="seg ${S.view === id ? 'on' : ''}" data-view="${id}">${n}</div>`; }).join('')}
         <div class="grow">${S.view === 'split' ? sliderHTML({ id: 'wipe', label: 'Wipe', min: 0, max: 1, step: 0.01, value: S.wipe, def: 0.5 }) : ''}</div></div>
       <div class="small dim">${hint || ''}</div>` : ''}</div>`;
   function wireStage(body, onClickImg) {
@@ -172,10 +172,11 @@ export async function startApp(host, root) {
   }
 
   // SHOT ------------------------------------------------------------------
-  const chipRow = (list, key) => `<div class="chips">${list.map(x => `<button class="chip ${S.intent[key] === x.id ? 'on' : ''}" data-intent="${key}:${x.id}">${esc(x.n)}</button>`).join('')}</div>`;
+  const chipRow = (list, key) => `<div class="chips">${list.map(x => `<div role="button" tabindex="0" class="chip ${S.intent[key] === x.id ? 'on' : ''}" data-intent="${key}:${x.id}">${S.intent[key] === x.id ? '✓ ' : ''}${esc(x.n)}</div>`).join('')}</div>`;
   function renderShot(body) {
     const r = S.reading, k = S.skin, I = S.intent;
-    const hint = S.chosen >= 0 ? `Previewing <b>${esc(S.directions[S.chosen].name)}</b> (colour, grain and vignette; halation and glow show on the clip). Click a face to check its skin.` : 'Click a face in the picture to check its skin. Pick a direction below to preview it here.';
+    const hint = S.chosen >= 0 ? `Previewing <b>${esc(S.directions[S.chosen].name)}</b> (colour, grain and vignette; halation and glow show on the clip).
+        <div class="row wrap"><button class="primary" data-dapply="${S.chosen}">Apply to selected clips</button><button data-dtweak="${S.chosen}">Tweak</button><button data-dsave="${S.chosen}">Save as preset</button><button id="dclear">Back to the original</button></div>` : 'Click a face in the picture to check its skin. Pick a direction below to preview it here.';
     body.innerHTML = `
       <div class="row"><button id="grab" class="primary">${esc(host.grabLabel || 'Read the frame under the playhead')}</button>${S.frame ? `<span class="small dim">${esc(S.meta.clipName || '')} ${esc(S.meta.timecode || '')}</span>` : ''}</div>
       ${S.frame ? stageHTML(true, hint) : `<p class="dim">Park the playhead on a shot and read it. Colored Lens tells you what the frame is doing, asks what it is for, and suggests directions you can preview, tweak, apply and save.</p>`}
@@ -184,7 +185,7 @@ export async function startApp(host, root) {
         <div class="q">The project</div>${chipRow(GENRES, 'genre')}
         <div class="q">This scene should feel</div>${chipRow(FEELINGS, 'feeling')}
         <div class="q">This shot is</div>${chipRow(ROLES, 'role')}
-        <div class="q">The footage is</div><div class="chips"><button class="chip ${S.input === 'rec709' ? 'on' : ''}" data-input="rec709">Normal video (Rec.709)</button><button class="chip ${S.input === 'logc3' ? 'on' : ''}" data-input="logc3">Log (ARRI LogC3)</button></div>
+        <div class="q">The footage is</div><div class="chips"><div role="button" tabindex="0" class="chip ${S.input === 'rec709' ? 'on' : ''}" data-input="rec709">${S.input === 'rec709' ? '✓ ' : ''}Normal video (Rec.709)</div><div role="button" tabindex="0" class="chip ${S.input === 'logc3' ? 'on' : ''}" data-input="logc3">${S.input === 'logc3' ? '✓ ' : ''}Log (ARRI LogC3)</div></div>
         <div class="row"><input id="note" placeholder="Anything else about this scene? (saved with presets)" value="${esc(I.note)}"></div>
         ${!S.frame ? '<p class="small dim">Your answers are remembered. Read a frame to get directions.</p>' : ''}</div>
       <div id="dirs">${directionsHTML()}</div>
@@ -257,7 +258,8 @@ export async function startApp(host, root) {
         </div></div>`).join('')}`;
   }
   function wireDirections(body) {
-    body.querySelectorAll('[data-dir]').forEach(el => el.onclick = e => { if (e.target.closest('button')) return; const i = +el.dataset.dir; if (S.chosen === i) return; choose(i); S.view = 'split'; render(); });
+    body.querySelectorAll('[data-dir]').forEach(el => el.onclick = e => { if (e.target.closest('button')) return; const i = +el.dataset.dir; if (S.chosen === i) return; choose(i); S.view = 'split'; render(); body.scrollTop = 0; });
+    if ($('#dclear', body)) $('#dclear', body).onclick = () => { S.chosen = -1; render(); };
     body.querySelectorAll('[data-dapply]').forEach(b => b.onclick = () => busy('Applying', () => applyLookToClips(S.look, S.extra, S.input, S.matte)));
     body.querySelectorAll('[data-dtweak]').forEach(b => b.onclick = () => go('tweak'));
     body.querySelectorAll('[data-dsave]').forEach(b => b.onclick = () => busy('Saving', async () => {
@@ -346,7 +348,7 @@ export async function startApp(host, root) {
   function renderPresets(body) {
     const list = listPresets();
     body.innerHTML = `
-      <div class="row wrap"><button class="chip ${S.adapt ? 'on' : ''}" id="adapt">Adapt to each shot: ${S.adapt ? 'on' : 'off'}</button></div>
+      <div class="row wrap"><div role="button" tabindex="0" class="chip ${S.adapt ? 'on' : ''}" id="adapt">${S.adapt ? '✓ ' : ''}Adapt to each shot: ${S.adapt ? 'on' : 'off'}</div></div>
       <p class="small dim">${S.adapt ? 'Applying a preset first matches the shot under the playhead to the shot the preset was made on (exposure, contrast, balance), so the look lands the same way. Read the frame in Shot first.' : 'Presets are applied exactly as saved.'}</p>
       ${S.shownCode ? `<div class="card"><div class="k">Preset code</div><p class="small dim">Copy this and paste it into Colored Lens on another machine.</p><textarea id="codeOut" rows="3" readonly>${esc(S.shownCode)}</textarea><div class="row"><button id="hideCode">Done</button></div></div>` : ''}
       ${list.length ? list.map(p => `<div class="preset">${p.thumb ? `<img src="${p.thumb}">` : '<div class="nothumb"></div>'}<div class="dtext">

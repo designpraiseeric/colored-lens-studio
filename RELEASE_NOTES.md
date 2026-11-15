@@ -1,6 +1,12 @@
 # Release notes
 Each `## <version>` block becomes the text of the in-app update banner and the GitHub Release.
 
+## 0.2.2
+Polish from the first session with 0.2.1 in Premiere Pro.
+- Your answers in "What is this for?" are clearly marked (filled red, with a tick); Premiere had been hiding the selected state.
+- Picking a direction takes you straight to the large preview, with Apply, Tweak and Save right under it.
+- "Back to the original" returns the preview to your untouched frame.
+
 ## 0.2.1
 Fixes "Install update" in Premiere Pro, which could hand macOS Installer an empty file ("Couldn't open ColoredLensStudio-….pkg").
 - The installer is now downloaded whole, checked (size and file type) and saved to your Downloads folder before it opens.
