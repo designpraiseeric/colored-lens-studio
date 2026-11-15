@@ -1,6 +1,11 @@
 # Release notes
 Each `## <version>` block becomes the text of the in-app update banner and the GitHub Release.
 
+## 0.1.1
+The Lukuluku Look effect now comes to Premiere Pro.
+- Premiere Pro: the Colored Lens panel's Apply adds the Lukuluku Look effect to the selected clips and sets every setting, including Skin Guard and Match to Reference. Grain, halation and glow now work in Premiere.
+- Windows: the Premiere effect installs to Adobe's shared plug-in folder.
+
 ## 0.1.0
 First release of Colored Lens Studio.
 - Colored Lens panel for Premiere Pro and DaVinci Resolve Studio: Read (frame reading in the encyclopedia's terms), Skin (§7 as a live check), Script (color script from markers or a scan), Look (Lukuluku looks, Skin Guard, Match to Reference), Library (the full encyclopedia, searchable).
