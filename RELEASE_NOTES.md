@@ -1,6 +1,12 @@
 # Release notes
 Each `## <version>` block becomes the text of the in-app update banner and the GitHub Release.
 
+## 0.2.7
+The preview stays in view.
+- The before / after preview now sits above the options in Shot and Tweak, so it stays put while you scroll and adjust.
+- Three preview sizes (S, M, L), and a button to hide it when you need the room.
+- Apply, Tweak and Save for the chosen direction sit right under the preview.
+
 ## 0.2.6
 Layout fixes from a vertical edit.
 - Vertical (9:16) frames preview at a sensible size, so the buttons stay in view.

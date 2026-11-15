@@ -121,3 +121,10 @@ div.chip.on2 { background: #4a1822; border-color: var(--acc); color: #fff; font-
 div.chip.off { color: #6b6b72; border-style: dashed; background: transparent; cursor: default; }
 /* 0.2.6: Apply-to options on one wrapping row (UXP lays inline-block divs out one per line inside flex) */
 .applyto div.chip { flex: none; }
+/* 0.2.7: the preview dock stays put above the scrolling options */
+.dock { flex: none; padding: 6px 12px 4px; border-bottom: 1px solid var(--line); background: #1a1a1c; }
+.dock .frame { margin: 0 auto 4px; border-radius: 4px; }
+.segs { display: flex; flex-direction: row; margin-right: 8px; }
+.segs div.seg { margin-right: 0; border-radius: 0; }
+.segs div.seg:first-child { border-radius: 6px 0 0 6px; } .segs div.seg:last-child { border-radius: 0 6px 6px 0; margin-right: 0; }
+.dock .sl { margin: 2px 0; }

@@ -30,7 +30,7 @@ export async function startApp(host, root) {
   const S = { tab: 'shot', back: 'shot', frame: null, meta: null, reading: null, skin: null, sample: null, shots: [],
     intent: normIntent(settings.get('intent', {})), seqId: '', ctx: null, lead: 0, neigh: [], scope: settings.get('scope', 'clip'), input: settings.get('input', 'rec709'),
     directions: [], chosen: -1, look: NEUTRAL_LOOK(), extra: { ...XDEF }, matte: false, recipe: { name: '', presetId: null }, view: 'split', wipe: 0.5,
-    refFrameStats: null, refName: '', adapt: settings.get('adapt', true), encQ: '', shownCode: '', confirmDel: '', busy: false, showSkin: false, showRefs: false };
+    dockSize: settings.get('dockSize', 'M'), dockHidden: false, refFrameStats: null, refName: '', adapt: settings.get('adapt', true), encQ: '', shownCode: '', confirmDel: '', busy: false, showSkin: false, showRefs: false };
   let PV = null;
   const up = new Updater(host, config.pagesBase);
   root.innerHTML = `
@@ -38,6 +38,7 @@ export async function startApp(host, root) {
       <div id="banner" class="banner" hidden></div>
       <div class="head"><div class="brand">Colored Lens <span class="dim">· ${esc(host.label || host.name)}</span></div><div class="row tight"><span id="status" class="dim small"></span><div role="button" tabindex="0" id="encBtn" class="linkbtn small">Encyclopedia</div></div></div>
       <div class="tabs">${['shot:Shot', 'scene:Scene', 'tweak:Tweak', 'presets:Presets'].map(t => { const [id, n] = t.split(':'); return `<div data-tab="${id}" class="tab" role="tab" tabindex="0">${n}</div>`; }).join('')}</div>
+      <div id="dock" class="dock" hidden></div>
       <div id="body" class="body"></div>
       <div id="toast" class="toast" hidden></div>
     </div>`;
@@ -129,21 +130,40 @@ export async function startApp(host, root) {
 
   // ---------- the stage: a large before / after preview with a wipe ----------
   const stageCache = { key: '', before: null, after: null };
-  const stageHTML = (clickable, hint) => `<div class="stage">
-      ${S.frame ? `<img id="stage" class="frame ${clickable ? 'click' : ''}" src="" style="${stageStyle()}">
-      <div class="row tight">${['before:Before', 'split:Split', 'after:After'].map(v => { const [id, n] = v.split(':'); return `<div role="button" tabindex="0" class="seg ${S.view === id ? 'on' : ''}" data-view="${id}">${n}</div>`; }).join('')}
-        <div class="grow">${S.view === 'split' ? sliderHTML({ id: 'wipe', label: 'Wipe', min: 0, max: 1, step: 0.01, value: S.wipe, def: 0.5 }) : ''}</div></div>
-      <div class="small dim">${hint || ''}</div>` : ''}</div>`;
-  // Tall (vertical) frames are shown narrower, so the preview never pushes its controls out of the panel.
-  const stageStyle = () => { const a = S.frame ? S.frame.w / S.frame.h : 1.78; return a < 1.2 ? `width:${Math.max(40, Math.round(a * 75))}%;margin-left:auto;margin-right:auto;` : ''; };
-  function wireStage(body, onClickImg) {
-    body.querySelectorAll('[data-view]').forEach(b => b.onclick = () => { S.view = b.dataset.view; render(); });
-    wireSliders(body.querySelector('.stage') || body, (id, v) => { if (id === 'wipe') { S.wipe = v; composite(); } });
-    const img = $('#stage', body); if (img && onClickImg) img.onclick = e => { const r = img.getBoundingClientRect(); onClickImg((e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height); };
-    drawStage();
+  // The preview lives in a dock above the scrolling area, so it stays in view while you scroll through the options.
+  const DOCK_H = { S: 140, M: 220, L: 330 };
+  function dockHTML() {
+    const shot = S.tab === 'shot', d = shot && S.chosen >= 0 ? S.directions[S.chosen] : null;
+    const seg = (id, n, on, attr) => `<div role="button" tabindex="0" class="seg ${on ? 'on' : ''}" ${attr}="${id}">${n}</div>`;
+    if (S.dockHidden) return `<div class="row tight"><span class="small dim grow">Preview hidden</span><button id="dockShow" class="small">Show preview</button></div>`;
+    const a = S.frame.w / S.frame.h, avail = Math.max(160, (root.clientWidth || 360) - 26);
+    let h = Math.min(DOCK_H[S.dockSize] || 220, Math.round((window.innerHeight || 800) * 0.42)), w = Math.round(h * a); if (w > avail) { w = avail; h = Math.round(w / a); }
+    return `<img id="stage" class="frame ${shot ? 'click' : ''}" src="" style="width:${w}px;height:${h}px;margin:0 auto 4px;display:block;">
+      <div class="row tight"><div class="segs">${['before:Before', 'split:Split', 'after:After'].map(v => { const [id, n] = v.split(':'); return seg(id, n, S.view === id, 'data-view'); }).join('')}</div>
+        <div class="grow"></div><div class="segs" title="Preview size">${['S', 'M', 'L'].map(z => seg(z, z, S.dockSize === z, 'data-dsize')).join('')}</div><button id="dockHide" class="small" title="Hide the preview">✕</button></div>
+      ${S.view === 'split' ? sliderHTML({ id: 'wipe', label: 'Wipe', min: 0, max: 1, step: 0.01, value: S.wipe, def: 0.5 }) : ''}
+      ${d ? `<div class="small">Previewing <b>${esc(d.name)}</b> <span class="dim">(colour, grain and vignette; halation and glow show on the clip)</span></div>
+        ${scopeRow()}<div class="row wrap"><button class="primary" data-dapply="${S.chosen}">${S.scope === 'clip' ? 'Apply to selected clips' : 'Apply'}</button><button data-dtweak="${S.chosen}">Tweak</button><button data-dsave="${S.chosen}">Save as preset</button><button id="dclear">Back to the original</button></div>`
+        : `<div class="small dim">${shot ? 'Click a face in the picture to check its skin. Pick a direction below to preview it here.' : 'Live preview: colour, grain and vignette. Halation and diffusion glow show on the clip.'}</div>`}`;
+  }
+  function renderDock() {
+    const dock = $('#dock', root), show = !!S.frame && (S.tab === 'shot' || S.tab === 'tweak');
+    dock.hidden = !show; if (!show) { dock.innerHTML = ''; return; }
+    dock.innerHTML = dockHTML();
+    if ($('#dockShow', dock)) { $('#dockShow', dock).onclick = () => { S.dockHidden = false; renderDock(); }; return; }
+    $('#dockHide', dock).onclick = () => { S.dockHidden = true; renderDock(); };
+    dock.querySelectorAll('[data-view]').forEach(b => b.onclick = () => { S.view = b.dataset.view; renderDock(); });
+    dock.querySelectorAll('[data-dsize]').forEach(b => b.onclick = () => { S.dockSize = b.dataset.dsize; settings.set('dockSize', S.dockSize); renderDock(); });
+    wireSliders(dock, (id, v) => { if (id === 'wipe') { S.wipe = v; composite(); } });
+    wireActions(dock);
+    const img = $('#stage', dock);
+    if (S.tab === 'shot') img.onclick = e => { const r = img.getBoundingClientRect(), x = (e.clientX - r.left) / r.width, y = (e.clientY - r.top) / r.height;
+      busy('Checking skin', async () => { S.sample = [x, y]; runSkin(); await suggest(); S.showSkin = true; render(); toast(S.skin.found ? `Skin sampled: about ${S.skin.ire} IRE` : 'No skin there; try the middle of a cheek'); }); };
+    stageCache.key = stageCache.key || ''; drawStage(true);
   }
   let stageT = 0, stageSeq = 0;
-  function drawStage() {
+  function drawStage(rebuilt) {
+    if (rebuilt && stageCache.before) composite();
     clearTimeout(stageT); const seq = ++stageSeq;
     stageT = setTimeout(async () => {
       if (!S.frame || !$('#stage', root)) return;
@@ -185,6 +205,7 @@ export async function startApp(host, root) {
     root.querySelectorAll('.tab').forEach(b => { const on = b.dataset.tab === S.tab; b.classList.toggle('on', on); b.setAttribute('aria-selected', on ? 'true' : 'false'); });
     const body = $('#body', root); if (body && render.lastTab !== S.tab) { body.scrollTop = 0; render.lastTab = S.tab; }
     if (!up.content.encyclopedia) return;
+    renderDock();
     ({ shot: renderShot, scene: renderScene, tweak: renderTweak, presets: renderPresets, enc: renderEnc })[S.tab](body);
   }
 
@@ -193,11 +214,9 @@ export async function startApp(host, root) {
     return `<div class="chips">${list.map(x => { const k = cur.indexOf(x.id); return `<div role="button" tabindex="0" class="chip ${k === 0 ? 'on' : k === 1 ? 'on2' : ''}" data-intent="${key}:${x.id}" title="${k === 0 ? 'Main answer' : k === 1 ? 'Second answer' : 'Tap to add (up to two)'}">${k === 0 ? '✓ ' : k === 1 ? '+ ' : ''}${esc(x.n)}</div>`; }).join('')}</div>`; };
   function renderShot(body) {
     const r = S.reading, k = S.skin, I = S.intent;
-    const hint = S.chosen >= 0 ? `Previewing <b>${esc(S.directions[S.chosen].name)}</b> (colour, grain and vignette; halation and glow show on the clip).
-        ${scopeRow()}<div class="row wrap"><button class="primary" data-dapply="${S.chosen}">${S.scope === 'clip' ? 'Apply to selected clips' : 'Apply'}</button><button data-dtweak="${S.chosen}">Tweak</button><button data-dsave="${S.chosen}">Save as preset</button><button id="dclear">Back to the original</button></div>` : 'Click a face in the picture to check its skin. Pick a direction below to preview it here.';
     body.innerHTML = `
       <div class="row"><button id="grab" class="primary">${esc(host.grabLabel || 'Read the frame under the playhead')}</button>${S.frame ? `<span class="small dim">${esc(S.meta.clipName || '')} ${esc(S.meta.timecode || '')}</span>` : ''}</div>
-      ${S.frame ? stageHTML(true, hint) : `<p class="dim">Park the playhead on a shot and read it. Colored Lens tells you what the frame is doing, asks what it is for, and suggests directions you can preview, tweak, apply and save.</p>`}
+      ${S.frame ? '' : `<p class="dim">Park the playhead on a shot and read it. Colored Lens tells you what the frame is doing, asks what it is for, and suggests directions you can preview, tweak, apply and save.</p>`}
       ${S.ctx ? contextCard(S.ctx) : ''}
       <div id="reading">${r ? readingCard(r, k) : ''}</div>
       <div class="card"><div class="k">What is this for?</div>
@@ -238,7 +257,6 @@ export async function startApp(host, root) {
       S.extra = { ...S.extra, ...computeMatch(matchStats(S.frame), ref.ms) }; S.refName = m.title; go('tweak'); toast(`Match to “${m.title}” set in Tweak`);
     });
     wireDirections(body);
-    if (S.frame) wireStage(body, (x, y) => busy('Checking skin', async () => { S.sample = [x, y]; runSkin(); await suggest(); S.showSkin = true; render(); toast(S.skin.found ? `Skin sampled: about ${S.skin.ire} IRE` : 'No skin there; try the middle of a cheek'); }));
   }
   // What the timeline says about this shot. Context proposes; the editor decides.
   function contextCard(c) {
@@ -313,7 +331,10 @@ export async function startApp(host, root) {
         </div></div>`).join('')}`;
   }
   function wireDirections(body) {
-    body.querySelectorAll('[data-dir]').forEach(el => el.onclick = e => { if (e.target.closest('button')) return; const i = +el.dataset.dir; if (S.chosen === i) return; choose(i); S.view = 'split'; render(); body.scrollTop = 0; });
+    body.querySelectorAll('[data-dir]').forEach(el => el.onclick = e => { if (e.target.closest('button')) return; const i = +el.dataset.dir; if (S.chosen === i) return; const top = body.scrollTop; choose(i); S.view = 'split'; render(); body.scrollTop = top; });
+    wireActions(body);
+  }
+  function wireActions(body) {
     if ($('#dclear', body)) $('#dclear', body).onclick = () => { S.chosen = -1; render(); };
     body.querySelectorAll('[data-dapply]').forEach(b => b.onclick = () => busy('Applying', () => applyLookToClips(S.look, S.extra, S.input, S.matte)));
     body.querySelectorAll('[data-dtweak]').forEach(b => b.onclick = () => go('tweak'));
@@ -359,7 +380,7 @@ export async function startApp(host, root) {
     const slider = (obj, key, label, min, max, step) => sliderHTML({ id: obj + ':' + key, label: esc(label), min, max, step, value: +(obj === 'G' ? G : X)[key], def: obj === 'G' ? GRADE0[key] : ({ ...XDEF, matchAmt: 1 })[key] });
     const editing = S.recipe.presetId ? listPresets().find(p => p.id === S.recipe.presetId) : null;
     body.innerHTML = `
-      ${S.frame ? stageHTML(false, 'Live preview on your frame: colour, grain and vignette. Halation and diffusion glow show on the clip.') : '<p class="dim small">Read a frame in Shot to preview the look live while you adjust it.</p>'}
+      ${S.frame ? '' : '<p class="dim small">Read a frame in Shot to preview the look live while you adjust it.</p>'}
       <div class="row"><input id="rname" placeholder="Name this look" value="${esc(S.recipe.name)}"></div>
       ${editing ? `<p class="small dim">Editing preset “${esc(editing.name)}”.</p>` : ''}
       ${scopeRow()}<div class="row wrap"><button id="apply" class="primary">${S.scope === 'clip' ? 'Apply to selected clips' : 'Apply'}</button>${editing ? '<button id="update">Update preset</button>' : ''}<button id="saveNew">${editing ? 'Save as new preset' : 'Save as preset'}</button><button id="reset">Start from neutral</button></div>
@@ -383,7 +404,7 @@ export async function startApp(host, root) {
     $('#input', body).onchange = e => { S.input = e.target.value; settings.set('input', S.input); changed(); };
     $('#matte', body).onchange = e => { S.matte = e.target.value !== 'none'; if (S.matte) S.look.A = e.target.value; changed(); };
     $('#rname', body).onchange = e => { S.recipe.name = e.target.value; };
-    wireSliders(body.querySelector('.stage') ? body : body, (id, v) => { if (id === 'wipe') { S.wipe = v; composite(); return; } const [obj, key] = id.split(':'); (obj === 'G' ? S.look.G : S.extra)[key] = v; drawStage(); });
+    wireSliders(body, (id, v) => { const [obj, key] = id.split(':'); (obj === 'G' ? S.look.G : S.extra)[key] = v; drawStage(); });
     $('#apply', body).onclick = () => busy('Applying', () => applyLookToClips(S.look, S.extra, S.input, S.matte));
     if ($('#update', body)) $('#update', body).onclick = () => busy('Saving', () => saveCurrentAsPreset($('#rname', body).value, false));
     $('#saveNew', body).onclick = () => busy('Saving', async () => { await saveCurrentAsPreset($('#rname', body).value, true); render(); });
@@ -395,7 +416,7 @@ export async function startApp(host, root) {
     $('#cube', body).onclick = () => busy('Baking LUT', async () => {
       const cube = bakeCube(S.look, C, await lutsFor(S.look), { input: S.input, extra: S.extra }); const p = await host.saveFile(cube.name + '.cube', cube.text, { title: 'Save the LUT' }); if (p) toast('Saved ' + p); });
     $('#open', body).onclick = () => host.openUrl(shareLink(S.look, up.content.looks.app));
-    if (S.frame) { body.querySelectorAll('[data-view]').forEach(b => b.onclick = () => { S.view = b.dataset.view; render(); }); drawStage(); }
+    if (S.frame) drawStage();
   }
 
   // PRESETS ---------------------------------------------------------------
