@@ -11,10 +11,8 @@
 #include "Param_Utils.h"
 #include "AEFX_SuiteHelper.h"
 #include "AE_EffectPixelFormat.h"
-#if __has_include("PrSDKPixelFormat.h")
-#include "PrSDKPixelFormat.h"
+#include "PrSDKAESupport.h" // PF_PixelFormatSuite1 + Premiere pixel formats (as in the SDK's SDK_Noise sample)
 #define LK_HAVE_PR_FORMATS 1
-#endif
 
 #include "look_engine.h"
 #include "generated/catalog.h"
@@ -66,7 +64,7 @@ PF_Err GlobalSetup(PF_InData* in_data, PF_OutData* out_data) {
   out_data->out_flags = LK_OUT_FLAGS;
   out_data->out_flags2 = LK_OUT_FLAGS2;
 #ifdef LK_HAVE_PR_FORMATS
-  if (in_data->appl_id == 'PrMr') { // Premiere Pro: ask for 32-bit float BGRA (best quality) and 8-bit BGRA
+  if (in_data->appl_id == kAppID_Premiere) { // Premiere Pro: ask for 32-bit float BGRA (best quality) and 8-bit BGRA
     AEFX_SuiteScoper<PF_PixelFormatSuite1> pfs(in_data, kPFPixelFormatSuite, kPFPixelFormatSuiteVersion1, out_data);
     (*pfs->ClearSupportedPixelFormats)(in_data->effect_ref);
     (*pfs->AddSupportedPixelFormat)(in_data->effect_ref, PrPixelFormat_BGRA_4444_32f);
@@ -80,11 +78,13 @@ PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out_data) {
   PF_Err err = PF_Err_NONE;
   PF_ParamDef def;
   int index = 1, group = -1; std::string lastGroup;
-  auto endTopic = [&]() { if (group >= 0) { AEFX_CLR_STRUCT(def); PF_END_TOPIC(kTopicIdBase + 2 * group + 1); index++; } };
+  // PF_END_TOPIC hides a `return err` on failure, so this helper returns PF_Err like Adobe's macros expect
+  auto endTopic = [&]() -> PF_Err { if (group >= 0) { AEFX_CLR_STRUCT(def); PF_END_TOPIC(kTopicIdBase + 2 * group + 1); index++; } return PF_Err_NONE; };
   for (int i = 0; i < PARAM_COUNT && !err; i++) {
     const ParamInfo& pi = kParamInfo[i];
     if (lastGroup != pi.group) {
-      endTopic(); lastGroup = pi.group; group++;
+      if ((err = endTopic())) return err;
+      lastGroup = pi.group; group++;
       AEFX_CLR_STRUCT(def);
       const bool open = lastGroup == "Look" || lastGroup == "Skin Guard";
       PF_ADD_TOPICX(pi.group, open ? 0 : PF_ParamFlag_START_COLLAPSED, kTopicIdBase + 2 * group);
@@ -103,7 +103,7 @@ PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out_data) {
     if (gIndex[i] != index) return PF_Err_INTERNAL_STRUCT_DAMAGED; // computeIndices() and the layout disagree
     index++;
   }
-  endTopic();
+  if ((err = endTopic())) return err;
   out_data->num_params = index;
   return err;
 }
@@ -122,7 +122,7 @@ PF_Err Render(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* params[], P
 
   Fmt fmt = PF_WORLD_IS_DEEP(output) ? Fmt::AE16 : Fmt::AE8;
 #ifdef LK_HAVE_PR_FORMATS
-  if (in_data->appl_id == 'PrMr') {
+  if (in_data->appl_id == kAppID_Premiere) {
     AEFX_SuiteScoper<PF_WorldSuite2> ws(in_data, kPFWorldSuite, kPFWorldSuiteVersion2, out_data);
     PF_PixelFormat pf = PF_PixelFormat_INVALID;
     ERR(ws->PF_GetPixelFormat(output, &pf));
@@ -173,8 +173,10 @@ PF_Err Render(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* params[], P
 
 extern "C" DllExport PF_Err PluginDataEntryFunction2(PF_PluginDataPtr inPtr, PF_PluginDataCB2 inPluginDataCallBackPtr, SPBasicSuite* inSPBasicSuitePtr,
                                                      const char* inHostName, const char* inHostVersion) {
-  return PF_REGISTER_EFFECT_EXT2(inPtr, inPluginDataCallBackPtr, "Lukuluku Look", LK_MATCH_NAME, "DesignPraise", AE_RESERVED_INFO, "EffectMain",
-                                 "https://github.com/designpraiseeric/colored-lens-studio");
+  PF_Err result = PF_Err_INVALID_CALLBACK; // PF_REGISTER_EFFECT_EXT2 is a statement that sets `result`
+  PF_REGISTER_EFFECT_EXT2(inPtr, inPluginDataCallBackPtr, "Lukuluku Look", LK_MATCH_NAME, "DesignPraise", AE_RESERVED_INFO, "EffectMain",
+                                   "https://github.com/designpraiseeric/colored-lens-studio");
+  return result;
 }
 
 extern "C" DllExport PF_Err EffectMain(PF_Cmd cmd, PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* params[], PF_LayerDef* output, void* extra) {

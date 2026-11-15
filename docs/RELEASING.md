@@ -32,7 +32,7 @@ jobs:
 ## Secrets (all optional)
 | Secret | Turns on |
 |---|---|
-| `AE_SDK_ZIP_URL` | The Premiere Pro effect. A direct download link to the After Effects SDK zip (download it free from Adobe with your login; keep the link private, as Adobe's licence does not allow redistributing it). Without it, releases ship the Resolve effect and both panels; Premiere users get looks through Lumetri `.cube` files. |
+| `AE_SDK_PASSPHRASE` | The Premiere Pro effect. The After Effects SDK parts the build needs are kept **encrypted** in `engine/sdk/aesdk.tar.gz.gpg` (Adobe's licence does not allow publishing the SDK itself); this passphrase unlocks them on GitHub's build machines. Without it, releases ship the Resolve effect and both panels, and Premiere users get looks through Lumetri `.cube` files. To move to a newer SDK, run `tools/pack_aesdk.sh <AfterEffectsSDK.zip>`. |
 | `MAC_APP_IDENTITY`, `MAC_INSTALLER_IDENTITY`, `APPLE_ID`, `APPLE_TEAM_ID`, `APPLE_APP_PASSWORD` | Signed and notarized macOS installer (Apple Developer account, $99/year). Without them the installer is unsigned. |
 
 ## Unsigned installers: what people see

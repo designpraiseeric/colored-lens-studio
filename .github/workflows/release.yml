@@ -33,13 +33,18 @@ jobs:
       - run: node tools/build_content.mjs --enc sources/chroma-encyclopedia --luk sources/lukuluku && node tools/gen_engine.mjs
       - run: node tools/build_hosts.mjs premiere resolve && node tools/package.mjs
       - run: ./tools/fetch_sdks.sh
-      - name: After Effects SDK (optional; enables the Premiere Pro effect)
-        env: { AE_SDK_ZIP_URL: '${{ secrets.AE_SDK_ZIP_URL }}' }
+      - name: After Effects SDK (enables the Premiere Pro effect)
+        env: { AE_SDK_PASSPHRASE: '${{ secrets.AE_SDK_PASSPHRASE }}' }
         run: |
-          if [ -n "$AE_SDK_ZIP_URL" ]; then curl -sSL -o aesdk.zip "$AE_SDK_ZIP_URL" && unzip -q aesdk.zip -d aesdk
-            H=$(find aesdk -path '*Examples/Headers/AE_Effect.h' | head -1); echo "AE_SDK=${H%/Examples/Headers/AE_Effect.h}" >> "$GITHUB_ENV"; fi
+          if [ -n "$AE_SDK_PASSPHRASE" ]; then mkdir -p aesdk
+            echo "$AE_SDK_PASSPHRASE" | gpg --batch --quiet --pinentry-mode loopback --passphrase-fd 0 -d engine/sdk/aesdk.tar.gz.gpg | tar -xz -C aesdk
+            echo "AE_SDK=$PWD/aesdk/AfterEffectsSDK" >> "$GITHUB_ENV"; else echo "::warning::AE_SDK_PASSPHRASE is not set: this release has no Premiere Pro effect"; fi
       - name: Build the Look Engine, universal for Apple silicon and Intel
-        run: cmake -S engine -B engine/build -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DAE_SDK="${AE_SDK:-}" && cmake --build engine/build -j4
+        run: |
+          A="-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64"
+          if ! (cmake -S engine -B engine/build "$A" -DAE_SDK="${AE_SDK:-}" && cmake --build engine/build -j4); then
+            echo "::warning::The Premiere Pro effect did not build; releasing without it"; rm -rf engine/build
+            cmake -S engine -B engine/build "$A" && cmake --build engine/build -j4; fi
       - name: Build the installer
         env:
           MAC_APP_IDENTITY: '${{ secrets.MAC_APP_IDENTITY }}'
@@ -67,16 +72,19 @@ jobs:
       - run: node tools/build_content.mjs --enc sources/chroma-encyclopedia --luk sources/lukuluku && node tools/gen_engine.mjs
       - run: node tools/build_hosts.mjs premiere resolve && node tools/package.mjs
       - run: bash tools/fetch_sdks.sh
-      - name: After Effects SDK (optional)
-        shell: pwsh
-        env: { AE_SDK_ZIP_URL: '${{ secrets.AE_SDK_ZIP_URL_WIN || secrets.AE_SDK_ZIP_URL }}' }
+      - name: After Effects SDK (enables the Premiere Pro effect)
+        shell: bash
+        env: { AE_SDK_PASSPHRASE: '${{ secrets.AE_SDK_PASSPHRASE }}' }
         run: |
-          if ($env:AE_SDK_ZIP_URL) { Invoke-WebRequest $env:AE_SDK_ZIP_URL -OutFile aesdk.zip; Expand-Archive aesdk.zip aesdk
-            $h = Get-ChildItem -Recurse aesdk -Filter AE_Effect.h | Where-Object { $_.FullName -like '*Examples\Headers*' } | Select-Object -First 1
-            "AE_SDK=$($h.Directory.Parent.Parent.FullName)" | Out-File -Append $env:GITHUB_ENV }
+          if [ -n "$AE_SDK_PASSPHRASE" ]; then mkdir -p aesdk
+            echo "$AE_SDK_PASSPHRASE" | gpg --batch --quiet --pinentry-mode loopback --passphrase-fd 0 -d engine/sdk/aesdk.tar.gz.gpg | tar -xz -C aesdk
+            echo "AE_SDK=$(cygpath -m "$PWD/aesdk/AfterEffectsSDK")" >> "$GITHUB_ENV"; else echo "::warning::AE_SDK_PASSPHRASE is not set: this release has no Premiere Pro effect"; fi
       - name: Build the Look Engine
-        shell: pwsh
-        run: cmake -S engine -B engine/build -A x64 "-DAE_SDK=$env:AE_SDK"; cmake --build engine/build --config Release -j 4
+        shell: bash
+        run: |
+          if ! (cmake -S engine -B engine/build -A x64 -DAE_SDK="${AE_SDK:-}" && cmake --build engine/build --config Release -j 4); then
+            echo "::warning::The Premiere Pro effect did not build; releasing without it"; rm -rf engine/build
+            cmake -S engine -B engine/build -A x64 && cmake --build engine/build --config Release -j 4; fi
       - name: Build the installer
         shell: pwsh
         run: |

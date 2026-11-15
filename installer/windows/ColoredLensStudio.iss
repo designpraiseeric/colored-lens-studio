@@ -30,7 +30,7 @@ Source: "{#Root}\dist\resolve\com.designpraise.coloredlens\*"; DestDir: "{common
 ; Lukuluku Look OpenFX (Resolve free and Studio)
 Source: "{#Root}\engine\build\LukulukuLook.ofx.bundle\*"; DestDir: "{commoncf64}\OFX\Plugins\LukulukuLook.ofx.bundle"; Flags: recursesubdirs ignoreversion
 ; Lukuluku Look for Premiere Pro (only when the After Effects SDK was available at build time)
-Source: "{#Root}\engine\build\Release\LukulukuLook.aex"; DestDir: "{commoncf64}\Adobe\Plug-ins\7.0\MediaCore"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "{#Root}\engine\build\Release\LukulukuLook.aex"; DestDir: "{commonpf64}\Adobe\Common\Plug-ins\7.0\MediaCore"; Flags: ignoreversion skipifsourcedoesntexist
 ; Premiere Pro panel, installed through Adobe's installer agent below
 Source: "{#Root}\dist\release\ColoredLens-Premiere-{#Version}.ccx"; DestDir: "{app}"; Flags: ignoreversion
 
