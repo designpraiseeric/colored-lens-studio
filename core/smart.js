@@ -221,18 +221,24 @@ If the editor wrote a message, answer it in "reply" and update your understandin
 ${JSON_ONLY}
 {"items":[{"name":"","where":"","colour":"","hex":"#000000"}],"light":"","mood":"what the picture feels like now","purpose":"","scene":"what the surrounding scene seems to be","caveat":"","reply":"","questions":[""],"answers":{"genre":[],"feeling":[],"role":[]}}`;
 
-export const SYSTEM_SUGGEST = `You are the colourist's assistant inside Colored Lens. You have already studied a frame (UNDERSTANDING lists its items). Now propose colour directions for it.
-Give as many genuinely different directions as you can, up to the number asked for. Each one must be worth trying, and must differ from the others in its idea, not just in strength.
+export const SYSTEM_SUGGEST = `You are a senior film colourist and production designer advising inside Colored Lens. You have already studied a frame (UNDERSTANDING lists its items, each with the colour it has now). Now propose colour directions for it.
+A direction is NOT a mood label or a preset name. It is a concrete plan of which thing in the frame takes which colour, and what that arrangement makes the audience feel. Think the way a production designer and a colourist would plan it together: dress, walls, props, practical lights, sky, graphics, and the colour of the light itself.
+Give the number of directions asked for, and make them range widely. Across the set, cover at least these kinds:
+- one that stays close to what is there but resolves it (cleans the palette, separates the subject, fixes what distracts);
+- two or three built on different colour structures from the encyclopedia (for example complementary, analogous, split-complementary, triadic, neutral + accent, monochromatic), each changing clearly which item carries the accent;
+- one or two bold, stylised options a brave director might choose;
+- one that deliberately plays against the obvious reading of the scene (counterpoint), if the scene allows it.
 For each direction:
-- "title": a short name. "idea": one sentence on the colour idea.
-- "ambience": the overall colour of the light and air (name + hex).
-- "items": go through the ITEMS of the frame and say what colour each important one should be in this direction (name + hex), and why, in one short clause. Cover at least four items; keep skin believable unless the idea is deliberately stylised, and say so. Use the items' names exactly as given.
-- "communicates": what this configuration tells the audience. "because": why it works for this frame and this scene (colour relationships, contrast, where the eye goes, what it does to faces).
-- "refs": 2 to 5 names copied exactly from ENCYCLOPEDIA that explain or exemplify the direction.
-- "recipe": the id from RECIPES of the Lukuluku look that gets the whole picture closest to this direction, and optional "tweaks" from TWEAKS within their ranges.
-Respect LAYERS IN SCOPE and the editor's answers and messages. Be specific to this frame; no film-school boilerplate.
+- "title": names the colour idea itself (for example "Teal walls, amber lamp, her dress the only red"), never just a mood or genre.
+- "idea": one sentence on the colour idea. "structure": the palette structure it uses, by its ENCYCLOPEDIA name.
+- "ambience": the colour of the light and air (name + hex).
+- "items": for every important item in ITEMS, the colour it should become (plain name + hex) and why in one clause. At least four items. At least two of them must change visibly from the colour they have now, and say which single item is the accent the eye should land on. Use the items' names exactly as given. Skin stays believable unless the direction is openly stylised; say what happens to skin.
+- "communicates": what this arrangement tells the audience about the person, place or moment. "because": the colour reasoning: the relationships between the items' colours, contrast of hue / value / saturation, where the eye goes first and why, and what it does for the face.
+- "refs": 2 to 4 names copied exactly from ENCYCLOPEDIA that genuinely explain this direction (its structure, a storytelling use, a filmmaker known for it). No filler.
+- "recipe": last and least: the id from RECIPES of the film look that sits best underneath this direction (the item colours are applied on top of it), with optional "tweaks" from TWEAKS.
+Respect LAYERS IN SCOPE, the editor's answers and everything said in the conversation: if the editor asked for something specific, most directions should serve it. The editor's "feeling" answers describe the scene, they are not a ceiling on boldness. Be specific to this frame. No film-school boilerplate, no repeating the same palette under different names.
 ${JSON_ONLY}
-{"reply":"","suggestions":[{"title":"","idea":"","ambience":{"colour":"","hex":"#000000"},"items":[{"item":"","colour":"","hex":"#000000","why":""}],"communicates":"","because":"","refs":[""],"recipe":"","tweaks":{}}]}`;
+{"reply":"","suggestions":[{"title":"","idea":"","structure":"","ambience":{"colour":"","hex":"#000000"},"items":[{"item":"","colour":"","hex":"#000000","why":"","accent":false}],"communicates":"","because":"","refs":[""],"recipe":"","tweaks":{}}]}`;
 
 const scopeLines = layers => { const L = layers || []; if (!L.length) return '';
   const f = l => `V${l.track} ${l.kind} "${l.name}"`; const on = L.filter(l => l.on !== false), off = L.filter(l => l.on === false);
@@ -261,7 +267,7 @@ export function buildSuggest(a) {
     `ENCYCLOPEDIA: ${cat.map(c => `${c.name} [${c.kind}: ${c.line}]`).join(' | ')}`,
     `RECIPES: ${RECIPES.map(r => `${r.id} (${r.name}; ${r.feel.join('/')}; ${r.line})`).join(' | ')}`,
     `TWEAKS: ${Object.entries(TWEAKS).map(([k, [x, y]]) => `${k} ${x}..${y}`).join(', ')}`,
-    `HOW MANY: up to ${a.count || 8} directions.`,
+    `HOW MANY: ${a.count || 8} directions${a.lite ? '' : ' (do not give fewer than ' + Math.max(4, (a.count || 8) - 2) + ')'}.`,
     `EDITOR'S MESSAGE: ${a.message || '(none)'}`].join('\n');
 }
 const S_ = (v, n = 500) => (typeof v === 'string' ? v.trim().slice(0, n) : '');
@@ -277,14 +283,15 @@ export function validateSuggest(o, enc) {
   const cat = catalogue(enc), find = n => cat.find(c => c.name.toLowerCase() === String(n || '').trim().toLowerCase());
   const col = c => ({ colour: S_(c && c.colour, 40), hex: hexOk(c && c.hex) });
   const out = (Array.isArray(o.suggestions) ? o.suggestions : []).map(sg => { if (!sg) return null;
-    const items = (Array.isArray(sg.items) ? sg.items : []).map(i => ({ item: S_(i && i.item, 80), ...col(i), why: S_(i && i.why, 240) })).filter(i => i.item && (i.colour || i.hex)).slice(0, 14);
+    const items = (Array.isArray(sg.items) ? sg.items : []).map(i => ({ item: S_(i && i.item, 80), ...col(i), why: S_(i && i.why, 240), accent: !!(i && i.accent) })).filter(i => i.item && (i.colour || i.hex)).slice(0, 14);
     const amb = col(sg.ambience), r = RECIPES.find(x => x.id === sg.recipe), tweaks = {};
     for (const [k, v] of Object.entries(sg.tweaks || {})) if (TWEAKS[k] && Number.isFinite(+v)) tweaks[k] = Math.min(TWEAKS[k][1], Math.max(TWEAKS[k][0], +v));
     const refs = []; const add = (c, via) => { if (c && !refs.some(x => x.name === c.name)) refs.push({ ...c, via }); };
-    for (const n of Array.isArray(sg.refs) ? sg.refs : []) add(find(n), 'cited');
-    for (const c of [amb, ...items]) { const h = nearestHue(enc, c.hex); if (h) add(find(h.name), 'colour'); }
+    add(find(sg.structure), 'structure'); for (const n of Array.isArray(sg.refs) ? sg.refs : []) add(find(n), 'cited');
+    // plus the encyclopedia's entry for the accent colour and the ambience: the two colours that carry the idea
+    const acc = items.find(i => i.accent); for (const c of [acc, amb]) { const h = c && nearestHue(enc, c.hex); if (h && !['white', 'black', 'grey'].includes(h.id)) add(find(h.name), 'colour'); }
     const title = S_(sg.title, 80); if (!title || (!items.length && !amb.colour)) return null;
-    return { title, idea: S_(sg.idea, 300), ambience: amb, items, communicates: S_(sg.communicates, 400), because: S_(sg.because, 600), refs: refs.slice(0, 8), recipe: r ? r.id : '', tweaks };
+    return { title, idea: S_(sg.idea, 300), structure: (find(sg.structure) || {}).name || '', ambience: amb, items, communicates: S_(sg.communicates, 400), because: S_(sg.because, 600), refs: refs.slice(0, 8), recipe: r ? r.id : '', tweaks };
   }).filter(Boolean).slice(0, 14);
   return { reply: S_(o.reply, 900), suggestions: out };
 }

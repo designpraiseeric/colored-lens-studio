@@ -467,9 +467,9 @@ export async function startApp(host, root) {
     return `<div class="k sect" id="sugg">Colour suggestions (${S.sugg.length})</div><p class="small dim">Each one says what colour to give what, what that tells the audience, and why. Tap one to open it.</p>
       ${S.sugg.map((g, i) => { const open = S.suggOpen === i, di = g.recipe ? S.smartDirs.findIndex(d => d.id === g.recipe) : -1;
         return `<div class="sg ${open ? 'on' : ''}" data-sg="${i}"><div class="row tight"><b class="grow">${i + 1}. ${esc(g.title)}</b><span class="pal">${[g.ambience, ...g.items].map(c => sw(c.hex)).join('')}</span></div>
-        <p class="small">${esc(g.idea || g.communicates)}</p>
+        <p class="small">${g.structure ? `<span class="badge">${esc(g.structure)}</span> ` : ''}${esc(g.idea || g.communicates)}</p>
         ${open ? `${g.ambience.colour ? `<div class="it">${sw(g.ambience.hex)}<span><b>Ambience</b> → ${esc(g.ambience.colour)}</span></div>` : ''}
-          ${g.items.map(it => `<div class="it">${sw(it.hex)}<span><b>${esc(it.item)}</b> → ${esc(it.colour)}${it.why ? ` <span class="dim">· ${esc(it.why)}</span>` : ''}</span></div>`).join('')}
+          ${g.items.map(it => `<div class="it">${sw(it.hex)}<span><b>${esc(it.item)}</b> → ${esc(it.colour)}${it.accent ? ' <span class="badge smart">accent</span>' : ''}${it.why ? ` <span class="dim">· ${esc(it.why)}</span>` : ''}</span></div>`).join('')}
           ${g.communicates ? `<p class="small"><b>This tells the audience:</b> ${esc(g.communicates)}</p>` : ''}${g.because ? `<p class="small"><b>Because:</b> ${esc(g.because)}</p>` : ''}
           ${g.refs.length ? `<div class="k">From the encyclopedia</div>${g.refs.map(r => `<p class="small ref1"><a href="#" data-more="${esc(r.name.split(' / ')[0])}">${esc(r.name)}</a> <span class="dim">(${esc(r.kind)})</span>: ${esc(r.line)}${r.ex ? ` <span class="dim">See: ${esc(String(r.ex).slice(0, 160))}</span>` : ''}</p>`).join('')}` : ''}
           ${S.suggOn === i && S.suggZ ? `<p class="small okmsg">✓ On your preview now: ${esc([...(g.ambience.colour ? [g.ambience.colour + ' ambience'] : []), ...S.suggZ.mapped.map(m => `${m.item} → ${m.to}`)].join(', ') || 'the overall look')}. Drag across the picture to compare.</p>
