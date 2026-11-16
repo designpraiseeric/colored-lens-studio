@@ -1,6 +1,9 @@
 # Release notes
 Each `## <version>` block becomes the text of the in-app update banner and the GitHub Release.
 
+## 0.6.3
+- Gemini: when Google's model is busy ("high demand") or retired, Colored Lens now waits, retries, and moves to another current Flash model by itself instead of showing the error.
+
 ## 0.6.2
 - Gemini: the frame is now sent as a small JPEG instead of a large PNG (about a tenth of the size), so the AI answers on ordinary internet connections instead of timing out.
 - Gemini: the model name follows Google's current Flash model automatically, and Google's errors (invalid key, free limit reached, country not supported) are explained in plain words.

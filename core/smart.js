@@ -128,21 +128,31 @@ export async function ask(cfg, { prompt, imageB64, images = [], history = [], sy
     const contents = [...hist.map(h => ({ role: h.role === 'assistant' ? 'model' : 'user', parts: [{ text: h.text }] })),
       { role: 'user', parts: [{ text: prompt }, ...[imageB64, ...more].map(b => ({ inline_data: { mime_type: mime, data: b } }))] }];
     const call = model => postJSON(post, `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, { 'x-goog-api-key': cfg.geminiKey },
-      { systemInstruction: { parts: [{ text: SYS }] }, contents, generationConfig: { responseMimeType: 'application/json', temperature: 0.4 } }, 180000);
-    let j; const model = cfg.geminiModel || DEFAULTS.geminiModel;
-    // Google retires model names; if this one is gone, use the name that always points at the current Flash model
-    try { j = await call(model); } catch (e) { if (/answered 404/.test(e.message) && model !== DEFAULTS.geminiModel) { try { j = await call(DEFAULTS.geminiModel); } catch (e2) { throw geminiError(e2); } } else throw geminiError(e); }
+      { systemInstruction: { parts: [{ text: SYS }] }, contents, generationConfig: { responseMimeType: 'application/json', temperature: 0.4 } }, 90000);
+    // Google retires model names and its models are sometimes overloaded: wait and retry once, then move down a
+    // list of current Flash models until one answers.
+    const first = cfg.geminiModel || DEFAULTS.geminiModel, order = [first, ...GEMINI_FALLBACKS.filter(m => m !== first)];
+    const wait = ms => new Promise(r => setTimeout(r, ms)); let j = null, lastErr = null;
+    for (let i = 0; i < order.length && !j; i++) {
+      for (let attempt = 0; attempt < (i === 0 ? 2 : 1) && !j; attempt++) {
+        try { j = await call(order[i]); } catch (e) { lastErr = e; const m = String(e.message);
+          if (/answered (503|500|502|504)/.test(m) || /took too long/.test(m)) { if (i === 0 && attempt === 0) await wait(4000); continue; } // busy: retry, then next model
+          if (/answered 404/.test(m)) break; // this name is gone: next model
+          throw geminiError(e); } } }
+    if (!j) throw geminiError(lastErr);
     const parts = j.candidates && j.candidates[0] && j.candidates[0].content ? j.candidates[0].content.parts : [];
     return (parts || []).map(p => p.text || '').join('');
   }
   throw new Error('Smart mode is off');
 }
 
+export const GEMINI_FALLBACKS = ['gemini-flash-latest', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-flash-lite-latest'];
 /** Google's errors, in words an editor can act on. */
 function geminiError(e) { const m = String(e.message || e);
   if (/API key not valid|API_KEY_INVALID|answered 400.*key/i.test(m)) return new Error('Google says this API key is not valid. Copy the key again from aistudio.google.com/apikey and save it under “AI”.');
   if (/answered 429/.test(m)) return new Error('Google says the free limit for this key has been reached for now. Wait a minute and try again (the daily limit resets overnight, Pacific time).');
   if (/answered 403|location is not supported|FAILED_PRECONDITION/i.test(m)) return new Error('Google does not allow this key to be used from here (the free Gemini API is not offered in every country, or the key is restricted). Details: ' + m.slice(0, 160));
+  if (/answered (503|500|502|504)/.test(m)) return new Error('Google\'s AI is very busy right now and turned the request away, on every model Colored Lens tried. This is on Google\'s side and usually passes within a few minutes: press the button again shortly.');
   if (/took too long/.test(m)) return new Error('Google did not answer in time. Check your internet connection and try again.');
   return e; }
 
