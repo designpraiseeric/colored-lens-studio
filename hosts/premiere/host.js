@@ -275,8 +275,19 @@ const host = {
     const r = await fetch(url, { headers }); return { status: r.status, text: await r.text() }; },
   /** API keys for Smart mode live in UXP's secure storage (the OS keychain), not in plain settings. */
   secret: {
-    async get(k) { try { const v = await uxp.storage.secureStorage.getItem('coloredlens.' + k); return v ? new TextDecoder().decode(v) : ''; } catch { return ''; } },
-    async set(k, v) { await uxp.storage.secureStorage.setItem('coloredlens.' + k, v); },
+    // Secure storage hands back bytes (or, on some builds, text). Decoded by hand: TextDecoder is not in every UXP.
+    // If secure storage cannot be read back on this machine, the key is kept in the plugin's own settings instead.
+    async get(k) {
+      try { const v = await uxp.storage.secureStorage.getItem('coloredlens.' + k);
+        if (v != null) { let out = ''; if (typeof v === 'string') out = v; else { const u = v instanceof Uint8Array ? v : new Uint8Array(v.buffer || v); for (let i = 0; i < u.length; i++) out += String.fromCharCode(u[i]); }
+          if (out) return out; } } catch (e) { console.warn('secure storage read', e); }
+      try { return localStorage.getItem('coloredlens.secret.' + k) || ''; } catch { return ''; }
+    },
+    async set(k, v) {
+      try { await uxp.storage.secureStorage.setItem('coloredlens.' + k, v); } catch (e) { console.warn('secure storage write', e); }
+      let back = ''; try { const r = await uxp.storage.secureStorage.getItem('coloredlens.' + k); if (r != null) { if (typeof r === 'string') back = r; else { const u = r instanceof Uint8Array ? r : new Uint8Array(r.buffer || r); for (let i = 0; i < u.length; i++) back += String.fromCharCode(u[i]); } } } catch { /* fall through */ }
+      try { if (back === v) localStorage.removeItem('coloredlens.secret.' + k); else localStorage.setItem('coloredlens.secret.' + k, v); } catch { /* nothing else to try */ }
+    },
   },
 
   /**

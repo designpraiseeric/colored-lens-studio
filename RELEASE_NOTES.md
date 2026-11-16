@@ -1,6 +1,10 @@
 # Release notes
 Each `## <version>` block becomes the text of the in-app update banner and the GitHub Release.
 
+## 0.6.1
+- Fixed: a saved Gemini (or local server) key was not being read back in Premiere Pro, so the AI said the key was missing. Keys saved earlier are picked up; if not, paste the key once more under "AI" and press "Save key".
+- Everything in 0.6.0: the AI by default, the layer checklist, the study range, item-by-item study and colour suggestions.
+
 ## 0.6.0
 Colored Lens is now built around its AI.
 - The AI is on by default ("Automatic" uses the best one your computer has). If none is set up yet, Colored Lens offers the three-minute setup; the quick looks still work without it.

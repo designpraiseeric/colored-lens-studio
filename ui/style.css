@@ -237,3 +237,5 @@ div.chip.off { color: var(--dim); }
 .ref1 { border-left: 2px solid var(--info); padding-left: 7px; }
 ol.how { margin: 6px 0 6px 18px; padding: 0; } ol.how li { margin: 5px 0; }
 .you { color: var(--acct); }
+/* 0.6.1: text boxes in the bright theme */
+input, select, textarea { background: var(--p1); color: var(--ink); border: 1px solid var(--line); }

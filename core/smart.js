@@ -124,7 +124,7 @@ export async function ask(cfg, { prompt, imageB64, images = [], history = [], sy
     return j.choices && j.choices[0] && j.choices[0].message ? j.choices[0].message.content : '';
   }
   if (cfg.provider === 'gemini') {
-    if (!cfg.geminiKey) throw new Error('Add your Gemini API key in Smart mode settings');
+    if (!cfg.geminiKey) throw new Error('Colored Lens could not find your Gemini key. Open “AI” at the top, paste the key again and press “Save key”.');
     const contents = [...hist.map(h => ({ role: h.role === 'assistant' ? 'model' : 'user', parts: [{ text: h.text }] })),
       { role: 'user', parts: [{ text: prompt }, ...[imageB64, ...more].map(b => ({ inline_data: { mime_type: 'image/png', data: b } }))] }];
     const j = await postJSON(post, `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(cfg.geminiModel || DEFAULTS.geminiModel)}:generateContent`, { 'x-goog-api-key': cfg.geminiKey },

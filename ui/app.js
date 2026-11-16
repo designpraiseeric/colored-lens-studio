@@ -790,7 +790,7 @@ export async function startApp(host, root) {
       if (r.ok && r.vision.length && !r.vision.includes(c.ollamaModel)) { c.ollamaModel = r.vision[0]; saveSmart(); } render(); });
     if ($('#oaTest', body)) $('#oaTest', body).onclick = () => busy('Looking for the server', async () => { keep(); if (v('oaKey')) await secret.set('openai', v('oaKey')); const r = await detectOpenAI(c.openaiUrl, await secret.get('openai'), httpGet);
       S.smart.detect = { ...d, openai: r }; if (r.ok && r.models.length && !r.models.includes(c.openaiModel)) { c.openaiModel = r.models[0]; saveSmart(); } render(); });
-    if ($('#gmSave', body)) $('#gmSave', body).onclick = () => busy('Saving', async () => { keep(); if (v('gmKey')) { await secret.set('gemini', v('gmKey')); S.smart.hasGemini = true; toast('Gemini key saved on this computer'); } render(); });
+    if ($('#gmSave', body)) $('#gmSave', body).onclick = () => busy('Saving', async () => { keep(); if (v('gmKey')) { await secret.set('gemini', v('gmKey').trim()); S.smart.hasGemini = (await secret.get('gemini')) === v('gmKey').trim(); toast(S.smart.hasGemini ? 'Gemini key saved on this computer' : 'The key could not be saved on this computer'); } render(); });
     if ($('#smAuto', body)) $('#smAuto', body).onclick = () => { c.autoAsk = !c.autoAsk; saveSmart(); render(); };
   }
 
@@ -850,7 +850,7 @@ export async function startApp(host, root) {
         if ($('#gHelp', body)) $('#gHelp', body).onclick = () => { G.help = true; render(); };
         $('#gOther2', body).onclick = $('#gOther', body).onclick = () => { G.route = ''; G.step = 0; G.msg = ''; G.ok = false; G.help = false; render(); };
         if ($('#gGo', body)) $('#gGo', body).onclick = () => go('shot');
-        if ($('#gKeySave', body)) $('#gKeySave', body).onclick = async () => { const k = $('#gKey', body).value.trim(); if (!k) return toast('Paste your key first'); await secret.set('gemini', k); S.smart.hasGemini = true; toast('Key saved on this computer'); };
+        if ($('#gKeySave', body)) $('#gKeySave', body).onclick = async () => { const k = $('#gKey', body).value.trim(); if (!k) return toast('Paste your key first'); await secret.set('gemini', k); S.smart.hasGemini = (await secret.get('gemini')) === k; toast(S.smart.hasGemini ? 'Key saved on this computer' : 'The key could not be saved on this computer'); };
         if ($('#gCheck', body)) $('#gCheck', body).onclick = () => { if (st.check === 'settings') { S.smart.cfg.provider = 'openai'; saveSmart(); return go('smart'); }
           busy('Checking', async () => {
             const c = S.smart.cfg; G.ok = false;
