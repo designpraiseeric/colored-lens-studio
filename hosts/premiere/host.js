@@ -124,9 +124,13 @@ const host = {
     const seq = await sequence(), rate = await fps(seq);
     const t = seconds == null ? await seq.getPlayerPosition() : ppro.TickTime.createWithSeconds(seconds);
     // A clean read: if the shot already carries our look, switch it off for the export and back on after.
-    let bypassed = null, proj = null;
-    if (opts.clean) try { const sub = subjectOf(await layersAt(seq, t.seconds)); const comp = sub && sub.look ? await lookComponent(sub.item) : null;
-      if (comp) { proj = await project(); if (await setBypass(proj, comp, true)) bypassed = comp; } } catch (e) { console.warn('clean read', e); }
+    // Every Lukuluku Look in the picture is switched off: on the shot itself and on any adjustment layer over it
+    // (otherwise the reading would be of our own grade, and Premiere would spend a long time rendering it).
+    let bypassed = [], proj = null;
+    if (opts.clean) try { const here = await layersAt(seq, t.seconds), sub = subjectOf(here);
+      for (const l of here) { if (!l.item || !(l === sub || l.kind === 'adjustment')) continue; let comp = null; try { comp = await lookComponent(l.item); } catch { comp = null; }
+        if (comp) { proj = proj || await project(); try { if (await setBypass(proj, comp, true)) bypassed.push(comp); } catch (e) { console.warn('bypass', e); } } }
+    } catch (e) { console.warn('clean read', e); }
     // Unticked layers are switched off for the moment of the export, then back on (the project is left as it was).
     let hidden = [];
     if (opts.hide && opts.hide.length) try { proj = proj || await project();
@@ -142,19 +146,21 @@ const host = {
     if (!ok) throw new Error('Premiere could not export this frame');
     // The export lands a moment later (and some builds add a second extension): wait until the file stops growing.
     let entry = null, last = -1, bytes = null;
-    for (let i = 0; i < 80; i++) {
+    // A heavy timeline (nests, adjustment layers, effects) can take Premiere half a minute to render one frame.
+    for (let i = 0; i < 800; i++) {
+      if (i === 60 && opts.onSlow) opts.onSlow();
       if (!entry) entry = (await tmp.getEntries()).find(e => e.name.startsWith(base)) || null;
       if (entry) { const b = new Uint8Array(await entry.read({ format: formats.binary })); if (b.length > 0 && b.length === last) { bytes = b; break; } last = b.length; }
       await new Promise(r => setTimeout(r, 75));
     }
-    if (!bytes) throw new Error(entry ? 'The exported frame never finished writing' : 'The exported frame did not appear');
+    if (!bytes) throw new Error(entry ? 'Premiere started writing the frame but did not finish. Try again.' : 'Premiere did not hand over the frame within a minute. It may be busy rendering: wait for it to settle, then read again.');
     var frame = decodeImage(bytes);
     try { await entry.delete(); } catch { /* temp folder is cleaned by UXP */ }
-    } finally { if (bypassed) try { await setBypass(proj, bypassed, false); } catch (e) { console.warn('restore look', e); }
+    } finally { for (const comp of bypassed) try { await setBypass(proj, comp, false); } catch (e) { console.warn('restore look', e); }
       if (hidden.length) try { transaction(proj, 'Colored Lens: layers back on', ca => hidden.forEach(it => ca.addAction(it.createSetDisabledAction(false)))); } catch (e) { console.warn('restore layers', e); } }
     let clipName = '';
     try { const items = await (await seq.getSelection()).getTrackItems(); if (items[0] && items[0].getName) clipName = await items[0].getName(); } catch { /* optional */ }
-    return { frame, seconds: t.seconds, timecode: timecode(t.seconds, rate), clipName: clipName || seq.name, sequenceId: String(seq.guid || seq.name), sequenceName: seq.name, withoutLook: !!bypassed, hiddenLayers: hidden.length };
+    return { frame, seconds: t.seconds, timecode: timecode(t.seconds, rate), clipName: clipName || seq.name, sequenceId: String(seq.guid || seq.name), sequenceName: seq.name, withoutLook: bypassed.length > 0, hiddenLayers: hidden.length };
   },
   async sequenceDuration() { return (await (await sequence()).getEndTime()).seconds; },
 

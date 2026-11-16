@@ -119,7 +119,7 @@ export async function startApp(host, root) {
     // a clean read: our own look on this shot is switched off for the moment of the export
     // a new shot starts with every layer ticked; re-reading the same shot keeps the editor's ticks
     const key = S.ctx && S.ctx.subject ? `${S.ctx.subject.track}|${S.ctx.subject.name}|${S.ctx.subject.start}` : ''; if (key !== S.layerKey) { S.layerOff = []; S.layerKey = key; }
-    const g = await host.grabFrame(undefined, { clean: true, hide: S.layerOff }); S.frame = g.frame; S.meta = g; g.readWithout = S.layerOff.slice().sort(); S.sample = null; S.chosen = -1; S.lead = 0;
+    const g = await host.grabFrame(undefined, { clean: true, hide: S.layerOff, onSlow: () => status('Premiere is still rendering this frame (heavy timelines take a while)…') }); S.frame = g.frame; S.meta = g; g.readWithout = S.layerOff.slice().sort(); S.sample = null; S.chosen = -1; S.lead = 0;
     S.study = null; S.sugg = []; S.suggOpen = S.suggHow = -1; S.rangeInfo = null; S.ai = { busy: '', error: '', chat: [], none: false };
     S.smartDirs = []; S.smart.turns = []; S.smart.history = [];
     // answers belong to the scene (marker range) when there is one, otherwise to the sequence

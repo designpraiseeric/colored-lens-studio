@@ -1,6 +1,10 @@
 # Release notes
 Each `## <version>` block becomes the text of the in-app update banner and the GitHub Release.
 
+## 0.7.2
+- Fixed "The exported frame did not appear": Colored Lens now waits up to a minute for Premiere to render the frame on heavy timelines (it gave up after six seconds), and says so while it waits.
+- Reading a shot now switches off every Lukuluku Look in the picture for the read, including one on an adjustment layer above the shot, so the reading is of the shot itself and the frame renders faster.
+
 ## 0.7.1
 Suggestions you can actually see: colour zones.
 - "Try this on my frame" on a suggestion now builds it for real: the overall Lukuluku look, the ambience colour, and up to four colour zones that move each item (picked by the colour it has now) to its proposed colour. Before, it only showed one of the standard looks.
