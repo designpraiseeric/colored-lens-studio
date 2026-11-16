@@ -48,7 +48,7 @@ test('Premiere panel: grab, mark, read markers, apply the effect, update', { ski
     assert.match(await page.innerText('#coach'), /Read a shot/); assert.ok(await page.locator('#grab.spot').count(), 'the Read button is highlighted');
     await page.click('#cEnd'); await page.click('#guideBtn'); await page.click('#gSetup'); await page.waitForSelector('.card.route'); assert.match(await page.innerText('#body'), /Apple Intelligence/);
     assert.match(await page.inputValue('textarea[data-prompt="smart"]'), /one small step at a time/);
-    await page.click('[data-tab=shot]');
+    await page.click('[data-tab=shot]'); assert.equal(await page.locator('[data-intent^="genre:"]').count(), 0, 'Simple view asks one question'); await page.click('#modeBtn'); // the rest of this test uses the detailed view
     await page.waitForSelector('#grab', { timeout: 15000 });
     await page.click('#grab'); await page.waitForSelector('#reading .card', { timeout: 15000 });
     assert.match(await page.innerText('#body'), /A001_C003 00:00:12:12/);

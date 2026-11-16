@@ -1,6 +1,12 @@
 # Release notes
 Each `## <version>` block becomes the text of the in-app update banner and the GitHub Release.
 
+## 0.5.0
+A brighter look and a simpler panel.
+- New colours from the DesignPraise palette: a bright panel with violet as the main colour, amber and magenta accents, and a gradient header. Prefer dark? Press "Dark" at the top right.
+- Simple view is now the default: one question (how should the scene feel), a one-line reading, and the top three directions. "Show details" at the top right brings back every measurement, the skin check and all directions.
+- "More questions" and "Show more directions" open just the part you want.
+
 ## 0.4.2
 - Mac: if Adobe's plugin installer fails (it does when the Creative Cloud app is closed), the installer now hands the panel to Creative Cloud itself, which asks you to confirm. Before, the panel could silently stay on the old version.
 - The installer no longer gets stuck on "Running package scripts".

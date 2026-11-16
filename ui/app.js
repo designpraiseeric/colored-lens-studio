@@ -33,7 +33,7 @@ export async function startApp(host, root) {
   const S = { tab: 'shot', back: 'shot', frame: null, meta: null, reading: null, skin: null, sample: null, shots: [],
     intent: normIntent(settings.get('intent', {})), seqId: '', ctx: null, lead: 0, neigh: [], scope: settings.get('scope', 'clip'), input: settings.get('input', 'rec709'),
     directions: [], chosen: -1, look: NEUTRAL_LOOK(), extra: { ...XDEF }, matte: false, recipe: { name: '', presetId: null }, view: 'split', wipe: 0.5,
-    guide: { view: 'home', step: 0, route: '' }, tour: null, dockSize: settings.get('dockSize', 'M'), dockHidden: false, detached: false, smartDirs: [],
+    guide: { view: 'home', step: 0, route: '' }, tour: null, simple: !!settings.get('simple', 1), theme: settings.get('theme', 'bright'), moreQ: false, moreD: false, dockSize: settings.get('dockSize', 'M'), dockHidden: false, detached: false, smartDirs: [],
     smart: { cfg: { ...SMART0, ...settings.get('smart', {}) }, turns: [], history: [], detect: null, using: '' }, refFrameStats: null, refName: '', adapt: settings.get('adapt', true), encQ: '', shownCode: '', confirmDel: '', busy: false, showSkin: false, showRefs: false };
   let PV = null, pvEl = null; // pvEl: the separate Preview panel's container, once it has been opened
   const up = new Updater(host, config.pagesBase);
@@ -41,7 +41,7 @@ export async function startApp(host, root) {
     <div class="cl">
       <div id="banner" class="banner" hidden></div>
       <div class="head"><div class="brand">Colored Lens <span class="dim">· ${esc(host.label || host.name)}</span></div><span id="status" class="dim small"></span></div>
-      <div class="links"><div role="button" tabindex="0" id="guideBtn" class="linkbtn small">Guide</div><div role="button" tabindex="0" id="smartBtn" class="linkbtn small">Smart</div><div role="button" tabindex="0" id="encBtn" class="linkbtn small">Encyclopedia</div></div>
+      <div class="links"><div role="button" tabindex="0" id="guideBtn" class="linkbtn small">Guide</div><div role="button" tabindex="0" id="smartBtn" class="linkbtn small">Smart</div><div role="button" tabindex="0" id="encBtn" class="linkbtn small">Encyclopedia</div><span class="grow"></span><div role="button" tabindex="0" id="modeBtn" class="linkbtn small"></div><div role="button" tabindex="0" id="themeBtn" class="linkbtn small"></div></div>
       <div class="tabs">${['shot:Shot', 'scene:Scene', 'tweak:Tweak', 'presets:Presets'].map(t => { const [id, n] = t.split(':'); return `<div data-tab="${id}" class="tab" role="tab" tabindex="0">${n}</div>`; }).join('')}</div>
       <div id="dock" class="dock" hidden></div>
       <div id="body" class="body"></div>
@@ -56,6 +56,11 @@ export async function startApp(host, root) {
   root.addEventListener('click', e => { const b = e.target.closest('[data-tab]'); if (b) go(b.dataset.tab); });
   $('#encBtn', root).onclick = () => { S.encQ = ''; go('enc'); };
   $('#smartBtn', root).onclick = () => go('smart');
+  const chrome = () => { const cl = root.querySelector('.cl'); if (cl) cl.classList.toggle('dark', S.theme === 'dark');
+    $('#modeBtn', root).textContent = S.simple ? 'Show details' : 'Simple view'; $('#themeBtn', root).textContent = S.theme === 'dark' ? 'Bright' : 'Dark'; };
+  $('#modeBtn', root).onclick = () => { S.simple = !S.simple; settings.set('simple', S.simple ? 1 : 0); S.moreQ = S.moreD = false; chrome(); render(); };
+  $('#themeBtn', root).onclick = () => { S.theme = S.theme === 'dark' ? 'bright' : 'dark'; settings.set('theme', S.theme); chrome(); };
+  chrome();
   $('#guideBtn', root).onclick = () => { S.guide = { view: 'home', step: 0, route: '' }; go('guide'); };
 
   // ---------- content + updates (silent) ----------
@@ -286,7 +291,7 @@ export async function startApp(host, root) {
       if (body.contains(target)) { const d = target.getBoundingClientRect().top - body.getBoundingClientRect().top; if (d < 0 || d > body.clientHeight * 0.5) body.scrollTop += d - 8; } }
     const ok = !st.wait || coachDone(st.wait), last = !!st.end, n = S.tour.i + 1;
     el.hidden = false;
-    el.innerHTML = `<div class="k">Tour · ${n} of ${COACH.length}${target ? ' · look for the red outline' : ''}</div><h3>${esc(st.t)}</h3><p class="small">${esc(st.b)}</p>
+    el.innerHTML = `<div class="k">Tour · ${n} of ${COACH.length}${target ? ' · look for the pink outline' : ''}</div><h3>${esc(st.t)}</h3><p class="small">${esc(st.b)}</p>
       ${st.wait ? `<p class="small ${ok ? 'okmsg' : 'todo'}">${ok ? '✓ Done. Press Next.' : '👉 ' + esc(st.do)}</p>` : ''}
       <div class="row wrap">${S.tour.i ? '<button id="cBack">Back</button>' : ''}
         ${last ? `<button id="cSmart" class="primary">Set up Smart mode</button><button id="cEnd">Finish</button>` : `<button id="cNext" class="${ok ? 'primary' : ''}">${ok ? 'Next' : 'Skip this step'}</button>`}
@@ -301,25 +306,33 @@ export async function startApp(host, root) {
   // SHOT ------------------------------------------------------------------
   const chipRow = (list, key) => { const cur = answers(S.intent[key]);
     return `<div class="chips">${list.map(x => { const k = cur.indexOf(x.id); return `<div role="button" tabindex="0" class="chip ${k === 0 ? 'on' : k === 1 ? 'on2' : ''}" data-intent="${key}:${x.id}" title="${k === 0 ? 'Main answer' : k === 1 ? 'Second answer' : 'Tap to add (up to two)'}">${k === 0 ? '✓ ' : k === 1 ? '+ ' : ''}${esc(x.n)}</div>`; }).join('')}</div>`; };
+  function intentBody() { const I = S.intent;
+    if (S.simple && !S.moreQ) return `<div class="q">This scene should feel <span class="dim">(tap one or two)</span></div>${chipRow(FEELINGS, 'feeling')}
+        <div class="more" id="moreQ">More questions: the project, the kind of shot, log footage ›</div>`;
+    return `        <p class="small dim">Tap up to two answers per question when a shot is more than one thing; the first is the main one.${S.seqId ? ` Remembered for the sequence “${esc(S.meta && S.meta.sequenceName || '')}”.` : ''}</p>
+        <div class="q">The project</div>${chipRow(GENRES, 'genre')}
+        <div class="q">This scene should feel</div>${chipRow(FEELINGS, 'feeling')}
+        <div class="q">This shot is</div>${chipRow(ROLES, 'role')}
+        <div class="q">The footage is</div><div class="chips"><div role="button" tabindex="0" class="chip ${S.input === 'rec709' ? 'on' : ''}" data-input="rec709">${S.input === 'rec709' ? '✓ ' : ''}Normal video (Rec.709)</div><div role="button" tabindex="0" class="chip ${S.input === 'logc3' ? 'on' : ''}" data-input="logc3">${S.input === 'logc3' ? '✓ ' : ''}Log (ARRI LogC3)</div></div>
+        <div class="row"><input id="note" placeholder="Anything else about this scene? (saved with presets)" value="${esc(I.note)}"></div>`; }
+  function readingSimple(r, k) {
+    const warn = k && k.findings ? k.findings.find(f => f.level === 'warn') : null;
+    return `<div class="card"><div class="k">What the frame is doing</div><p>${esc(frameSummary(r, enc()))}</p>${swatchBar(r.swatches)}
+      ${r.confidence.level !== 'high' ? `<p class="small warn">${esc(r.confidence.why.join(' '))}</p>` : ''}${warn ? `<p class="small warn">▲ ${esc(warn.title)}</p>` : ''}</div>`; }
   function renderShot(body) {
     const r = S.reading, k = S.skin, I = S.intent;
     body.innerHTML = `
       <div class="row"><button id="grab" class="primary">${esc(host.grabLabel || 'Read the frame under the playhead')}</button>${S.frame ? `<span class="small dim">${esc(S.meta.clipName || '')} ${esc(S.meta.timecode || '')}</span>` : ''}</div>
       ${S.frame ? '' : `<p class="dim">Park the playhead on a shot and read it. Colored Lens tells you what the frame is doing, asks what it is for, and suggests directions you can preview, tweak, apply and save.</p>`}
       ${S.ctx ? contextCard(S.ctx) : ''}
-      <div id="reading">${r ? readingCard(r, k) : ''}</div>
+      <div id="reading">${r ? (S.simple ? readingSimple(r, k) : readingCard(r, k)) : ''}</div>
       <div class="card" id="intent"><div class="k">What is this for?</div>
-        <p class="small dim">Tap up to two answers per question when a shot is more than one thing; the first is the main one.${S.seqId ? ` Remembered for the sequence “${esc(S.meta && S.meta.sequenceName || '')}”.` : ''}</p>
-        <div class="q">The project</div>${chipRow(GENRES, 'genre')}
-        <div class="q">This scene should feel</div>${chipRow(FEELINGS, 'feeling')}
-        <div class="q">This shot is</div>${chipRow(ROLES, 'role')}
-        <div class="q">The footage is</div><div class="chips"><div role="button" tabindex="0" class="chip ${S.input === 'rec709' ? 'on' : ''}" data-input="rec709">${S.input === 'rec709' ? '✓ ' : ''}Normal video (Rec.709)</div><div role="button" tabindex="0" class="chip ${S.input === 'logc3' ? 'on' : ''}" data-input="logc3">${S.input === 'logc3' ? '✓ ' : ''}Log (ARRI LogC3)</div></div>
-        <div class="row"><input id="note" placeholder="Anything else about this scene? (saved with presets)" value="${esc(I.note)}"></div>
+        ${intentBody()}
         ${!S.frame ? '<p class="small dim">Your answers are remembered. Read a frame to get directions.</p>' : ''}</div>
       ${S.frame ? smartCard() : ''}
       <div id="dirs">${directionsHTML()}</div>
-      ${k ? skinCard(k) : ''}
-      ${r && r.matches.length ? `<div class="card"><div class="row tight"><div class="k grow">Similar frames in the encyclopedia</div><button class="small" id="togRefs">${S.showRefs ? 'Hide' : 'Show'}</button></div>${S.showRefs ? refsHTML(r) : ''}</div>` : ''}`;
+      ${k && !S.simple ? skinCard(k) : ''}
+      ${r && r.matches.length && !S.simple ? `<div class="card"><div class="row tight"><div class="k grow">Similar frames in the encyclopedia</div><button class="small" id="togRefs">${S.showRefs ? 'Hide' : 'Show'}</button></div>${S.showRefs ? refsHTML(r) : ''}</div>` : ''}`;
     $('#grab', body).onclick = () => busy('Reading frame', async () => { await grab(); await suggest(); render();
       if (S.smart.cfg.provider !== 'off' && S.smart.cfg.autoAsk) askSmart(''); });
     body.querySelectorAll('[data-intent]').forEach(b => b.onclick = () => {
@@ -330,7 +343,9 @@ export async function startApp(host, root) {
     });
     body.querySelectorAll('[data-input]').forEach(b => b.onclick = () => { S.input = b.dataset.input; settings.set('input', S.input); runSkin(); stageCache.key = '';
       if (S.frame) busy('Finding directions', async () => { await suggest(); render(); }); else render(); });
-    $('#note', body).onchange = e => { S.intent.note = e.target.value; saveIntent(); };
+    if ($('#note', body)) $('#note', body).onchange = e => { S.intent.note = e.target.value; saveIntent(); };
+    if ($('#moreQ', body)) $('#moreQ', body).onclick = () => { S.moreQ = true; render(); };
+    if ($('#moreD', body)) $('#moreD', body).onclick = () => { S.moreD = true; render(); };
     body.querySelectorAll('[data-suggest]').forEach(b => b.onclick = () => { const [k, v] = b.dataset.suggest.split(':');
       if (k === 'input') { S.input = v; settings.set('input', v); stageCache.key = ''; } else { S.intent[k] = [v, ...answers(S.intent[k]).filter(x => x !== v)].slice(0, 2); saveIntent(); }
       runSkin(); busy('Finding directions', async () => { await suggest(); render(); }); });
@@ -366,7 +381,8 @@ export async function startApp(host, root) {
     if (sub.inputLUT && S.input === 'logc3') tips.push(['input:rec709', 'Premiere already converts this clip with an input LUT, so it plays as normal video.', 'Set footage to normal video']);
     if (sub.kind === 'graphic' && !answers(S.intent.role).includes('graphic')) tips.push(['role:graphic', `V${sub.track} holds a graphic or still, not camera footage.`, 'Mark this shot as title / graphic']);
     if (sub.kind === 'adjustment') lines.push('This is an adjustment layer: a look here colours every track beneath it.');
-    return `<div class="card ctx"><div class="k">On the timeline</div>${lines.map(l => `<p class="small">${l}</p>`).join('')}
+    const shown = S.simple ? [lines[0], ...(cont ? [lines[lines.length - (sub.kind === 'adjustment' ? 2 : 1)]] : [])] : lines;
+    return `<div class="card ctx"><div class="k">On the timeline</div>${shown.map(l => `<p class="small">${l}</p>`).join('')}
       ${tips.map(([key, why, label]) => `<div class="row wrap"><span class="small grow">${esc(why)}</span><button data-suggest="${key}">${esc(label)}</button></div>`).join('')}</div>`;
   }
   const fmtT = sec => { const m = Math.floor(sec / 60), x = Math.floor(sec % 60); return `${m}:${String(x).padStart(2, '0')}`; };
@@ -412,14 +428,15 @@ export async function startApp(host, root) {
     if (!allDirs().length) return '<div class="card"><p class="dim small">Finding directions…</p></div>';
     const ask = !answers(S.intent.feeling).length ? '<p class="small warn">Pick how the scene should feel for sharper directions. These are based on the frame alone.</p>' : '';
     return `<div class="k sect">Directions</div><p class="small dim">Click one to preview it on your frame. Apply it, tweak it, or keep it as a preset.</p>${ask}
-      ${allDirs().map((d, i) => `<div class="dir ${S.chosen === i ? 'on' : ''}" data-dir="${i}">
+      ${allDirs().map((d, i) => S.simple && !S.moreD && i >= Math.max(3, S.smartDirs.length + 2) && S.chosen !== i ? '' : `<div class="dir ${S.simple ? 'simple' : ''} ${S.chosen === i ? 'on' : ''}" data-dir="${i}">
         <img src="${d.thumb}"><div class="dtext">
           <div><b>${esc(d.name)}</b> <span class="badge ${d.kind}">${esc(KIND_LABEL[d.kind])}</span></div>
-          <p class="small">${esc(d.why.lines[0])}</p>${d.why.lines[1] ? `<p class="small dim">${esc(d.why.lines[1])}</p>` : ''}
+          <p class="small">${esc(d.why.lines[0])}</p>${S.simple ? (d.cont ? `<p class="small cont">${esc(d.cont)}</p>` : '') : `${d.why.lines[1] ? `<p class="small dim">${esc(d.why.lines[1])}</p>` : ''}
           <p class="small">${esc([...d.effect, ...d.notes].join(' '))}</p>${d.cont ? `<p class="small cont">${esc(d.cont)}</p>` : ''}
-          <div class="small dim mono">${esc(lookCode(d.look, false))}</div>
+          <div class="small dim mono">${esc(lookCode(d.look, false))}</div>`}
           ${S.chosen === i ? `<div class="row wrap"><button class="primary" data-dapply="${i}">Apply to selected clips</button><button data-dtweak="${i}">Tweak</button><button data-dsave="${i}">Save as preset</button>${d.why.hue ? `<button data-more="${esc(d.why.hue.name.split(' / ')[0])}">About ${esc(d.why.hue.name.split(' / ')[0])}</button>` : ''}</div>` : ''}
-        </div></div>`).join('')}`;
+        </div></div>`).join('')}
+      ${S.simple && !S.moreD && allDirs().length > Math.max(3, S.smartDirs.length + 2) ? `<div class="more" id="moreD">Show ${allDirs().length - Math.max(3, S.smartDirs.length + 2)} more directions ›</div>` : ''}`;
   }
   function wireDirections(body) {
     body.querySelectorAll('[data-dir]').forEach(el => el.onclick = e => { if (e.target.closest('button')) return; const i = +el.dataset.dir; if (S.chosen === i) return; const top = body.scrollTop; choose(i); S.view = 'split'; render(); body.scrollTop = top; });

@@ -170,3 +170,56 @@ textarea.prompt { color: var(--dim); }
 .dots { display: flex; margin: 4px 0; } .dot { width: 18px; height: 4px; border-radius: 2px; background: #555; margin-right: 4px; } .dot.done { background: #6c6; } .dot.now { background: var(--acc); }
 .see { border-left: 3px solid #6c6; padding: 4px 8px; margin: 8px 0; } .fix { border-left: 3px solid #ffd27a; padding: 4px 8px; margin: 8px 0; }
 .card.best { border-color: var(--acc); }
+
+/* ===== 0.5.0: DesignPraise theme. Bright by default; .cl.dark is the dark version. =====
+   Palette (Adobe library "DesignPraise colors"): indigo #1A0D3E, ink #110929, charcoal #17161A / #2F2D35, paper #DDDFD7,
+   violet #6403EE, magenta #D903EE, blue #038EEE, cyan #00D7FF, aqua #03EED8, green #03EE63, yellow #EED903, amber #FFA800, orange #FF7639. */
+:root { --bg: #F4F4F0; --p1: #FFFFFF; --p2: #E9EAE4; --line: #D2D3CC; --ink: #110929; --dim: #5E5A70;
+  --acc: #6403EE; --acct: #6403EE; --acc2: #FFA800; --hot: #FF7639; --mag: #D903EE; --good: #0B8F43; --warn: #B4500F; --info: #0376C8;
+  --tint: #F0E8FF; --sel2: #FFF1D2; --dockbg: #E9EAE4; --codebg: #EEEDF6; --coachbg: #FFF6E0; --bannerbg: #FFF1D2; --smart: #038EEE; --headbg: #1A0D3E; --headink: #FFFFFF; --thumb: #FFFFFF; }
+.cl.dark { --bg: #17161A; --p1: #211F27; --p2: #2F2D35; --line: #423F4D; --ink: #DDDFD7; --dim: #A39FB3;
+  --acc: #6403EE; --acct: #B48CFF; --acc2: #FFA800; --hot: #FF7639; --mag: #D903EE; --good: #03EE63; --warn: #FFA800; --info: #00D7FF;
+  --tint: #2A2140; --sel2: #3A2D12; --dockbg: #110929; --codebg: #110929; --coachbg: #1A0D3E; --bannerbg: #1A0D3E; --smart: #00D7FF; --headbg: #110929; --headink: #FFFFFF; --thumb: #DDDFD7; }
+.cl { background: var(--bg); color: var(--ink); }
+/* header: the one place with a gradient (solid indigo where gradients are not drawn) */
+.head { background-color: var(--headbg); background-image: linear-gradient(90deg, #1A0D3E 0%, #6403EE 70%, #D903EE 100%); padding: 10px 12px 8px; align-items: center; }
+.head .brand, .head .brand span, .head .dim, .head .small { color: var(--headink); }
+.links { background: var(--headbg); padding: 0 8px 6px; }
+.links .linkbtn { color: #00D7FF; }
+.tabs { background: var(--p1); padding: 0 6px; }
+.tab.on { color: var(--acct); background: transparent; border-bottom-color: var(--acc); }
+button { border-radius: 8px; }
+button:hover { border-color: var(--acc); }
+button.primary { background: var(--acc); border-color: var(--acc); color: #fff; }
+#grab.primary { background-color: var(--acc); background-image: linear-gradient(90deg, #6403EE, #D903EE); border-color: var(--acc); padding: 8px 14px; font-size: 13px; }
+.card { border-radius: 10px; }
+.k { color: var(--acct); }
+a, .linkbtn { color: var(--info); }
+.trk .thumb { background: var(--thumb); border: 2px solid var(--acc); }
+.trk.drag .thumb, .trk:focus .thumb { background: var(--acc2); border-color: var(--acc); }
+.banner { background: var(--bannerbg); border-bottom: 2px solid var(--acc2); }
+.toast { background: #110929; color: #FFFFFF; border-color: #110929; }
+button.seg.on, .chip.on { background: var(--acc); color: #fff; border-color: var(--acc); }
+div.chip.on, div.seg.on { background: var(--acc); border-color: var(--acc); color: #fff; }
+div.chip.on2 { background: var(--sel2); border-color: var(--acc2); color: var(--ink); }
+div.chip.off { color: var(--dim); }
+.dir.on { border-color: var(--acc); background: var(--tint); }
+.faces .face.on { background: var(--tint); border: 1px solid var(--acc); }
+.badge.lean { border-color: var(--info); color: var(--info); } .badge.counter { border-color: var(--hot); color: var(--warn); } .badge.natural, .badge.clean { border-color: var(--good); color: var(--good); }
+.cont { color: var(--info); }
+.dock { background: var(--dockbg); }
+.card.smart { border-left: 4px solid var(--smart); }
+.badge.smart { border-color: var(--smart); color: var(--info); }
+.tip { color: var(--acct); }
+.code { background: var(--codebg); color: var(--ink); }
+.coach { border-top: 3px solid var(--acc2); background: var(--coachbg); }
+.todo { color: var(--warn); }
+.spot { outline: 2px solid var(--mag); border: 2px solid var(--mag) !important; }
+.dot { background: var(--line); } .dot.done { background: var(--good); } .dot.now { background: var(--acc); }
+.see { border-left-color: var(--good); } .fix { border-left-color: var(--acc2); }
+.card.best { border-color: var(--acc); }
+.step .num { background: var(--acc); }
+/* Simple layout */
+.modebar { display: flex; flex-direction: row; align-items: center; justify-content: flex-end; margin: 0 0 4px; }
+.more { color: var(--info); cursor: pointer; font-size: 11.5px; padding: 4px 0; }
+.dir.simple p { margin: 3px 0; }
