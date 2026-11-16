@@ -207,9 +207,12 @@ const host = {
       if (scope === 'scene') { const sc = (await scenesOf(seq)).find(x => t >= x.start && t < x.end);
         if (!sc) return { ok: false, message: 'No scene here. Mark scenes with range markers, or markers named “Scene …”.' };
         items = all.filter(l => footage(l) && l.start < sc.end && l.end > sc.start && (l.kind !== 'nested' || (l.start >= sc.start - 0.05 && l.end <= sc.end + 0.05))).map(l => l.item); fallback = ` (scene “${sc.name}”)`; }
-      if (scope === 'adjust') { const adj = here.find(l => l.kind === 'adjustment');
+      // Which adjustment layer: one the editor named for Colored Lens if there is one; otherwise the one closest
+      // above the shot (not the top of the stack, which is usually someone's finishing layer).
+      if (scope === 'adjust') { const adjs = here.filter(l => l.kind === 'adjustment'), above = adjs.filter(l => !subject || l.track > subject.track).sort((a, b) => a.track - b.track);
+        const adj = adjs.find(l => /colou?red\s*lens/i.test(l.name)) || above[0] || adjs[0];
         if (!adj) return { ok: false, message: 'There is no adjustment layer under the playhead. Put one over the scene, then apply to it.' };
-        items = [adj.item]; fallback = ` (adjustment layer on V${adj.track}, colouring every track beneath it)`; }
+        items = [adj.item]; fallback = ` (adjustment layer “${adj.name}” on V${adj.track}, colouring every track beneath it${/colou?red\s*lens/i.test(adj.name) || adjs.length < 2 ? '' : '. To give Colored Lens its own layer, add an adjustment layer and rename it “Colored Lens”'})`; }
       if (!items.length) return { ok: false, message: 'Nothing to apply to in that scope.' };
     } else items = (await (await seq.getSelection()).getTrackItems()).filter(it => typeof it.createAddVideoTransitionAction === 'function');
     if (!items.length) { // nothing selected: the shot under the playhead

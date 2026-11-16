@@ -4,6 +4,7 @@
 //
 // Providers are all free to the editor: a model on their own machine (Ollama, or any OpenAI-compatible local
 // server such as Microsoft Foundry Local or LM Studio) or their own API key (Google Gemini has a free tier).
+import { srgbToOklab } from './color.js';
 import { RECIPES, GENRES, FEELINGS, ROLES } from './directions.js';
 
 export const PROVIDERS = [
@@ -287,15 +288,51 @@ export function validateSuggest(o, enc) {
   }).filter(Boolean).slice(0, 14);
   return { reply: S_(o.reply, 900), suggestions: out };
 }
-/** Plain steps for doing a suggestion by hand in the host's own colour tools (until colour zones can do it in one click). */
-export function howTo(sg, hostName) {
-  const resolve = hostName === 'resolve', steps = [];
-  steps.push(resolve ? 'Work on a new serial node (Alt/Option + S) so the original grade stays untouched.' : 'Put an adjustment layer over the shot (Project panel › New Item › Adjustment Layer) and work on it, so the clip itself stays untouched.');
-  if (sg.recipe) steps.push('Press “Preview look” here, then Apply: that sets the overall grade and film character for this direction.');
-  if (sg.ambience && sg.ambience.colour) steps.push(resolve ? `Ambience (${sg.ambience.colour}): on the first node push Gain and Gamma slightly toward ${sg.ambience.colour}; keep Lift neutral so blacks stay clean.` : `Ambience (${sg.ambience.colour}): in Lumetri › Color Wheels push Midtones and Highlights slightly toward ${sg.ambience.colour}; leave Shadows neutral so blacks stay clean.`);
-  if (sg.items.length) steps.push(resolve ? 'For each item below: add a serial node, click the item with the Qualifier eyedropper, soften the key, then turn Hue and Sat until it reads the target colour. If other things of the same colour change too, add a Power Window around the item and track it.'
-    : 'For each item below: add another Lumetri Color effect on the adjustment layer, open HSL Secondary, click the item with the Set Color eyedropper, tick “Color/Gray” to check what is selected, clean it with Denoise and Blur, then move the colour wheel underneath until it reads the target colour. If other things of the same colour change too, draw a mask on that Lumetri effect around the item and track it.');
-  sg.items.forEach(i => steps.push(`${i.item} → ${i.colour}${i.hex ? ` (about ${i.hex})` : ''}.`));
-  steps.push('Check faces last: if skin drifted, lower that step’s strength or exclude skin from its key.');
+const lchOf = hex => { const h = hexOk(hex); if (!h) return null; const [r, g, b] = [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16) / 255), lab = srgbToOklab(r, g, b), C = Math.hypot(lab[1], lab[2]); let hue = Math.atan2(lab[2], lab[1]) * 57.29578; if (hue < 0) hue += 360; return { L: lab[0], C, h: hue, lab }; };
+/**
+ * Turns a suggestion into colour zones for the Lukuluku effect: each item is picked by the colour it has now
+ * (from the AI's study, snapped to the nearest real colour measured in the frame) and moved to its proposed colour.
+ * Up to four zones; skin is left to Skin Guard. Returns { params, mapped:[{item,from,to}], skipped:[{item,why}] }.
+ */
+export function zonesFor(sg, study, swatches = []) {
+  const params = {}, mapped = [], skipped = [], sw = swatches.map(x => (typeof x === 'string' ? x : x && (x.hex || x[0]))).map(lchOf).filter(Boolean);
+  const amb = lchOf(sg.ambience && sg.ambience.hex); if (amb && amb.C > 0.02) { params.ambHue = +amb.h.toFixed(1); params.ambAmt = 0.5; }
+  const cands = [];
+  for (const it of sg.items || []) {
+    const st = (study && study.items || []).find(x => x.name.toLowerCase() === it.item.toLowerCase()) || (study && study.items || []).find(x => x.name.toLowerCase().includes(it.item.toLowerCase()) || it.item.toLowerCase().includes(x.name.toLowerCase()));
+    const to = lchOf(it.hex); let from = lchOf(st && st.hex);
+    if (/\b(skin|face|complexion|cheek|forehead|hands?)\b/i.test(it.item)) { skipped.push({ item: it.item, why: 'skin is kept natural by Skin Guard' }); continue; }
+    if (!to || !from) { skipped.push({ item: it.item, why: 'the AI did not give a usable colour for it' }); continue; }
+    // the AI's idea of the current colour is approximate: use the nearest colour actually measured in the frame
+    let best = null, bd = 0.12; for (const c of sw) { const d = Math.hypot(c.lab[0] - from.lab[0], (c.lab[1] - from.lab[1]) * 2, (c.lab[2] - from.lab[2]) * 2); if (d < bd) { bd = d; best = c; } } if (best) from = best;
+    let dh = Math.abs(from.h - to.h); if (dh > 180) dh = 360 - dh; const change = Math.hypot(to.lab[1] - from.lab[1], to.lab[2] - from.lab[2]) + Math.abs(to.L - from.L) * 0.5;
+    if (change < 0.025) { skipped.push({ item: it.item, why: 'it is already about this colour' }); continue; }
+    cands.push({ it, from, to, change });
+  }
+  // two items that have the same colour now cannot be told apart by colour alone
+  cands.sort((a, b) => b.change - a.change); const used = [];
+  for (const c of cands) {
+    const clash = used.find(u => (u.from.C < 0.035) === (c.from.C < 0.035) && (c.from.C < 0.035 ? Math.abs(u.from.L - c.from.L) < 0.12 : Math.min(Math.abs(u.from.h - c.from.h), 360 - Math.abs(u.from.h - c.from.h)) < 18 && Math.abs(u.from.L - c.from.L) < 0.25));
+    if (clash) { skipped.push({ item: c.it.item, why: `it is the same colour as the ${clash.it.item} now, so it needs a mask` }); continue; }
+    if (used.length >= 4) { skipped.push({ item: c.it.item, why: 'four zones are already in use' }); continue; }
+    used.push(c); const i = used.length, n = c.from.C < 0.035, P = (k, v) => { params[`z${i}${k}`] = +(+v).toFixed(4); };
+    P('Amt', 0.85); P('Hue', c.from.h); P('Wid', 24); P('Cmin', n ? 0 : Math.max(0.025, c.from.C * 0.45)); P('Cmax', n ? 0.03 : 0.5);
+    P('Lmin', Math.max(0, c.from.L - (n ? 0.14 : 0.32))); P('Lmax', Math.min(1, c.from.L + (n ? 0.14 : 0.32)));
+    P('ToHue', c.to.h); P('ToC', Math.min(0.4, c.to.C)); P('dL', Math.max(-0.15, Math.min(0.15, (c.to.L - c.from.L) * 0.5)));
+    mapped.push({ item: c.it.item, to: c.it.colour, zone: i });
+  }
+  return { params, mapped, skipped };
+}
+/** What to do by hand for the items colour zones could not take (same colour as something else, or more than four). */
+export function howTo(sg, hostName, z) {
+  const resolve = hostName === 'resolve', steps = [], left = z ? z.skipped.filter(x => !/Skin Guard|already about/.test(x.why)) : (sg.items || []).map(i => ({ item: i.item, why: '' }));
+  const tgt = n => { const it = (sg.items || []).find(i => i.item === n); return it ? `${it.colour}${it.hex ? ` (about ${it.hex})` : ''}` : 'its new colour'; };
+  if (z && z.mapped.length) steps.push(`“Try this on my frame” has already set ${z.mapped.map(m => `${m.item} → ${m.to}`).join(', ')}${sg.ambience && sg.ambience.colour ? `, and the ${sg.ambience.colour} ambience` : ''}. Press Apply to put that on your timeline as one effect; each zone is a group of sliders named “Zone 1…4” in the Lukuluku Look effect if you want to fine-tune it.`);
+  if (!left.length) { steps.push('Nothing in this suggestion needs to be done by hand.'); return steps; }
+  steps.push(`${left.length === 1 ? 'One item needs' : 'These items need'} a hand-drawn selection, because colour alone cannot separate ${left.length === 1 ? 'it' : 'them'}: ${left.map(x => `${x.item}${x.why ? ` (${x.why})` : ''}`).join('; ')}.`);
+  steps.push(resolve ? 'In Resolve: add a serial node after the Lukuluku node (Alt/Option + S).' : 'In Premiere: select the adjustment layer (or the clip), and in Effects search “Lumetri Color” and drag it on, below Lukuluku Look.');
+  steps.push(resolve ? 'Draw a Power Window around the item (Window palette › curve or circle), soften its edge, and track it forward with the Tracker palette.' : 'In Effect Controls, under that Lumetri Color, click the pen (or ellipse) and draw around the item. Raise “Mask Feather” to about 40, then press the play button next to “Mask Path” to track it through the shot.');
+  left.forEach(x => steps.push(resolve ? `${x.item}: inside its window, turn the Hue and Sat knobs (or push the Offset wheel) until it reads ${tgt(x.item)}.` : `${x.item}: in that Lumetri’s Color Wheels & Match, push Midtones toward ${tgt(x.item)}, and use Creative › Saturation to match its strength.`));
+  steps.push('Repeat with a new ' + (resolve ? 'node' : 'Lumetri Color') + ' for each item, then check faces last.');
   return steps;
 }

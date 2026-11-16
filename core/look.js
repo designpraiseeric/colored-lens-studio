@@ -176,6 +176,23 @@ export function applySkinGuard(src, out, p) {
   return lin.map(v => Math.min(1, Math.max(0, lin2srgb(v))));
 }
 
+/** Colour zones (mirrors applyZones in the C++ engine): pixels picked by their original colour move to a new colour. */
+export const ZONE_KEYS = ['Amt', 'Hue', 'Wid', 'Cmin', 'Cmax', 'Lmin', 'Lmax', 'ToHue', 'ToC', 'dL'], ZONE_DEF = [0, 0, 25, 0.03, 0.4, 0, 1, 0, 0.1, 0];
+export const zoneDefaults = () => { const o = { ambHue: 0, ambAmt: 0 }; for (let i = 1; i <= 4; i++) ZONE_KEYS.forEach((k, j) => { o[`z${i}${k}`] = ZONE_DEF[j]; }); return o; };
+export const hasZones = p => !!p && ((p.ambAmt || 0) > 0 || [1, 2, 3, 4].some(i => (p[`z${i}Amt`] || 0) > 0));
+export function applyZones(src, out, p) {
+  if (!hasZones(p)) return out;
+  const so = srgbToOklab(...src), go = srgbToOklab(...out), sC = Math.hypot(so[1], so[2]); let sh = Math.atan2(so[2], so[1]) * 57.29578; if (sh < 0) sh += 360;
+  const soft = (x, lo, hi, e) => smooth(lo - e, lo + e, x) * (1 - smooth(hi - e, hi + e, x));
+  if (p.ambAmt > 0) { const w = p.ambAmt * smooth(0.12, 0.55, go[0]), h = p.ambHue * 0.01745329; go[1] += 0.07 * w * Math.cos(h); go[2] += 0.07 * w * Math.sin(h); }
+  for (let i = 1; i <= 4; i++) { const z = ZONE_KEYS.map((k, j) => p[`z${i}${k}`] ?? ZONE_DEF[j]); if (!(z[0] > 0)) continue;
+    let dh = Math.abs(sh - z[1]); if (dh > 180) dh = 360 - dh;
+    const wh = z[4] <= 0.03 ? 1 : 1 - smooth(z[2] * 0.6, z[2] * 1.2, dh), w = z[0] * wh * soft(sC, z[3], z[4], 0.012) * soft(so[0], z[5], z[6], 0.05); if (w <= 0.001) continue;
+    const ref = Math.max(0.02, (z[3] + z[4]) * 0.5), k = z[4] <= 0.03 ? 1 : Math.min(1.5, Math.max(0.5, sC / ref)), th = z[7] * 0.01745329, tc = z[8] * k;
+    go[1] += (tc * Math.cos(th) - go[1]) * w; go[2] += (tc * Math.sin(th) - go[2]) * w; go[0] += z[9] * w; }
+  return oklabToLin(go[0], go[1], go[2]).map(v => Math.min(1, Math.max(0, lin2srgb(v))));
+}
+
 // ------------------------------------------------------------------ the per-pixel pipeline
 /**
  * Build an evaluator for one look. `cat` = Lukuluku catalog, `luts` = { C0: lut, Cn: lut }.
@@ -212,6 +229,7 @@ export function makePixelFn(look, cat, luts, opts = {}) {
     col = col.map(v => Math.pow(Math.min(1, Math.max(0, v + G.bri * 0.2)), 1 / G.gam));
     if (W.post) col = wheels(col, W, G.con).map(v => Math.min(1, Math.max(0, v)));
     col = col.map((v, i) => tex1D(CT.rgb[i], v * 0.996 + 0.002));
+    if (in709 && hasZones(x)) col = applyZones(src, col, x);
     if (in709 && x.skinGuard) col = applySkinGuard(src, col, x);
     return col;
   };
@@ -243,7 +261,7 @@ export function lookToEngineParams(look, cat, extra = {}) {
     liftX: W.lift[0], liftY: W.lift[1], liftL: W.lift[2], liftS: W.lift[3], gammaX: W.gamma[0], gammaY: W.gamma[1], gammaL: W.gamma[2], gammaS: W.gamma[3],
     gainX: W.gain[0], gainY: W.gain[1], gainL: W.gain[2], gainS: W.gain[3], offX: W.offset[0], offY: W.offset[1], offL: W.offset[2], offS: W.offset[3],
     shX: LW.sh[0], shY: LW.sh[1], shL: LW.sh[2], shS: LW.sh[3], midX: LW.mid[0], midY: LW.mid[1], midL: LW.mid[2], midS: LW.mid[3], hiX: LW.hi[0], hiY: LW.hi[1], hiL: LW.hi[2], hiS: LW.hi[3],
-    skinGuard: 0, skinHue: 0.8, skinDensity: 0.7, skinLight: 0.5, matchAmt: 0, mLg: 1, mLo: 0, mA: 0, mB: 0, mCg: 1, grainAnim: 1, bypass: 0,
+    skinGuard: 0, skinHue: 0.8, skinDensity: 0.7, skinLight: 0.5, matchAmt: 0, mLg: 1, mLo: 0, mA: 0, mB: 0, mCg: 1, grainAnim: 1, bypass: 0, ...zoneDefaults(),
     ...extra.params,
   };
 }

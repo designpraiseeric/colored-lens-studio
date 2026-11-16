@@ -239,3 +239,6 @@ ol.how { margin: 6px 0 6px 18px; padding: 0; } ol.how li { margin: 5px 0; }
 .you { color: var(--acct); }
 /* 0.6.1: text boxes in the bright theme */
 input, select, textarea { background: var(--p1); color: var(--ink); border: 1px solid var(--line); }
+/* 0.7: steps as rows (UXP does not draw numbered lists) */
+.how { margin: 6px 0; } .howrow { display: flex; flex-direction: row; align-items: flex-start; margin: 6px 0; }
+.howrow .num { width: 18px; height: 18px; line-height: 18px; border-radius: 9px; background: var(--acc); color: #fff; font-size: 10px; font-weight: 700; text-align: center; margin-right: 8px; flex: none; }

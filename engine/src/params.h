@@ -54,7 +54,16 @@
   X(shX, F, "Log shadow X", -1, 1, 0, "Wheels") X(shY, F, "Log shadow Y", -1, 1, 0, "Wheels") X(shL, F, "Log shadow level", -1, 1, 0, "Wheels") X(shS, F, "Log shadow sat", 0, 2, 1, "Wheels") \
   X(midX, F, "Log mid X", -1, 1, 0, "Wheels") X(midY, F, "Log mid Y", -1, 1, 0, "Wheels") X(midL, F, "Log mid level", -1, 1, 0, "Wheels") X(midS, F, "Log mid sat", 0, 2, 1, "Wheels") \
   X(hiX, F, "Log high X", -1, 1, 0, "Wheels") X(hiY, F, "Log high Y", -1, 1, 0, "Wheels") X(hiL, F, "Log high level", -1, 1, 0, "Wheels") X(hiS, F, "Log high sat", 0, 2, 1, "Wheels") \
-  X(bypass,     B, "Bypass (show the original)", 0, 1, 0, "Advanced")
+  X(bypass,     B, "Bypass (show the original)", 0, 1, 0, "Advanced") \
+  X(z1Amt, F, "Zone 1 amount", 0, 1, 0, "Colour zones") X(z1Hue, F, "Zone 1 pick hue", 0, 360, 0, "Colour zones") X(z1Wid, F, "Zone 1 hue width", 5, 120, 25, "Colour zones") X(z1Cmin, F, "Zone 1 min colourfulness", 0, 0.4, 0.03, "Colour zones") X(z1Cmax, F, "Zone 1 max colourfulness", 0, 0.5, 0.4, "Colour zones") \
+  X(z1Lmin, F, "Zone 1 darkest", 0, 1, 0, "Colour zones") X(z1Lmax, F, "Zone 1 brightest", 0, 1, 1, "Colour zones") X(z1ToHue, F, "Zone 1 new hue", 0, 360, 0, "Colour zones") X(z1ToC, F, "Zone 1 new colourfulness", 0, 0.4, 0.1, "Colour zones") X(z1dL, F, "Zone 1 lighter / darker", -0.3, 0.3, 0, "Colour zones") \
+  X(z2Amt, F, "Zone 2 amount", 0, 1, 0, "Colour zones") X(z2Hue, F, "Zone 2 pick hue", 0, 360, 0, "Colour zones") X(z2Wid, F, "Zone 2 hue width", 5, 120, 25, "Colour zones") X(z2Cmin, F, "Zone 2 min colourfulness", 0, 0.4, 0.03, "Colour zones") X(z2Cmax, F, "Zone 2 max colourfulness", 0, 0.5, 0.4, "Colour zones") \
+  X(z2Lmin, F, "Zone 2 darkest", 0, 1, 0, "Colour zones") X(z2Lmax, F, "Zone 2 brightest", 0, 1, 1, "Colour zones") X(z2ToHue, F, "Zone 2 new hue", 0, 360, 0, "Colour zones") X(z2ToC, F, "Zone 2 new colourfulness", 0, 0.4, 0.1, "Colour zones") X(z2dL, F, "Zone 2 lighter / darker", -0.3, 0.3, 0, "Colour zones") \
+  X(z3Amt, F, "Zone 3 amount", 0, 1, 0, "Colour zones") X(z3Hue, F, "Zone 3 pick hue", 0, 360, 0, "Colour zones") X(z3Wid, F, "Zone 3 hue width", 5, 120, 25, "Colour zones") X(z3Cmin, F, "Zone 3 min colourfulness", 0, 0.4, 0.03, "Colour zones") X(z3Cmax, F, "Zone 3 max colourfulness", 0, 0.5, 0.4, "Colour zones") \
+  X(z3Lmin, F, "Zone 3 darkest", 0, 1, 0, "Colour zones") X(z3Lmax, F, "Zone 3 brightest", 0, 1, 1, "Colour zones") X(z3ToHue, F, "Zone 3 new hue", 0, 360, 0, "Colour zones") X(z3ToC, F, "Zone 3 new colourfulness", 0, 0.4, 0.1, "Colour zones") X(z3dL, F, "Zone 3 lighter / darker", -0.3, 0.3, 0, "Colour zones") \
+  X(z4Amt, F, "Zone 4 amount", 0, 1, 0, "Colour zones") X(z4Hue, F, "Zone 4 pick hue", 0, 360, 0, "Colour zones") X(z4Wid, F, "Zone 4 hue width", 5, 120, 25, "Colour zones") X(z4Cmin, F, "Zone 4 min colourfulness", 0, 0.4, 0.03, "Colour zones") X(z4Cmax, F, "Zone 4 max colourfulness", 0, 0.5, 0.4, "Colour zones") \
+  X(z4Lmin, F, "Zone 4 darkest", 0, 1, 0, "Colour zones") X(z4Lmax, F, "Zone 4 brightest", 0, 1, 1, "Colour zones") X(z4ToHue, F, "Zone 4 new hue", 0, 360, 0, "Colour zones") X(z4ToC, F, "Zone 4 new colourfulness", 0, 0.4, 0.1, "Colour zones") X(z4dL, F, "Zone 4 lighter / darker", -0.3, 0.3, 0, "Colour zones") \
+  X(ambHue, F, "Ambience hue", 0, 360, 0, "Colour zones") X(ambAmt, F, "Ambience amount", 0, 1, 0, "Colour zones")
 
 namespace lukuluku {
 enum ParamId {

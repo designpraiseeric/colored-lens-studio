@@ -6,9 +6,9 @@
 import { readFrame, frameStats, labPixels } from '../core/analysis.js';
 import { checkSkin, vectorscope } from '../core/skin.js';
 import { pngDataUrl, encodePNG, downsample, toBase64 } from '../core/image.js';
-import { PROVIDERS, DEFAULTS as SMART0, buildPrompt, parseReply, validate, ask, buildStudy, buildSuggest, validateStudy, validateSuggest, howTo, SYSTEM_STUDY, SYSTEM_SUGGEST, detectOllama, detectOpenAI, detectApple, appleReason, resolveProvider } from '../core/smart.js';
+import { PROVIDERS, DEFAULTS as SMART0, buildPrompt, parseReply, validate, ask, buildStudy, buildSuggest, validateStudy, validateSuggest, howTo, zonesFor, SYSTEM_STUDY, SYSTEM_SUGGEST, detectOllama, detectOpenAI, detectApple, appleReason, resolveProvider } from '../core/smart.js';
 import { shotRecord, encodeShot, decodeShot, renderStrip, readSequence, scriptCSV } from '../core/script.js';
-import { parseLookInput, formatCode, fullGrade, makePixelFn, bakeCube, lookToEngineParams, shareLink, computeMatch, matchStats, hasCurves, GRADE0 } from '../core/look.js';
+import { zoneDefaults, parseLookInput, formatCode, fullGrade, makePixelFn, bakeCube, lookToEngineParams, shareLink, computeMatch, matchStats, hasCurves, GRADE0 } from '../core/look.js';
 import { GENRES, FEELINGS, ROLES, KIND_LABEL, pickDirections, describeEffect, whyFor, frameSummary, answers, isDark, continuity, pictureOf, directionsFromPicks } from '../core/directions.js';
 import { previewer, wipe } from '../core/preview.js';
 import { listPresets, savePreset, deletePreset, duplicatePreset, presetCode, importPresetCode, settings } from '../core/presets.js';
@@ -25,7 +25,7 @@ const strip = s => String(s ?? '').replace(/<[^>]+>/g, '');
 const cap = s => s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
 const pct = v => Math.round(v * 100) + '%';
 const clone = o => JSON.parse(JSON.stringify(o));
-const XDEF = { skinGuard: 0, skinHue: 0.8, skinDensity: 0.7, skinLight: 0.5, matchAmt: 0, mLg: 1, mLo: 0, mA: 0, mB: 0, mCg: 1 };
+const XDEF = { skinGuard: 0, skinHue: 0.8, skinDensity: 0.7, skinLight: 0.5, matchAmt: 0, mLg: 1, mLo: 0, mA: 0, mB: 0, mCg: 1, ...zoneDefaults() };
 const NEUTRAL_LOOK = () => ({ L: 'L1', O: 'O1', H: 'H0', K: 'K0', D: 'D0', C: 'C0', M: 'M0', A: '2.39', G: fullGrade({}) });
 const normIntent = i => ({ genre: answers(i.genre), feeling: answers(i.feeling), role: answers(i.role), note: i.note || '' });
 const lookCode = (l, matte) => { const c = formatCode(l); return matte ? c : c.replace(/·[\d.]+$/, ''); };
@@ -155,7 +155,7 @@ export async function startApp(host, root) {
     if (S.chosen >= allDirs().length) S.chosen = -1;
   }
   function choose(i) {
-    const d = allDirs()[i]; if (!d) return; S.chosen = i;
+    const d = allDirs()[i]; if (!d) return; S.chosen = i; S.suggOn = -1; S.suggZ = null;
     S.look = clone(d.look); S.extra = { ...XDEF, ...d.extra }; S.matte = false; S.recipe = { name: d.name, presetId: null };
   }
 
@@ -179,7 +179,7 @@ export async function startApp(host, root) {
         <div class="grow"></div>${S.detached ? '' : `<div class="segs" title="Preview size">${['S', 'M', 'L'].map(z => seg(z, z, S.dockSize === z, 'data-dsize')).join('')}</div>`}
         ${host.openPreviewPanel ? `<button id="dockPop" class="small" title="${S.detached ? 'Put the preview back in the Colored Lens panel' : 'Open the preview as its own panel, to dock anywhere'}">${S.detached ? 'Back to panel' : 'Pop out'}</button>` : ''}${S.detached ? '' : '<button id="dockHide" class="small" title="Hide the preview">✕</button>'}</div>
       ${S.view === 'split' ? sliderHTML({ id: 'wipe', label: 'Wipe', min: 0, max: 1, step: 0.01, value: S.wipe, def: 0.5 }) : ''}
-      ${d ? `<div class="small">Previewing <b>${esc(d.name)}</b> <span class="dim">(colour, grain and vignette; halation and glow show on the clip)</span></div>
+      ${d ? `<div class="small">Previewing <b>${esc(S.suggOn >= 0 && S.sugg[S.suggOn] ? S.sugg[S.suggOn].title : d.name)}</b> <span class="dim">(colour, grain and vignette; halation and glow show on the clip)</span></div>
         ${scopeRow()}<div class="row wrap"><button class="primary" data-dapply="${S.chosen}">${S.scope === 'clip' ? 'Apply to selected clips' : 'Apply'}</button><button data-dtweak="${S.chosen}">Tweak</button><button data-dsave="${S.chosen}">Save as preset</button><button id="dclear">Back to the original</button></div>`
         : `<div class="small dim">${shot ? 'Click a face in the picture to check its skin. Pick a direction below to preview it here.' : 'Live preview: colour, grain and vignette. Halation and diffusion glow show on the clip.'}</div>`}`;
   }
@@ -436,7 +436,7 @@ export async function startApp(host, root) {
       const res = validateSuggest(await aiCall('suggest', message), enc());
       if (!res.suggestions.length) throw new Error('The AI did not return usable suggestions. Try again, or tell it more about the scene.');
       if (message) S.ai.chat.push({ you: message, ai: res.reply || `${res.suggestions.length} new suggestions below.` });
-      S.sugg = res.suggestions; S.suggOpen = -1; S.suggHow = -1;
+      S.sugg = res.suggestions; S.suggOpen = -1; S.suggHow = -1; S.suggOn = -1; S.suggZ = null;
       const picks = res.suggestions.filter(x => x.recipe).map(x => ({ recipe: x.recipe, why: x.idea || x.communicates, tweaks: x.tweaks })).filter((p, i, arr) => arr.findIndex(q => q.recipe === p.recipe) === i);
       S.smartDirs = picks.length ? await enrich(directionsFromPicks(picks, S.intent, { reading: S.reading, skin: S.skin, input: S.input })) : []; S.chosen = -1;
     } catch (e) { if (e.message !== 'none') { console.error(e); S.ai.error = e.message || String(e); } }
@@ -472,8 +472,10 @@ export async function startApp(host, root) {
           ${g.items.map(it => `<div class="it">${sw(it.hex)}<span><b>${esc(it.item)}</b> → ${esc(it.colour)}${it.why ? ` <span class="dim">· ${esc(it.why)}</span>` : ''}</span></div>`).join('')}
           ${g.communicates ? `<p class="small"><b>This tells the audience:</b> ${esc(g.communicates)}</p>` : ''}${g.because ? `<p class="small"><b>Because:</b> ${esc(g.because)}</p>` : ''}
           ${g.refs.length ? `<div class="k">From the encyclopedia</div>${g.refs.map(r => `<p class="small ref1"><a href="#" data-more="${esc(r.name.split(' / ')[0])}">${esc(r.name)}</a> <span class="dim">(${esc(r.kind)})</span>: ${esc(r.line)}${r.ex ? ` <span class="dim">See: ${esc(String(r.ex).slice(0, 160))}</span>` : ''}</p>`).join('')}` : ''}
-          <div class="row wrap">${g.recipe ? `<button class="primary" data-sgprev="${i}">Preview the look</button>` : ''}<button data-sghow="${i}">${S.suggHow === i ? 'Hide the steps' : 'How to do this, step by step'}</button></div>
-          ${S.suggHow === i ? `<p class="small dim">The previewed look sets the overall grade. Item-by-item colours are done by hand for now with these steps; one-click colour zones are the next update.</p><ol class="how">${howTo(g, host.name).map(x => `<li class="small">${esc(x)}</li>`).join('')}</ol><div class="row"><button data-sgcopy="${i}">Copy the steps</button></div>` : ''}` : ''}</div>`; }).join('')}`;
+          ${S.suggOn === i && S.suggZ ? `<p class="small okmsg">✓ On your preview now: ${esc([...(g.ambience.colour ? [g.ambience.colour + ' ambience'] : []), ...S.suggZ.mapped.map(m => `${m.item} → ${m.to}`)].join(', ') || 'the overall look')}. Drag across the picture to compare.</p>
+            ${S.suggZ.skipped.length ? `<p class="small dim">Not changed: ${esc(S.suggZ.skipped.map(x => `${x.item} (${x.why})`).join('; '))}.</p>` : ''}` : ''}
+          <div class="row wrap"><button class="primary" data-sgprev="${i}">${S.suggOn === i ? 'Try it again' : 'Try this on my frame'}</button>${S.suggOn === i ? `<button data-dapply="0">Apply</button><button data-dtweak="0">Tweak</button>` : ''}<button data-sghow="${i}">${S.suggHow === i ? 'Hide the steps' : 'What is left to do by hand'}</button></div>
+          ${S.suggHow === i ? `<div class="how">${howTo(g, host.name, S.suggOn === i ? S.suggZ : zonesFor(g, S.study, S.reading ? S.reading.swatches : [])).map((x, k) => `<div class="howrow"><span class="num">${k + 1}</span><span class="small grow">${esc(x)}</span></div>`).join('')}</div><div class="row"><button data-sgcopy="${i}">Copy the steps</button></div>` : ''}` : ''}</div>`; }).join('')}`;
   }
   function wireAI(body) {
     wireSmart(body);
@@ -488,9 +490,13 @@ export async function startApp(host, root) {
     if ($('#aiUse', body)) $('#aiUse', body).onclick = () => { for (const k of ['genre', 'feeling', 'role']) if (S.study.answers[k].length) S.intent[k] = S.study.answers[k]; saveIntent(); busy('Finding directions', async () => { await suggest(); render(); }); };
     body.querySelectorAll('[data-sg]').forEach(el => el.onclick = e => { if (e.target.closest('button') || e.target.closest('a')) return; const i = +el.dataset.sg, top = body.scrollTop; S.suggOpen = S.suggOpen === i ? -1 : i; S.suggHow = -1; render(); body.scrollTop = top; });
     body.querySelectorAll('[data-sghow]').forEach(b => b.onclick = () => { const i = +b.dataset.sghow, top = body.scrollTop; S.suggHow = S.suggHow === i ? -1 : i; render(); body.scrollTop = top; });
-    body.querySelectorAll('[data-sgcopy]').forEach(b => b.onclick = async () => { const g = S.sugg[+b.dataset.sgcopy]; toast((await copyText(`${g.title}\n` + howTo(g, host.name).map((x, k) => `${k + 1}. ${x}`).join('\n'))) ? 'Steps copied' : 'Could not copy'); });
-    body.querySelectorAll('[data-sgprev]').forEach(b => b.onclick = () => { const g = S.sugg[+b.dataset.sgprev], di = S.smartDirs.findIndex(d => d.id === g.recipe);
-      if (di < 0) return toast('This suggestion has no look to preview'); const top = body.scrollTop; choose(di); S.view = 'split'; S.dockHidden = false; render(); body.scrollTop = top; toast(`Previewing “${S.smartDirs[di].name}”: drag across the picture to compare`); });
+    body.querySelectorAll('[data-sgcopy]').forEach(b => b.onclick = async () => { const g = S.sugg[+b.dataset.sgcopy]; toast((await copyText(`${g.title}\n` + howTo(g, host.name, zonesFor(g, S.study, S.reading ? S.reading.swatches : [])).map((x, k) => `${k + 1}. ${x}`).join('\n'))) ? 'Steps copied' : 'Could not copy'); });
+    body.querySelectorAll('[data-sgprev]').forEach(b => b.onclick = () => busy('Building this suggestion', async () => { const i = +b.dataset.sgprev, g = S.sugg[i], top = body.scrollTop;
+      // the Lukuluku look for the overall grade (a clean pass-through when the AI named none), then one colour zone per item
+      const di = S.smartDirs.findIndex(d => d.id === g.recipe); if (di >= 0) choose(di); else { S.chosen = -1; S.look = NEUTRAL_LOOK(); S.extra = { ...XDEF }; }
+      const z = zonesFor(g, S.study, S.reading ? S.reading.swatches : []); S.extra = { ...S.extra, ...zoneDefaults(), ...z.params, skinGuard: Math.max(S.extra.skinGuard || 0, 0.7) };
+      S.recipe = { name: g.title, presetId: null }; S.suggOn = i; S.suggZ = z; S.view = 'split'; S.dockHidden = false; stageCache.key = ''; render(); body.scrollTop = top;
+      toast(z.mapped.length || z.params.ambAmt ? `“${g.title}” is on your preview: drag across the picture to compare` : 'Only the overall look could be previewed for this one; see “What is left to do by hand”'); }));
   }
   // What the timeline says about this shot. Context proposes; the editor decides.
   function contextCard(c) {

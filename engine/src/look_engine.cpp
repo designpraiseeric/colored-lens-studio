@@ -171,6 +171,7 @@ struct Setup {
   V3 wLift, wGamE, wGainM, wOff, satR, LS, LM, LH, LSat; float lowR, highR, pivot, ucon; bool wpost;
   float hi, sh, wh, bk, bri, gam, lutMix, sharpU;
   float matchAmt, mLg, mLo, mA, mB, mCg; float skinGuard, skinHue, skinDensity, skinLight;
+  float z[4][10]; bool zones; float ambHue, ambAmt;
 };
 inline V3 puck(float x, float y) { return {1.14f * y, -0.395f * x - 0.581f * y, 2.032f * x}; }
 
@@ -197,6 +198,8 @@ Setup makeSetup(const Params& p) {
   s.lowR = float(p[P_lowR]); s.highR = float(p[P_highR]); s.pivot = float(p[P_pivot]); s.ucon = float(p[P_con]); s.wpost = p[P_wpost] > 0.5;
   s.hi = float(p[P_hi]); s.sh = float(p[P_sh]); s.wh = float(p[P_wh]); s.bk = float(p[P_bk]); s.bri = float(p[P_bri]); s.gam = float(p[P_gam]); s.lutMix = float(p[P_lutMix]); s.sharpU = float(p[P_sharp]);
   s.matchAmt = float(p[P_matchAmt]); s.mLg = float(p[P_mLg]); s.mLo = float(p[P_mLo]); s.mA = float(p[P_mA]); s.mB = float(p[P_mB]); s.mCg = float(p[P_mCg]);
+  s.zones = false; for (int i = 0; i < 4; i++) { for (int k = 0; k < 10; k++) s.z[i][k] = float(p.v[P_z1Amt + i * 10 + k]); if (s.z[i][0] > 0) s.zones = true; }
+  s.ambHue = float(p[P_ambHue]); s.ambAmt = float(p[P_ambAmt]); if (s.ambAmt > 0) s.zones = true;
   s.skinGuard = float(p[P_skinGuard]); s.skinHue = float(p[P_skinHue]); s.skinDensity = float(p[P_skinDensity]); s.skinLight = float(p[P_skinLight]);
   return s;
 }
@@ -230,6 +233,23 @@ V3 applySkinGuard(V3 src, V3 out, const Setup& s) {
   float dh = sh - gh; while (dh > 3.14159265f) dh -= 6.2831853f; while (dh < -3.14159265f) dh += 6.2831853f;
   float h = gh + dh * w * s.skinHue, Cc = gC + std::max(0.f, sC - gC) * w * s.skinDensity, L = go.r + std::max(0.f, so.r - go.r) * w * s.skinLight;
   return oklabToSrgb({L, Cc * std::cos(h), Cc * std::sin(h)});
+}
+
+/** Colour zones: pixels picked by their ORIGINAL colour (hue, colourfulness, lightness) are moved to a new colour
+    after the look; plus an overall ambience tint in the mids and highs. Mirrors applyZones in core/look.js. */
+V3 applyZones(V3 src, V3 out, const Setup& s) {
+  if (!s.zones) return out;
+  V3 so = srgbToOklab(src), go = srgbToOklab(out);
+  float sC = std::hypot(so.g, so.b), sh = std::atan2(so.b, so.g) * 57.29578f; if (sh < 0) sh += 360;
+  auto soft = [](float x, float lo, float hi, float e) { return smoothstepf(lo - e, lo + e, x) * (1 - smoothstepf(hi - e, hi + e, x)); };
+  if (s.ambAmt > 0) { float w = s.ambAmt * smoothstepf(0.12f, 0.55f, go.r), h = s.ambHue * 0.01745329f; go.g += 0.07f * w * std::cos(h); go.b += 0.07f * w * std::sin(h); }
+  for (int i = 0; i < 4; i++) { const float* z = s.z[i]; if (z[0] <= 0) continue;
+    float dh = std::fabs(sh - z[1]); if (dh > 180) dh = 360 - dh;
+    float wh = z[4] <= 0.03f ? 1.f : 1 - smoothstepf(z[2] * 0.6f, z[2] * 1.2f, dh);
+    float w = z[0] * wh * soft(sC, z[3], z[4], 0.012f) * soft(so.r, z[5], z[6], 0.05f); if (w <= 0.001f) continue;
+    float ref = std::max(0.02f, (z[3] + z[4]) * 0.5f), k = z[4] <= 0.03f ? 1.f : std::clamp(sC / ref, 0.5f, 1.5f), th = z[7] * 0.01745329f, tc = z[8] * k;
+    go.g += (tc * std::cos(th) - go.g) * w; go.b += (tc * std::sin(th) - go.b) * w; go.r += z[9] * w; }
+  return oklabToSrgb(go);
 }
 
 /** Lukuluku FS_COMP from "c" (linear, after the spatial stages) to display output. */
@@ -270,7 +290,7 @@ void pixelOnly(const float in[3], float out[3], const Params& p) {
   V3 lin = s.in709 ? V3{srgb2lin(inp.r), srgb2lin(inp.g), srgb2lin(inp.b)} : V3{log2lin(inp.r), log2lin(inp.g), log2lin(inp.b)};
   lin = vmax0(lin) * s.expK * s.wb;
   float g3[3] = {0, 0, 0}; V3 col = finish(lin, s, g3, false, 0, 0, 0, 0);
-  if (s.in709) col = applySkinGuard(src, col, s);
+  if (s.in709) { col = applyZones(src, col, s); col = applySkinGuard(src, col, s); }
   out[0] = col.r; out[1] = col.g; out[2] = col.b;
 }
 
@@ -285,7 +305,7 @@ void render(const ImageView& src, const ImageView& dst, const Params& p, const R
   const int T = info.threads;
 
   // decode (+ match) into linear light, keeping the original for Skin Guard
-  Buf lin; lin.resize(W, H); Buf orig; if (s.skinGuard > 0 && s.in709) orig.resize(W, H);
+  Buf lin; lin.resize(W, H); Buf orig; if ((s.skinGuard > 0 || s.zones) && s.in709) orig.resize(W, H);
   parallelRows(H, T, [&](int y) {
     const float* r = src.row(y);
     for (int x = 0; x < W; x++) {
@@ -336,7 +356,7 @@ void render(const ImageView& src, const ImageView& dst, const Params& p, const R
       if (vig > 0) { float vv = std::hypot(relx, rely * 0.8f), t = std::clamp((vv - 1.55f) / (0.35f - 1.55f), 0.f, 1.f), sm = t * t * (3 - 2 * t); col = col * (1 + (sm - 1) * vig); }
       if (M.gate) { float ax = std::fabs(relx), ay = std::fabs(rely), rx = 0.10f * hvy / hvx, ry = 0.10f;
         float kx = std::max(ax - (1 - rx), 0.f) / rx, ky = std::max(ay - (1 - ry), 0.f) / ry; col = col * (1 - smoothstepf(0.9f, 1, std::hypot(kx, ky))); }
-      if (!orig.px.empty()) { const float* o = orig.at(x, y); col = applySkinGuard({o[0], o[1], o[2]}, col, s); }
+      if (!orig.px.empty()) { const float* o = orig.at(x, y); col = applyZones({o[0], o[1], o[2]}, col, s); col = applySkinGuard({o[0], o[1], o[2]}, col, s); }
       col = mixv(V3{0.035f, 0.035f, 0.035f}, col, inside);
       drow[x * 4] = col.r; drow[x * 4 + 1] = col.g; drow[x * 4 + 2] = col.b; drow[x * 4 + 3] = srow[x * 4 + 3];
     }

@@ -1,6 +1,15 @@
 # Release notes
 Each `## <version>` block becomes the text of the in-app update banner and the GitHub Release.
 
+## 0.7.0
+Suggestions you can actually see: colour zones.
+- "Try this on my frame" on a suggestion now builds it for real: the overall Lukuluku look, the ambience colour, and up to four colour zones that move each item (picked by the colour it has now) to its proposed colour. Before, it only showed one of the standard looks.
+- Apply puts all of that on your timeline as one Lukuluku Look effect. The zones are sliders named "Zone 1…4" and "Ambience" in the effect, so you can fine-tune them. This needs the new effect, so use the installer.
+- It tells you what it changed and what it could not (two items of the same colour need a mask), and "What is left to do by hand" gives the exact steps for those.
+- Skin is kept natural by Skin Guard while zones are on.
+- Apply to adjustment layer now uses a layer named "Colored Lens" if you have one, otherwise the adjustment layer closest above the shot (not the top of the stack).
+- The steps now show properly in Premiere Pro.
+
 ## 0.6.3
 - Gemini: when Google's model is busy ("high demand") or retired, Colored Lens now waits, retries, and moves to another current Flash model by itself instead of showing the error.
 
