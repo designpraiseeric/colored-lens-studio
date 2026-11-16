@@ -43,6 +43,7 @@ test('Premiere panel: grab, mark, read markers, apply the effect, update', { ski
     await page.route(`http://127.0.0.1:${port}/mock.js`, r => r.fulfill({ path: path.join(ROOT, 'test/mocks/premiere_mock.js') }));
     await page.addInitScript(({ bmp, params }) => { window.__bmp = new Uint8Array(bmp); window.__effectParams = params; }, { bmp: [...fs.readFileSync(FRAME)], params: kParams });
     await page.goto(`http://127.0.0.1:${port}/test.html`);
+    const aiIdle = () => page.waitForFunction(() => { const c = document.querySelector('#aicard'); return !c || !c.querySelector('.todo'); }, null, { timeout: 20000 });
     // first run: the hands-on tour opens and points at real parts of the panel; then look at the Smart setup
     await page.waitForSelector('#coach #cNext', { timeout: 15000 }); await page.click('#cNext'); await page.click('#cNext');
     assert.match(await page.innerText('#coach'), /Read a shot/); assert.ok(await page.locator('#grab.spot').count(), 'the Read button is highlighted');
@@ -63,6 +64,7 @@ test('Premiere panel: grab, mark, read markers, apply the effect, update', { ski
     assert.ok((await page.$$('.dir')).length >= 4, 'at least four directions');
     await page.locator('.dir .dtext b').first().click(); await page.waitForSelector('[data-dapply]');
     await page.waitForFunction(() => document.querySelector('#stA') && document.querySelector('#stA').src.startsWith('data:image/png'), null, { timeout: 15000 });
+    await aiIdle();
     // drag the wipe on the picture: the clip edge follows the mouse
     { const bx = await page.locator('#stage').boundingBox(); await page.mouse.move(bx.x + bx.width / 2, bx.y + bx.height / 2); await page.mouse.down(); await page.mouse.move(bx.x + bx.width * 0.25, bx.y + bx.height / 2, { steps: 4 });
       const mid = await page.evaluate(() => parseFloat(document.querySelector('#stClip').style.left)); await page.mouse.up(); assert.ok(Math.abs(mid - bx.width * 0.25) < 6, 'wipe follows the drag: ' + mid); }
@@ -72,22 +74,35 @@ test('Premiere panel: grab, mark, read markers, apply the effect, update', { ski
     assert.match(await page.innerText('#dock'), /in its own panel/);
     await page.click('#dockBack'); await page.waitForSelector('#dock #stage');
     assert.match(await page.innerText('#pvRoot'), /back in the Colored Lens panel/);
-    // Smart mode with a local Ollama (faked): set it up, ask about the frame, get a Smart pick among the directions
+    // The AI with a local Ollama (faked): it studies the frame item by item, takes context in chat, then suggests colours per item
     await page.route('http://localhost:11434/**', route => { const u = route.request().url();
       if (u.endsWith('/api/tags')) return route.fulfill({ body: JSON.stringify({ models: [{ name: 'llama3:8b' }, { name: 'gemma3:4b' }] }), contentType: 'application/json' });
-      const body = JSON.parse(route.request().postData()); window_seen.push(body);
-      return route.fulfill({ body: JSON.stringify({ message: { content: JSON.stringify({ sees: 'A man selling candy floss on a beach.', reading: 'Warm and busy.', questions: ['Is this the opening?'], answers: { feeling: ['joyful'] }, picks: [{ recipe: 'super8-summer', why: 'Leans into the warm afternoon.', tweaks: { grainK: 0.6 } }] }) } }), contentType: 'application/json' }); });
+      const body = JSON.parse(route.request().postData()); window_seen.push(body); const study = /understand this frame/.test(body.messages[0].content);
+      const out = study ? { items: [{ name: 'candy floss', where: 'centre', colour: 'pink', hex: '#f4a6c8' }, { name: 'vendor shirt', where: 'left', colour: 'white', hex: '#eeeeee' }, { name: 'sky', where: 'top', colour: 'pale blue', hex: '#a8c8e8' }], light: 'Low afternoon sun from the right.', mood: 'Warm and busy.', purpose: 'Introduces the beach and the vendor.', scene: 'A day at the beach.', reply: 'Noted: this is the opening.', questions: ['Is this the opening?'], answers: { feeling: ['joyful'] } }
+        : { suggestions: [{ title: 'Golden hour candy', idea: 'Gold air with the floss as the one cool-pink accent.', ambience: { colour: 'golden yellow', hex: '#e8b040' }, items: [{ item: 'candy floss', colour: 'cool pink', hex: '#ff8fc8', why: 'the accent the eye lands on' }, { item: 'sky', colour: 'teal', hex: '#3aa0a0', why: 'complements the gold' }], communicates: 'Nostalgia for a perfect day.', because: 'Warm and cool sit opposite on the wheel.', refs: ['Complementary', 'Not A Real Entry'], recipe: 'super8-summer', tweaks: { grainK: 0.6 } },
+            { title: 'Bleached noon', idea: 'Drained and hot.', ambience: { colour: 'white', hex: '#f0f0e8' }, items: [{ item: 'vendor shirt', colour: 'bone', hex: '#e8e0d0', why: 'keeps it harsh' }], communicates: 'Heat and fatigue.', because: 'Low saturation reads as exhaustion.', refs: ['Achromatic'], recipe: 'nope' }] };
+      return route.fulfill({ body: JSON.stringify({ message: { content: JSON.stringify(out) } }), contentType: 'application/json' }); });
     await page.click('#smartBtn'); await page.click('[data-prov="ollama"]'); await page.click('#olTest'); await page.waitForSelector('#olModel');
     assert.equal(await page.inputValue('#olModel'), 'gemma3:4b', 'the vision model is picked'); await page.click('#smBack');
-    await page.fill('#smMsg', 'make it feel like summer'); await page.click('#smAsk'); await page.waitForSelector('.badge.smart', { timeout: 15000 });
-    assert.match(await page.innerText('.card.smart'), /candy floss/); assert.equal(window_seen[0].model, 'gemma3:4b'); assert.ok(window_seen[0].messages.at(-1).images[0].length > 1000, 'the frame is sent');
-    assert.match(window_seen[0].messages.at(-1).content, /EDITOR'S MESSAGE: make it feel like summer/);
-    // Apple Intelligence through the helper (faked): check it, then ask; the frame goes to the helper
+    // the layers in the frame are a checklist; unticking one re-reads without it and tells the AI
+    await page.waitForSelector('#scope .lay'); const nLay = await page.locator('#scope .lay').count(); assert.ok(nLay >= 2, 'layers are listed: ' + nLay);
+    await page.fill('#smMsg', 'this is the opening shot'); await page.click('#aiTell'); await page.waitForFunction(() => /Noted: this is the opening/.test(document.querySelector('#aicard').innerText), null, { timeout: 15000 });
+    assert.match(await page.innerText('#aicard'), /Noted: this is the opening/); assert.equal(window_seen[0].model, 'gemma3:4b'); assert.ok(window_seen[0].messages.at(-1).images[0].length > 1000, 'the frame is sent');
+    assert.match(window_seen[0].messages.at(-1).content, /EDITOR'S MESSAGE: this is the opening shot/); assert.match(window_seen[0].messages.at(-1).content, /LAYERS IN SCOPE: V/);
+    await page.click('#aiSuggest'); await page.waitForSelector('.sg', { timeout: 15000 }); assert.equal(await page.locator('.sg').count(), 2);
+    await page.click('.sg'); { const t = await page.innerText('.sg.on'); assert.match(t, /candy floss/i); assert.match(t, /cool pink/); assert.match(t, /Complementary/); assert.match(t, /Pink|Yellow/, 'colour entries are added as references'); assert.doesNotMatch(t, /Not A Real Entry/); }
+    await page.click('[data-sghow="0"]'); assert.match(await page.innerText('ol.how'), /HSL Secondary/); await page.click('[data-sgprev="0"]'); await page.waitForSelector('.badge.smart');
+    await page.click('#scope .lay'); await page.click('#reread'); await page.waitForFunction(() => window.__pp.calls.some(c => /read without unticked layers/.test(c)), null, { timeout: 15000 });
+    await page.waitForFunction(() => window.__pp.calls.some(c => /layers back on/.test(c)), null, { timeout: 15000 });
+    for (let i = 0; i < 100 && !/EXCLUDED LAYERS/.test(window_seen.at(-1).messages.at(-1).content); i++) await page.waitForTimeout(150);
+    await aiIdle();
+    assert.match(window_seen.at(-1).messages.at(-1).content, /EXCLUDED LAYERS/); await page.click('#scope .lay'); await page.click('#reread'); await page.waitForFunction(() => !document.querySelector('#reread'), null, { timeout: 15000 }); await page.waitForTimeout(600); await aiIdle();
+    // Apple Intelligence through the helper (faked): the same questions go to the helper, with the frame
     await page.evaluate(r => { window.__recipe = r; }, 'super8-summer');
     await page.click('#smartBtn'); await page.click('[data-prov="apple"]'); await page.click('#apTest'); await page.waitForSelector('.okmsg'); assert.match(await page.innerText('#body'), /Ready on this Mac/); await page.click('#smBack');
-    await page.fill('#smMsg', 'and warmer'); await page.click('#smAsk'); await page.waitForFunction(() => window.__pp.apple, null, { timeout: 15000 });
-    { const a = await page.evaluate(() => ({ n: window.__pp.apple.imageB64.length, p: window.__pp.apple.prompt, s: window.__pp.apple.system })); assert.ok(a.n > 1000, 'the frame goes to Apple Intelligence'); assert.match(a.p, /and warmer/); assert.doesNotMatch(a.s, /JSON only/); }
-    await page.waitForFunction(() => { const t = document.querySelector('.card.smart').innerText; return /apple intelligence/i.test(t) && /and warmer/.test(t); }, null, { timeout: 15000 });
+    await page.evaluate(() => { window.__pp.apple = null; }); await page.waitForSelector('#aiTell'); await page.fill('#smMsg', 'and warmer'); await page.click('#aiTell'); await page.waitForFunction(() => window.__pp.apple, null, { timeout: 15000 });
+    { const a = await page.evaluate(() => ({ n: window.__pp.apple.imageB64.length, p: window.__pp.apple.prompt, s: window.__pp.apple.system, plain: window.__pp.apple.plain })); assert.ok(a.n > 1000, 'the frame goes to Apple Intelligence'); assert.match(a.p, /and warmer/); assert.equal(a.plain, true); assert.match(a.s, /JSON only/); }
+    await page.waitForFunction(() => { const t = document.querySelector('#aicard').innerText; return /apple intelligence/i.test(t) && /and warmer/.test(t); }, null, { timeout: 15000 });
     await page.click('[data-tab=presets]'); await page.waitForSelector('.preset');
     await page.click('[data-tab=scene]'); await page.fill('#tags', 'Ada'); await page.click('#add'); await page.waitForSelector('.shot');
     await page.click('#clear'); await page.click('#load'); await page.waitForSelector('.shot');

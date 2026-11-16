@@ -28,6 +28,12 @@ enum AppleAI {
     @unknown default: return ["apple": ["available": false, "reason": "unknown"]]
     }
   }
+  static func askPlain(system: String, prompt: String, image: CGImage?) async throws -> String {
+    guard #available(macOS 27.0, *) else { throw NSError(domain: "ColoredLens", code: 1, userInfo: [NSLocalizedDescriptionKey: "needsNewerMacOS"]) }
+    let session = LanguageModelSession(instructions: system)
+    if let image { return try await session.respond { prompt; Attachment(image) }.content }
+    return try await session.respond(to: prompt).content
+  }
   static func ask(system: String, prompt: String, image: CGImage?) async throws -> String {
     guard #available(macOS 27.0, *) else { throw NSError(domain: "ColoredLens", code: 1, userInfo: [NSLocalizedDescriptionKey: "needsNewerMacOS"]) }
     let session = LanguageModelSession(instructions: system)

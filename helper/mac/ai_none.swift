@@ -5,5 +5,6 @@ import CoreGraphics
 enum AppleAI {
   static let variant = "bridge-only"
   static func status() async -> [String: Any] { ["apple": ["available": false, "reason": "notInThisBuild"]] }
+  static func askPlain(system: String, prompt: String, image: CGImage?) async throws -> String { throw NSError(domain: "ColoredLens", code: 2, userInfo: [NSLocalizedDescriptionKey: "notInThisBuild"]) }
   static func ask(system: String, prompt: String, image: CGImage?) async throws -> String { throw NSError(domain: "ColoredLens", code: 2, userInfo: [NSLocalizedDescriptionKey: "notInThisBuild"]) }
 }

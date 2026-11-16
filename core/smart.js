@@ -14,7 +14,7 @@ export const PROVIDERS = [
   { id: 'openai', n: 'Local server (OpenAI-compatible)', where: 'Microsoft Foundry Local (Windows and Mac), LM Studio and similar. The frame stays on this computer when the server is local.' },
   { id: 'gemini', n: 'Google Gemini (your key)', where: 'Free tier with your own key from Google AI Studio. The frame is sent to Google, and free-tier requests may be used to improve Google products.' },
 ];
-export const DEFAULTS = { provider: 'off', ollamaUrl: 'http://localhost:11434', ollamaModel: '', openaiUrl: 'http://localhost:5273/v1', openaiModel: '', geminiModel: 'gemini-2.5-flash' };
+export const DEFAULTS = { provider: 'auto', autoAsk: true, ollamaUrl: 'http://localhost:11434', ollamaModel: '', openaiUrl: 'http://localhost:5273/v1', openaiModel: '', geminiModel: 'gemini-flash-latest' };
 const VISION = /llava|gemma3|gemma4|qwen2\.5vl|qwen3-vl|qwen3\.5|qwen3\.6|moondream|minicpm-v|llama3\.2-vision|llama4|granite3\.2-vision|mistral-small3|bakllava/i;
 
 /** The adjustments the AI may make, with their limits (anything else is ignored). */
@@ -103,32 +103,32 @@ async function postJSON(post, url, headers, body, ms = 120000) {
 const trim = u => String(u || '').replace(/\/+$/, '');
 
 /** One request to the chosen provider. history = [{role:'user'|'assistant', text}] from earlier turns. */
-export async function ask(cfg, { prompt, imageB64, history = [] }, post, bridge) {
-  const hist = history.slice(-6);
+export async function ask(cfg, { prompt, imageB64, images = [], history = [], system = null, lite = false }, post, bridge) {
+  const hist = history.slice(-6), SYS = system || SYSTEM, more = images.filter(Boolean);
   if (cfg.provider === 'apple') {
     if (!bridge) throw new Error(appleReason('notInThisBuild'));
     const past = hist.length ? '\nEARLIER IN THIS CONVERSATION: ' + hist.map(h => `${h.role === 'user' ? 'Editor' : 'You'}: ${h.text.slice(0, 300)}`).join(' | ') : '';
-    let r; try { r = await bridge({ type: 'apple', system: SYSTEM_PLAIN, prompt: prompt + past, imageB64 }, 180000); } catch { throw new Error(appleReason('helper')); }
+    let r; try { r = await bridge(system ? { type: 'apple', plain: true, system, prompt: prompt + past, imageB64 } : { type: 'apple', system: SYSTEM_PLAIN, prompt: prompt + past, imageB64 }, 240000); } catch { throw new Error(appleReason('helper')); }
     if (r.error) throw new Error(appleReason(r.error));
     return r.text || '';
   }
   if (cfg.provider === 'ollama') {
-    const msgs = [{ role: 'system', content: SYSTEM }, ...hist.map(h => ({ role: h.role, content: h.text })), { role: 'user', content: prompt, images: [imageB64] }];
-    const j = await postJSON(post, trim(cfg.ollamaUrl) + '/api/chat', {}, { model: cfg.ollamaModel, messages: msgs, format: 'json', stream: false, options: { temperature: 0.4 } });
+    const msgs = [{ role: 'system', content: SYS }, ...hist.map(h => ({ role: h.role, content: h.text })), { role: 'user', content: prompt, images: [imageB64, ...more] }];
+    const j = await postJSON(post, trim(cfg.ollamaUrl) + '/api/chat', {}, { model: cfg.ollamaModel, messages: msgs, format: 'json', stream: false, options: { temperature: 0.4, num_ctx: 8192 } }, 300000);
     return (j.message && j.message.content) || '';
   }
   if (cfg.provider === 'openai') {
-    const msgs = [{ role: 'system', content: SYSTEM }, ...hist.map(h => ({ role: h.role, content: h.text })),
-      { role: 'user', content: [{ type: 'text', text: prompt }, { type: 'image_url', image_url: { url: 'data:image/png;base64,' + imageB64 } }] }];
+    const msgs = [{ role: 'system', content: SYS }, ...hist.map(h => ({ role: h.role, content: h.text })),
+      { role: 'user', content: [{ type: 'text', text: prompt }, ...[imageB64, ...more].map(b => ({ type: 'image_url', image_url: { url: 'data:image/png;base64,' + b } }))] }];
     const j = await postJSON(post, trim(cfg.openaiUrl) + '/chat/completions', cfg.openaiKey ? { authorization: 'Bearer ' + cfg.openaiKey } : {}, { model: cfg.openaiModel, messages: msgs, temperature: 0.4 });
     return j.choices && j.choices[0] && j.choices[0].message ? j.choices[0].message.content : '';
   }
   if (cfg.provider === 'gemini') {
     if (!cfg.geminiKey) throw new Error('Add your Gemini API key in Smart mode settings');
     const contents = [...hist.map(h => ({ role: h.role === 'assistant' ? 'model' : 'user', parts: [{ text: h.text }] })),
-      { role: 'user', parts: [{ text: prompt }, { inline_data: { mime_type: 'image/png', data: imageB64 } }] }];
+      { role: 'user', parts: [{ text: prompt }, ...[imageB64, ...more].map(b => ({ inline_data: { mime_type: 'image/png', data: b } }))] }];
     const j = await postJSON(post, `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(cfg.geminiModel || DEFAULTS.geminiModel)}:generateContent`, { 'x-goog-api-key': cfg.geminiKey },
-      { systemInstruction: { parts: [{ text: SYSTEM }] }, contents, generationConfig: { responseMimeType: 'application/json', temperature: 0.4 } });
+      { systemInstruction: { parts: [{ text: SYS }] }, contents, generationConfig: { responseMimeType: 'application/json', temperature: 0.4 } });
     const parts = j.candidates && j.candidates[0] && j.candidates[0].content ? j.candidates[0].content.parts : [];
     return (parts || []).map(p => p.text || '').join('');
   }
@@ -157,4 +157,124 @@ export async function resolveProvider(cfg, get, bridge) {
   if (o.ok && o.vision.length) return { ...cfg, provider: 'ollama', ollamaModel: cfg.ollamaModel && o.models.includes(cfg.ollamaModel) ? cfg.ollamaModel : o.vision[0] };
   if (cfg.geminiKey) return { ...cfg, provider: 'gemini' };
   return null;
+}
+
+
+// ===================== 0.6: study the frame, then suggest colours and looks =====================
+// Two requests. STUDY: everything in the picture, item by item, and what the shot is for in its scene.
+// SUGGEST: many colour ideas, each with a colour for each item, why, encyclopedia references and a Lukuluku look.
+
+/** Names the model may cite from the encyclopedia. lite = a shorter list for small on-device models. */
+export function catalogue(enc, lite = false) {
+  const first = t => String(t || '').split(/(?<=\.)\s/)[0].slice(0, 110);
+  const out = [...enc.HUES.map(h => ({ name: h.name, kind: 'Colour', line: h.tag })), ...enc.PALS.map(p => ({ name: p.n, kind: 'Palette', line: first(p.t), ex: p.ex }))];
+  if (!lite) out.push(...enc.NARR.map(n => ({ name: n.n, kind: 'Storytelling', line: first(n.t), ex: n.ex })), ...enc.ITTEN.map(n => ({ name: n.n, kind: 'Contrast', line: first(n.t) })),
+    ...enc.AUTS.map(a => ({ name: a.n, kind: 'Filmmaker', line: first(a.t), ex: a.f })));
+  return out;
+}
+const hexOk = h => (/^#?[0-9a-f]{6}$/i.test(String(h || '').trim()) ? '#' + String(h).trim().replace('#', '').toLowerCase() : '');
+/** The encyclopedia colour nearest a hex (by hue; greys, black and white by lightness). */
+export function nearestHue(enc, hex) {
+  const h = hexOk(hex); if (!h) return null; const [r, g, b] = [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16) / 255);
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn, l = (mx + mn) / 2;
+  const by = id => enc.HUES.find(x => x.id === id) || null;
+  if (d < 0.1) return by(l < 0.18 ? 'black' : l > 0.85 ? 'white' : 'grey') || by('grey');
+  const hueOf = (R, G, B) => { const M = Math.max(R, G, B), m = Math.min(R, G, B), D = M - m; if (!D) return -1; let H = M === R ? ((G - B) / D) % 6 : M === G ? (B - R) / D + 2 : (R - G) / D + 4; return (H * 60 + 360) % 360; };
+  const hue = hueOf(r, g, b); let best = null, bd = 1e9;
+  for (const e of enc.HUES) { const x = hexOk(e.hex); if (!x) continue; const [R, G, B] = [1, 3, 5].map(i => parseInt(x.slice(i, i + 2), 16) / 255), eh = hueOf(R, G, B); if (eh < 0) continue;
+    // brown and pink share hues with orange and red: tell them apart by lightness and strength
+    const dd = Math.min(Math.abs(eh - hue), 360 - Math.abs(eh - hue)) + Math.abs(((Math.max(R, G, B) + Math.min(R, G, B)) / 2) - l) * 60; if (dd < bd) { bd = dd; best = e; } }
+  return best;
+}
+
+const JSON_ONLY = 'Reply with JSON only (no markdown, no text around it), in exactly this shape:';
+export const SYSTEM_STUDY = `You are the colourist's eye inside Colored Lens, a colour panel in a video editor. You are shown one frame of a shot (first image). A second image, when present, is a contact sheet of other moments from the surrounding scene or sequence, in time order.
+Your job is to understand this frame before any colour is suggested.
+1. ITEMS: list every distinct thing you can see, however small: people (and what each wears, piece by piece), skin, hair, props, furniture, lamps and other light sources, walls, floor, sky, vegetation, vehicles, screens, text and graphics, background areas. For each: where it is in the frame, and its colour now as a plain name and a hex code. Aim for 8 to 20 items. Never invent items you cannot see. If you were not given the picture itself, list only what the measurements and descriptions support and say so in "caveat".
+2. LIGHT: where the light comes from, its quality and colour, time of day if it shows.
+3. PURPOSE: what this shot is doing in its scene, inferred from the frame, the contact sheet, the timeline notes and what the editor said. Say what you are unsure of.
+4. Ask at most two short questions only if the answer would change the colour advice.
+Only the layers listed under LAYERS IN SCOPE matter: ignore anything that belongs to an excluded layer (for example a title the editor unticked).
+If the editor wrote a message, answer it in "reply" and update your understanding with what they told you.
+${JSON_ONLY}
+{"items":[{"name":"","where":"","colour":"","hex":"#000000"}],"light":"","mood":"what the picture feels like now","purpose":"","scene":"what the surrounding scene seems to be","caveat":"","reply":"","questions":[""],"answers":{"genre":[],"feeling":[],"role":[]}}`;
+
+export const SYSTEM_SUGGEST = `You are the colourist's assistant inside Colored Lens. You have already studied a frame (UNDERSTANDING lists its items). Now propose colour directions for it.
+Give as many genuinely different directions as you can, up to the number asked for. Each one must be worth trying, and must differ from the others in its idea, not just in strength.
+For each direction:
+- "title": a short name. "idea": one sentence on the colour idea.
+- "ambience": the overall colour of the light and air (name + hex).
+- "items": go through the ITEMS of the frame and say what colour each important one should be in this direction (name + hex), and why, in one short clause. Cover at least four items; keep skin believable unless the idea is deliberately stylised, and say so. Use the items' names exactly as given.
+- "communicates": what this configuration tells the audience. "because": why it works for this frame and this scene (colour relationships, contrast, where the eye goes, what it does to faces).
+- "refs": 2 to 5 names copied exactly from ENCYCLOPEDIA that explain or exemplify the direction.
+- "recipe": the id from RECIPES of the Lukuluku look that gets the whole picture closest to this direction, and optional "tweaks" from TWEAKS within their ranges.
+Respect LAYERS IN SCOPE and the editor's answers and messages. Be specific to this frame; no film-school boilerplate.
+${JSON_ONLY}
+{"reply":"","suggestions":[{"title":"","idea":"","ambience":{"colour":"","hex":"#000000"},"items":[{"item":"","colour":"","hex":"#000000","why":""}],"communicates":"","because":"","refs":[""],"recipe":"","tweaks":{}}]}`;
+
+const scopeLines = layers => { const L = layers || []; if (!L.length) return '';
+  const f = l => `V${l.track} ${l.kind} "${l.name}"`; const on = L.filter(l => l.on !== false), off = L.filter(l => l.on === false);
+  return `LAYERS IN SCOPE: ${on.map(f).join('; ') || '(none)'}${off.length ? `\nEXCLUDED LAYERS (ignore what they add to the picture): ${off.map(f).join('; ')}` : ''}`; };
+const common = ({ reading, skin, intent, ctx, neigh, summary, layers, range, vision }) => {
+  const ids = l => l.map(x => x.id).join(', ');
+  const facts = { frame: summary || '', palette: reading && reading.pal ? reading.pal.id : '', colours: reading ? reading.hues.filter(h => h.share >= 0.03).slice(0, 6).map(h => `${h.id} ${Math.round(h.share * 100)}%`) : [],
+    swatches: reading && reading.swatches ? reading.swatches.slice(0, 6).map(sw => sw.hex || sw).filter(x => typeof x === 'string') : [],
+    tones: reading ? { deepShadow: +reading.tones.shadow.toFixed(2), contrast: +reading.stats.contrast.toFixed(2), warmth: reading.stats.warmth, saturation: reading.stats.saturation } : {},
+    faces: skin && skin.found ? (skin.faces || []).map(f => `face ${f.n}: ${f.ire} IRE`) : [] };
+  return [
+    vision === false ? 'NOTE: you were NOT given the picture itself, only measurements.' : '',
+    `EDITOR'S ANSWERS (ids): ${JSON.stringify({ genre: intent.genre, feeling: intent.feeling, role: intent.role, note: intent.note || '' })}`,
+    `ANSWER IDS: genre: ${ids(GENRES)} | feeling: ${ids(FEELINGS)} | role: ${ids(ROLES)}`,
+    `MEASUREMENTS: ${JSON.stringify(facts)}`,
+    scopeLines(layers),
+    ctx && ctx.subject ? `TIMELINE: ${JSON.stringify({ shot: `${ctx.subject.kind} "${ctx.subject.name}" on V${ctx.subject.track}`, scene: ctx.scene ? ctx.scene.name : null, neighbours: (neigh || []).map(n => `${n.side}: ${n.name}`) })}` : '',
+    range && range.samples && range.samples.length ? `STUDIED RANGE: ${range.label}. Contact sheet moments, in order: ${range.samples.map(x => `${x.t} (${x.note})`).join('; ')}` : range ? `STUDIED RANGE: ${range.label}` : '',
+  ].filter(Boolean);
+};
+export function buildStudy(a) { return [...common(a), `EDITOR'S MESSAGE: ${a.message || '(none: study the frame)'}`].join('\n'); }
+export function buildSuggest(a) {
+  const cat = catalogue(a.enc, a.lite), u = a.understanding || {};
+  return [...common(a),
+    `UNDERSTANDING: ${JSON.stringify({ items: (u.items || []).map(i => `${i.name} (${i.where}; ${i.colour} ${i.hex})`), light: u.light, mood: u.mood, purpose: u.purpose, scene: u.scene })}`,
+    `ENCYCLOPEDIA: ${cat.map(c => `${c.name} [${c.kind}: ${c.line}]`).join(' | ')}`,
+    `RECIPES: ${RECIPES.map(r => `${r.id} (${r.name}; ${r.feel.join('/')}; ${r.line})`).join(' | ')}`,
+    `TWEAKS: ${Object.entries(TWEAKS).map(([k, [x, y]]) => `${k} ${x}..${y}`).join(', ')}`,
+    `HOW MANY: up to ${a.count || 8} directions.`,
+    `EDITOR'S MESSAGE: ${a.message || '(none)'}`].join('\n');
+}
+const S_ = (v, n = 500) => (typeof v === 'string' ? v.trim().slice(0, n) : '');
+export function validateStudy(o) {
+  const okIds = (list, v) => (Array.isArray(v) ? v : v ? [v] : []).filter(x => list.some(y => y.id === x)).slice(0, 2), ans = o.answers || {};
+  const items = (Array.isArray(o.items) ? o.items : []).map(i => ({ name: S_(i && i.name, 80), where: S_(i && i.where, 80), colour: S_(i && i.colour, 40), hex: hexOk(i && i.hex) })).filter(i => i.name).slice(0, 24);
+  // an older helper answers in the old shape: keep what it said
+  return { items, light: S_(o.light, 300), mood: S_(o.mood || o.reading, 300), purpose: S_(o.purpose, 500), scene: S_(o.scene, 400), caveat: S_(o.caveat || (!items.length ? o.sees : ''), 400), reply: S_(o.reply, 900),
+    questions: (Array.isArray(o.questions) ? o.questions : []).map(q => S_(q, 200)).filter(Boolean).slice(0, 2), answers: { genre: okIds(GENRES, ans.genre), feeling: okIds(FEELINGS, ans.feeling), role: okIds(ROLES, ans.role) } };
+}
+/** Keeps valid suggestions and attaches encyclopedia references: the ones the model named, plus the entry for every colour it proposed. */
+export function validateSuggest(o, enc) {
+  const cat = catalogue(enc), find = n => cat.find(c => c.name.toLowerCase() === String(n || '').trim().toLowerCase());
+  const col = c => ({ colour: S_(c && c.colour, 40), hex: hexOk(c && c.hex) });
+  const out = (Array.isArray(o.suggestions) ? o.suggestions : []).map(sg => { if (!sg) return null;
+    const items = (Array.isArray(sg.items) ? sg.items : []).map(i => ({ item: S_(i && i.item, 80), ...col(i), why: S_(i && i.why, 240) })).filter(i => i.item && (i.colour || i.hex)).slice(0, 14);
+    const amb = col(sg.ambience), r = RECIPES.find(x => x.id === sg.recipe), tweaks = {};
+    for (const [k, v] of Object.entries(sg.tweaks || {})) if (TWEAKS[k] && Number.isFinite(+v)) tweaks[k] = Math.min(TWEAKS[k][1], Math.max(TWEAKS[k][0], +v));
+    const refs = []; const add = (c, via) => { if (c && !refs.some(x => x.name === c.name)) refs.push({ ...c, via }); };
+    for (const n of Array.isArray(sg.refs) ? sg.refs : []) add(find(n), 'cited');
+    for (const c of [amb, ...items]) { const h = nearestHue(enc, c.hex); if (h) add(find(h.name), 'colour'); }
+    const title = S_(sg.title, 80); if (!title || (!items.length && !amb.colour)) return null;
+    return { title, idea: S_(sg.idea, 300), ambience: amb, items, communicates: S_(sg.communicates, 400), because: S_(sg.because, 600), refs: refs.slice(0, 8), recipe: r ? r.id : '', tweaks };
+  }).filter(Boolean).slice(0, 14);
+  return { reply: S_(o.reply, 900), suggestions: out };
+}
+/** Plain steps for doing a suggestion by hand in the host's own colour tools (until colour zones can do it in one click). */
+export function howTo(sg, hostName) {
+  const resolve = hostName === 'resolve', steps = [];
+  steps.push(resolve ? 'Work on a new serial node (Alt/Option + S) so the original grade stays untouched.' : 'Put an adjustment layer over the shot (Project panel › New Item › Adjustment Layer) and work on it, so the clip itself stays untouched.');
+  if (sg.recipe) steps.push('Press “Preview look” here, then Apply: that sets the overall grade and film character for this direction.');
+  if (sg.ambience && sg.ambience.colour) steps.push(resolve ? `Ambience (${sg.ambience.colour}): on the first node push Gain and Gamma slightly toward ${sg.ambience.colour}; keep Lift neutral so blacks stay clean.` : `Ambience (${sg.ambience.colour}): in Lumetri › Color Wheels push Midtones and Highlights slightly toward ${sg.ambience.colour}; leave Shadows neutral so blacks stay clean.`);
+  if (sg.items.length) steps.push(resolve ? 'For each item below: add a serial node, click the item with the Qualifier eyedropper, soften the key, then turn Hue and Sat until it reads the target colour. If other things of the same colour change too, add a Power Window around the item and track it.'
+    : 'For each item below: add another Lumetri Color effect on the adjustment layer, open HSL Secondary, click the item with the Set Color eyedropper, tick “Color/Gray” to check what is selected, clean it with Denoise and Blur, then move the colour wheel underneath until it reads the target colour. If other things of the same colour change too, draw a mask on that Lumetri effect around the item and track it.');
+  sg.items.forEach(i => steps.push(`${i.item} → ${i.colour}${i.hex ? ` (about ${i.hex})` : ''}.`));
+  steps.push('Check faces last: if skin drifted, lower that step’s strength or exclude skin from its key.');
+  return steps;
 }

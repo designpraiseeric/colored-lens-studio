@@ -127,6 +127,12 @@ const host = {
     let bypassed = null, proj = null;
     if (opts.clean) try { const sub = subjectOf(await layersAt(seq, t.seconds)); const comp = sub && sub.look ? await lookComponent(sub.item) : null;
       if (comp) { proj = await project(); if (await setBypass(proj, comp, true)) bypassed = comp; } } catch (e) { console.warn('clean read', e); }
+    // Unticked layers are switched off for the moment of the export, then back on (the project is left as it was).
+    let hidden = [];
+    if (opts.hide && opts.hide.length) try { proj = proj || await project();
+      const items = (await layersAt(seq, t.seconds)).filter(l => opts.hide.includes(l.track) && l.item && l.item.createSetDisabledAction).map(l => l.item);
+      if (items.length && transaction(proj, 'Colored Lens: read without unticked layers', ca => items.forEach(it => ca.addAction(it.createSetDisabledAction(true)))) !== false) hidden = items;
+    } catch (e) { console.warn('hide layers', e); hidden = []; }
     try {
     let w = 960, h = 540;
     try { const r = await seq.getFrameSize(); const s = Math.min(1, 960 / r.width); w = Math.round(r.width * s); h = Math.round(r.height * s); } catch { /* keep 16:9 */ }
@@ -144,10 +150,11 @@ const host = {
     if (!bytes) throw new Error(entry ? 'The exported frame never finished writing' : 'The exported frame did not appear');
     var frame = decodeImage(bytes);
     try { await entry.delete(); } catch { /* temp folder is cleaned by UXP */ }
-    } finally { if (bypassed) try { await setBypass(proj, bypassed, false); } catch (e) { console.warn('restore look', e); } }
+    } finally { if (bypassed) try { await setBypass(proj, bypassed, false); } catch (e) { console.warn('restore look', e); }
+      if (hidden.length) try { transaction(proj, 'Colored Lens: layers back on', ca => hidden.forEach(it => ca.addAction(it.createSetDisabledAction(false)))); } catch (e) { console.warn('restore layers', e); } }
     let clipName = '';
     try { const items = await (await seq.getSelection()).getTrackItems(); if (items[0] && items[0].getName) clipName = await items[0].getName(); } catch { /* optional */ }
-    return { frame, seconds: t.seconds, timecode: timecode(t.seconds, rate), clipName: clipName || seq.name, sequenceId: String(seq.guid || seq.name), sequenceName: seq.name, withoutLook: !!bypassed };
+    return { frame, seconds: t.seconds, timecode: timecode(t.seconds, rate), clipName: clipName || seq.name, sequenceId: String(seq.guid || seq.name), sequenceName: seq.name, withoutLook: !!bypassed, hiddenLayers: hidden.length };
   },
   async sequenceDuration() { return (await (await sequence()).getEndTime()).seconds; },
 
@@ -168,7 +175,9 @@ const host = {
     const inScene = l => scene && l.start < scene.end && l.end > scene.start && (l.kind !== 'nested' || (l.start >= scene.start - 0.05 && l.end <= scene.end + 0.05));
     const counts = { clip: subject ? 1 : 0, source: subject && subject.path ? all.filter(l => l.path === subject.path).length : 0,
       scene: scene ? all.filter(l => footage(l) && inScene(l)).length : 0, adjust: layers.filter(l => l.kind === 'adjustment').length };
-    return { sequenceId: String(seq.guid || seq.name), sequenceName: seq.name, seconds: t, layers: layers.map(plain), subject: plain(subject),
+    // the sequence's In/Out marks, when the editor has set them, and its length: ranges the AI can study
+    let inOut = null, end = 0; try { end = (await seq.getEndTime()).seconds; const a = (await seq.getInPoint()).seconds, b = (await seq.getOutPoint()).seconds; if (b > a + 0.2 && (a > 0.05 || b < end - 0.05)) inOut = { start: a, end: b }; } catch { /* no marks */ }
+    return { sequenceId: String(seq.guid || seq.name), sequenceName: seq.name, seconds: t, inOut, end, layers: layers.map(plain), subject: plain(subject),
       above: subject ? layers.filter(l => l.track > subject.track && !l.empty).map(plain) : [], emptyAbove: subject ? layers.filter(l => l.track > subject.track && l.empty).map(plain) : [], scene, scenes: scenes.length, before, after, counts };
   },
 

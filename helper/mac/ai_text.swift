@@ -39,6 +39,12 @@ enum AppleAI {
     @unknown default: return ["apple": ["available": false, "reason": "unknown"]]
     }
   }
+  /** Free-form: the panel's own instructions ask for JSON, so new panel versions need no new helper. */
+  static func askPlain(system: String, prompt: String, image: CGImage?) async throws -> String {
+    guard #available(macOS 26.0, *) else { throw NSError(domain: "ColoredLens", code: 1, userInfo: [NSLocalizedDescriptionKey: "needsNewerMacOS"]) }
+    let session = LanguageModelSession(instructions: system + "\nYou cannot see the picture itself in this version: rely on MEASUREMENTS and on what the Mac's vision finds.")
+    return try await session.respond(to: prompt + (image.map { "\n" + describe($0) } ?? "")).content
+  }
   static func ask(system: String, prompt: String, image: CGImage?) async throws -> String {
     guard #available(macOS 26.0, *) else { throw NSError(domain: "ColoredLens", code: 1, userInfo: [NSLocalizedDescriptionKey: "needsNewerMacOS"]) }
     let session = LanguageModelSession(instructions: system + "\nYou cannot see the picture itself in this version: rely on MEASUREMENTS and on what the Mac's vision finds.")

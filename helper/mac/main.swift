@@ -35,6 +35,10 @@ func answer(_ req: [String: Any]) async -> [String: Any] {
   case "status":
     var s = await AppleAI.status(); s["helper"] = helperVersion; s["variant"] = AppleAI.variant; return s
   case "apple":
+    if (req["plain"] as? Bool) == true {
+      do { return ["text": try await AppleAI.askPlain(system: (req["system"] as? String) ?? "", prompt: (req["prompt"] as? String) ?? "", image: cgImage(fromBase64: req["imageB64"] as? String))] }
+      catch { return ["error": String(describing: error)] }
+    }
     do { return ["text": try await AppleAI.ask(system: (req["system"] as? String) ?? "", prompt: (req["prompt"] as? String) ?? "", image: cgImage(fromBase64: req["imageB64"] as? String))] }
     catch { return ["error": String(describing: error)] }
   case "http": return await httpProxy(req)

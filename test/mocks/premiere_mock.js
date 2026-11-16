@@ -11,14 +11,14 @@
     createAppendComponentAction(c) { return { type: 'append', c, chain }; } };
   const T = v => ({ seconds: v });
   const projItem = path => ({ path });
-  const clip = { getName: async () => 'A001_C003', getComponentChain: async () => chain, createAddVideoTransitionAction() {}, getStartTime: async () => T(10), getEndTime: async () => T(20),
+  const clip = { createSetDisabledAction: d => ({ type: 'disable', d }), getName: async () => 'A001_C003', getComponentChain: async () => chain, createAddVideoTransitionAction() {}, getStartTime: async () => T(10), getEndTime: async () => T(20),
     isDisabled: async () => false, isAdjustmentLayer: async () => false, getProjectItem: async () => projItem('/media/A001_C003.mov'), getIsSelected: async () => true };
-  const title = { getName: async () => 'Lower third', getComponentChain: async () => ({ getComponentCount: () => 0 }), getStartTime: async () => T(11), getEndTime: async () => T(14),
+  const title = { createSetDisabledAction: d => ({ type: 'disable', d }), getName: async () => 'Lower third', getComponentChain: async () => ({ getComponentCount: () => 0 }), getStartTime: async () => T(11), getEndTime: async () => T(14),
     isDisabled: async () => false, isAdjustmentLayer: async () => false, getProjectItem: async () => projItem(''), getIsSelected: async () => false };
   const mkChain = () => ({ comps: [], getComponentCount() { return this.comps.length; }, getComponentAtIndex(i) { return this.comps[i]; }, createAppendComponentAction(c) { return { type: 'append', c, chain: this }; } });
-  const other = (name, a, b) => ({ chain: mkChain(), getName: async () => name, async getComponentChain() { return this.chain; }, getStartTime: async () => T(a), getEndTime: async () => T(b),
+  const other = (name, a, b) => ({ createSetDisabledAction: d => ({ type: 'disable', d }), chain: mkChain(), getName: async () => name, async getComponentChain() { return this.chain; }, getStartTime: async () => T(a), getEndTime: async () => T(b),
     isDisabled: async () => false, isAdjustmentLayer: async () => false, getProjectItem: async () => projItem('/media/' + name + '.mov'), getIsSelected: async () => false, createAddVideoTransitionAction() {} });
-  const emptyNest = { getName: async () => 'BROLL LAYER', getComponentChain: async () => ({ getComponentCount: () => 0 }), getStartTime: async () => T(0), getEndTime: async () => T(30), getInPoint: async () => T(0),
+  const emptyNest = { createSetDisabledAction: d => ({ type: 'disable', d }), getName: async () => 'BROLL LAYER', getComponentChain: async () => ({ getComponentCount: () => 0 }), getStartTime: async () => T(0), getEndTime: async () => T(30), getInPoint: async () => T(0),
     isDisabled: async () => false, isAdjustmentLayer: async () => false, getProjectItem: async () => ({ path: '', nest: { getVideoTrackCount: async () => 1, getVideoTrack: async () => ({ isMuted: async () => false, getTrackItems: () => [] }) } }), getIsSelected: async () => false };
   const tracks = [{ isMuted: async () => false, getTrackItems: () => [other('A001_C002', 0, 10), clip, other('A001_C004', 20, 30)] }, { isMuted: async () => false, getTrackItems: () => [] }, { isMuted: async () => false, getTrackItems: () => [title] }, { isMuted: async () => false, getTrackItems: () => [emptyNest] }];
   const markersObj = { createAddMarkerAction: (name, type, start, dur, comments) => ({ type: 'marker', name, start, comments }), getMarkers: () => [{ start: T(8), name: 'Scene 2 — kitchen', comments: '' }, ...log.markers].map(m => ({ getStart: () => m.start, getName: () => m.name, getComments: () => m.comments, getDuration: () => T(0) })) };

@@ -1,6 +1,16 @@
 # Release notes
 Each `## <version>` block becomes the text of the in-app update banner and the GitHub Release.
 
+## 0.6.0
+Colored Lens is now built around its AI.
+- The AI is on by default ("Automatic" uses the best one your computer has). If none is set up yet, Colored Lens offers the three-minute setup; the quick looks still work without it.
+- "In this frame": every layer in the picture is listed with a tick. Untick one (a title, say) and read again to leave it out of the reading and of the AI's advice.
+- Choose what the AI studies around the shot: this shot, its scene, your In to Out range, or the whole sequence. It looks at several moments across that range.
+- "What the AI sees": every item it can find in the frame with its colour, the light, and what the shot seems to be for in its scene. Tell it what it cannot know, or correct it, in the chat box.
+- "Suggest colours and looks": up to ten directions. Each says what colour to give which item, what that tells the audience and why, with references from the encyclopedia, a Lukuluku look you can preview, and step-by-step instructions for the item-by-item colours.
+- Mac: the helper now starts reliably after an update.
+- Item-by-item colour in one click (colour zones in the Lukuluku effect) is the next update.
+
 ## 0.5.1
 - Mac: updating no longer leaves the Colored Lens Helper stopped ("the helper is not running"). The installer now waits for the old helper to close before starting the new one.
 - Everything in 0.5.0: the brighter DesignPraise colours and the Simple view.
