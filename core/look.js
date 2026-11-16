@@ -193,6 +193,17 @@ export function applyZones(src, out, p) {
   return oklabToLin(go[0], go[1], go[2]).map(v => Math.min(1, Math.max(0, lin2srgb(v))));
 }
 
+/** How much of a frame each colour zone actually reaches: [{zone, share}] (share of pixels moved at least a quarter of the way). */
+export function zoneCoverage(frame, p) {
+  const out = [], n = frame.w * frame.h, step = Math.max(1, Math.floor(n / 6000)), soft = (x, lo, hi, e) => smooth(lo - e, lo + e, x) * (1 - smooth(hi - e, hi + e, x));
+  for (let i = 1; i <= 4; i++) { const z = ZONE_KEYS.map((k, j) => p[`z${i}${k}`] ?? ZONE_DEF[j]); if (!(z[0] > 0)) continue; let hit = 0, tot = 0;
+    for (let q = 0; q < n; q += step) { const so = srgbToOklab(frame.data[q * 4] / 255, frame.data[q * 4 + 1] / 255, frame.data[q * 4 + 2] / 255), sC = Math.hypot(so[1], so[2]); let sh = Math.atan2(so[2], so[1]) * 57.29578; if (sh < 0) sh += 360;
+      let dh = Math.abs(sh - z[1]); if (dh > 180) dh = 360 - dh; const wh = z[4] <= 0.03 ? 1 : 1 - smooth(z[2] * 0.6, z[2] * 1.2, dh);
+      if (wh * soft(sC, z[3], z[4], 0.012) * soft(so[0], z[5], z[6], 0.05) > 0.25) hit++; tot++; }
+    out.push({ zone: i, share: tot ? hit / tot : 0 }); }
+  return out;
+}
+
 // ------------------------------------------------------------------ the per-pixel pipeline
 /**
  * Build an evaluator for one look. `cat` = Lukuluku catalog, `luts` = { C0: lut, Cn: lut }.
@@ -271,9 +282,11 @@ export function shareLink(look, appUrl = 'https://designpraiseeric.github.io/luk
   const G = fullGrade(look.G), diff = {};
   for (const [k, v] of Object.entries(G)) if (JSON.stringify(v) !== JSON.stringify(GRADE0[k])) diff[k] = v;
   const snap = { s: ['S1b'], a: Object.fromEntries(AXES.map(k => [k, look[k]])), G: diff, cam: {} };
-  const bytes = new TextEncoder().encode(JSON.stringify(snap));
-  let bin = ''; for (const b of bytes) bin += String.fromCharCode(b);
-  const b64 = (typeof btoa === 'function' ? btoa(bin) : Buffer.from(bin, 'binary').toString('base64')).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  // by hand: TextEncoder and btoa are not in every panel runtime
+  const bin = unescape(encodeURIComponent(JSON.stringify(snap))), A = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'; let raw = '';
+  for (let i = 0; i < bin.length; i += 3) { const x = bin.charCodeAt(i), y = bin.charCodeAt(i + 1), z = bin.charCodeAt(i + 2), t = (x << 16) | ((y || 0) << 8) | (z || 0);
+    raw += A[(t >> 18) & 63] + A[(t >> 12) & 63] + (isNaN(y) ? '=' : A[(t >> 6) & 63]) + (isNaN(z) ? '=' : A[t & 63]); }
+  const b64 = raw.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   return appUrl + '#look=' + b64;
 }
 

@@ -330,16 +330,62 @@ export function zonesFor(sg, study, swatches = []) {
   }
   return { params, mapped, skipped };
 }
-/** What to do by hand for the items colour zones could not take (same colour as something else, or more than four). */
-export function howTo(sg, hostName, z) {
-  const resolve = hostName === 'resolve', steps = [], left = z ? z.skipped.filter(x => !/Skin Guard|already about/.test(x.why)) : (sg.items || []).map(i => ({ item: i.item, why: '' }));
-  const tgt = n => { const it = (sg.items || []).find(i => i.item === n); return it ? `${it.colour}${it.hex ? ` (about ${it.hex})` : ''}` : 'its new colour'; };
-  if (z && z.mapped.length) steps.push(`“Try this on my frame” has already set ${z.mapped.map(m => `${m.item} → ${m.to}`).join(', ')}${sg.ambience && sg.ambience.colour ? `, and the ${sg.ambience.colour} ambience` : ''}. Press Apply to put that on your timeline as one effect; each zone is a group of sliders named “Zone 1…4” in the Lukuluku Look effect if you want to fine-tune it.`);
-  if (!left.length) { steps.push('Nothing in this suggestion needs to be done by hand.'); return steps; }
-  steps.push(`${left.length === 1 ? 'One item needs' : 'These items need'} a hand-drawn selection, because colour alone cannot separate ${left.length === 1 ? 'it' : 'them'}: ${left.map(x => `${x.item}${x.why ? ` (${x.why})` : ''}`).join('; ')}.`);
-  steps.push(resolve ? 'In Resolve: add a serial node after the Lukuluku node (Alt/Option + S).' : 'In Premiere: select the adjustment layer (or the clip), and in Effects search “Lumetri Color” and drag it on, below Lukuluku Look.');
-  steps.push(resolve ? 'Draw a Power Window around the item (Window palette › curve or circle), soften its edge, and track it forward with the Tracker palette.' : 'In Effect Controls, under that Lumetri Color, click the pen (or ellipse) and draw around the item. Raise “Mask Feather” to about 40, then press the play button next to “Mask Path” to track it through the shot.');
-  left.forEach(x => steps.push(resolve ? `${x.item}: inside its window, turn the Hue and Sat knobs (or push the Offset wheel) until it reads ${tgt(x.item)}.` : `${x.item}: in that Lumetri’s Color Wheels & Match, push Midtones toward ${tgt(x.item)}, and use Creative › Saturation to match its strength.`));
-  steps.push('Repeat with a new ' + (resolve ? 'node' : 'Lumetri Color') + ' for each item, then check faces last.');
-  return steps;
+/**
+ * A walkthrough for finishing a suggestion: what is already on the preview, how to correct a zone that caught the
+ * wrong thing, and click-by-click masking for the items colour alone cannot separate.
+ * z = zonesFor(...) result; cov = zoneCoverage(...) for what is on the preview now (optional).
+ * Returns sections: [{ h, steps: [..] }].
+ */
+export function howTo(sg, hostName, z, cov) {
+  const resolve = hostName === 'resolve', out = [], share = n => { const c = (cov || []).find(x => x.zone === n); return c ? c.share : null; };
+  const tgt = n => { const it = (sg.items || []).find(i => i.item === n); return it ? `${it.colour}${it.hex ? ` (${it.hex})` : ''}` : 'its new colour'; };
+  const left = z ? z.skipped.filter(x => !/Skin Guard|already about/.test(x.why)) : (sg.items || []).map(i => ({ item: i.item, why: '' }));
+  if (z && (z.mapped.length || z.params.ambAmt)) out.push({ h: 'Already done by “Try this on my frame”', steps: [
+    ...(z.params.ambAmt ? [`The ${sg.ambience.colour} ambience: a gentle tint over the mid-tones and highlights. Stronger or weaker: Tweak tab › Colour zones › “Ambience amount”.`] : []),
+    ...z.mapped.map(m => { const sh = share(m.zone); return `${m.item} → ${m.to} (Zone ${m.zone})${sh == null ? '' : sh < 0.004 ? ': this zone found almost nothing, see the next section' : `: reaches about ${Math.max(1, Math.round(sh * 100))}% of the picture`}.`; }),
+    'Press Apply to put all of this on your timeline as one Lukuluku Look effect. Nothing is baked in: every zone stays adjustable.'] });
+  if (z && z.mapped.length) out.push({ h: 'If a zone changed the wrong thing, or too little', steps: [
+    'Open the Tweak tab and find the “Colour zones” card. Each zone has five sliders. Watch the preview as you move them.',
+    '“Pick hue” chooses which colour in your shot the zone grabs. If the zone missed the item, drag it slowly until the item changes.',
+    '“Hue width” is how far around that colour it reaches. Narrow it if neighbours are changing too; widen it if only part of the item changes.',
+    '“New hue” and “New colourfulness” set the colour it becomes. “Amount” fades the whole zone in and out; 0 switches it off.',
+    'Faces changing? Raise “Skin Guard” on the same tab.'] });
+  if (left.length) out.push({ h: `Needs a mask: ${left.map(x => x.item).join(', ')}`, steps: resolve ? [
+    `Why: ${left.map(x => `${x.item} (${x.why || 'colour alone cannot separate it'})`).join('; ')}.`,
+    'Go to the Color page. Click the last node, then press Alt/Option + S to add a new node after it.',
+    'Open the Window palette (the circle icon under the viewer). Click the circle or the pen, and draw around the item in the viewer. Drag the inner and outer handles apart to soften the edge.',
+    'Open the Tracker palette (the crosshair icon) and press the forward-track button so the window follows the item through the shot.',
+    ...left.map(x => `${x.item}: with that node selected, turn Hue in the Primaries palette (and Sat) until it reads ${tgt(x.item)}.`),
+    'Add one new node per item. Check faces last.'] : [
+    `Why: ${left.map(x => `${x.item} (${x.why || 'colour alone cannot separate it'})`).join('; ')}.`,
+    'In the timeline, click the adjustment layer over the shot (or the clip itself) so it is selected.',
+    'Open the Effects panel (Window › Effects), type “Lumetri Color” in its search box, and drag Lumetri Color onto that layer.',
+    'Open Effect Controls (Window › Effect Controls). Under the new Lumetri Color you will see three small icons: an ellipse, a rectangle and a pen. Click the pen.',
+    'In the Program monitor, click around the item to draw its outline, and click the first point again to close it.',
+    'Back in Effect Controls, set “Mask Feather” to about 40 so the edge is soft. Then press the play arrow next to “Mask Path”: Premiere tracks the outline through the shot.',
+    ...left.map(x => `${x.item}: in that same Lumetri Color, open “Color Wheels & Match” and drag the Midtones wheel toward ${tgt(x.item)}. Open “Creative” and use Saturation to set how strong it is.`),
+    'One Lumetri Color per item. Rename each (right-click › Rename) so you can find it later. Check faces last.'] });
+  if (!out.length) out.push({ h: 'Nothing to do by hand', steps: ['Press “Try this on my frame” to build this suggestion on your preview.'] });
+  return out;
+}
+
+/** An AI-made picture of the frame wearing a suggestion (Gemini image models; needs billing on the key). Returns a data URL. */
+export const GEMINI_IMAGE_MODELS = ['gemini-3.1-flash-lite-image', 'gemini-2.5-flash-image'];
+export async function picture(cfg, sg, imageB64, post, mime = 'image/jpeg') {
+  if (!cfg.geminiKey) throw new Error('An AI picture needs a Google Gemini key. Add one under “AI”.');
+  const text = `Recolour this exact photograph. Keep every person, object, position, pose, expression, framing, lens and lighting direction exactly as they are: change colour only, as a film colourist and production designer would.\nColour direction “${sg.title}”: ${sg.idea}\nAmbience (colour of the light and air): ${sg.ambience.colour || 'unchanged'}.\n${sg.items.map(i => `- ${i.item}: ${i.colour}${i.hex ? ` (${i.hex})` : ''}`).join('\n')}\nKeep skin tones believable. Do not add, remove or redraw anything. Return the image only.`;
+  const order = [...(cfg.geminiImageModel ? [cfg.geminiImageModel] : []), ...GEMINI_IMAGE_MODELS.filter(m => m !== cfg.geminiImageModel)]; let last = null;
+  for (const model of order) {
+    let r; try { r = await Promise.race([post(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, { 'Content-Type': 'application/json', 'x-goog-api-key': cfg.geminiKey },
+      JSON.stringify({ contents: [{ role: 'user', parts: [{ text }, { inline_data: { mime_type: mime, data: imageB64 } }] }], generationConfig: { responseModalities: ['TEXT', 'IMAGE'] } })), new Promise((_, rej) => setTimeout(() => rej(new Error('took too long')), 120000))]); }
+    catch (e) { last = e; continue; }
+    if (r.status === 404) { last = new Error('gone'); continue; }
+    if (r.status === 429 || r.status === 403 || /billing|free tier|quota/i.test(r.text) && r.status >= 400) throw new Error('Google does not make pictures on a free key: its image models need billing switched on for your key (about 3 US cents a picture). You can turn that on at aistudio.google.com, or keep using “Try this on my frame”, which is free.');
+    if (r.status < 200 || r.status >= 300) { last = new Error(`Google answered ${r.status}: ${r.text.slice(0, 160)}`); continue; }
+    let j; try { j = JSON.parse(r.text); } catch { last = new Error('unreadable answer'); continue; }
+    const part = ((j.candidates || [])[0]?.content?.parts || []).find(p => p.inlineData || p.inline_data), d = part && (part.inlineData || part.inline_data);
+    if (d && d.data) return `data:${d.mimeType || d.mime_type || 'image/png'};base64,${d.data}`;
+    last = new Error('Google returned no picture for this one (it sometimes declines pictures of people). Try another suggestion.');
+  }
+  throw last && !/gone/.test(last.message) ? last : new Error('Google\'s picture models could not be reached with this key.');
 }

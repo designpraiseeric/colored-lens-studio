@@ -242,3 +242,7 @@ input, select, textarea { background: var(--p1); color: var(--ink); border: 1px 
 /* 0.7: steps as rows (UXP does not draw numbered lists) */
 .how { margin: 6px 0; } .howrow { display: flex; flex-direction: row; align-items: flex-start; margin: 6px 0; }
 .howrow .num { width: 18px; height: 18px; line-height: 18px; border-radius: 9px; background: var(--acc); color: #fff; font-size: 10px; font-weight: 700; text-align: center; margin-right: 8px; flex: none; }
+/* 0.8: encyclopedia pictures, AI picture */
+.encimgs { display: flex; flex-direction: row; flex-wrap: wrap; margin: 6px 0; }
+.encimg { width: 46%; margin: 0 4% 6px 0; } .encimg img { width: 100%; border-radius: 6px; display: block; }
+.aipic { width: 100%; border-radius: 8px; display: block; margin: 6px 0; }

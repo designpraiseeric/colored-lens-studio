@@ -6,9 +6,9 @@
 import { readFrame, frameStats, labPixels } from '../core/analysis.js';
 import { checkSkin, vectorscope } from '../core/skin.js';
 import { pngDataUrl, encodePNG, downsample, toBase64 } from '../core/image.js';
-import { PROVIDERS, DEFAULTS as SMART0, buildPrompt, parseReply, validate, ask, buildStudy, buildSuggest, validateStudy, validateSuggest, howTo, zonesFor, SYSTEM_STUDY, SYSTEM_SUGGEST, detectOllama, detectOpenAI, detectApple, appleReason, resolveProvider } from '../core/smart.js';
+import { PROVIDERS, DEFAULTS as SMART0, buildPrompt, parseReply, validate, ask, buildStudy, buildSuggest, validateStudy, validateSuggest, howTo, zonesFor, picture, SYSTEM_STUDY, SYSTEM_SUGGEST, detectOllama, detectOpenAI, detectApple, appleReason, resolveProvider } from '../core/smart.js';
 import { shotRecord, encodeShot, decodeShot, renderStrip, readSequence, scriptCSV } from '../core/script.js';
-import { zoneDefaults, parseLookInput, formatCode, fullGrade, makePixelFn, bakeCube, lookToEngineParams, shareLink, computeMatch, matchStats, hasCurves, GRADE0 } from '../core/look.js';
+import { zoneDefaults, zoneCoverage, hasZones, parseLookInput, formatCode, fullGrade, makePixelFn, bakeCube, lookToEngineParams, shareLink, computeMatch, matchStats, hasCurves, GRADE0 } from '../core/look.js';
 import { GENRES, FEELINGS, ROLES, KIND_LABEL, pickDirections, describeEffect, whyFor, frameSummary, answers, isDark, continuity, pictureOf, directionsFromPicks } from '../core/directions.js';
 import { previewer, wipe } from '../core/preview.js';
 import { listPresets, savePreset, deletePreset, duplicatePreset, presetCode, importPresetCode, settings } from '../core/presets.js';
@@ -368,6 +368,7 @@ export async function startApp(host, root) {
       S.extra = { ...S.extra, ...computeMatch(matchStats(S.frame), ref.ms) }; S.refName = m.title; go('tweak'); toast(`Match to “${m.title}” set in Tweak`);
     });
     wireDirections(body); wireAI(body);
+    if (S.focusSg != null) { const el = body.querySelector(`[data-sg="${S.focusSg}"]`); S.focusSg = null; if (el) body.scrollTop += el.getBoundingClientRect().top - body.getBoundingClientRect().top - 6; }
   }
 
   // ---------- the AI: what is in scope, what it sees, and its colour suggestions ----------
@@ -471,11 +472,22 @@ export async function startApp(host, root) {
         ${open ? `${g.ambience.colour ? `<div class="it">${sw(g.ambience.hex)}<span><b>Ambience</b> → ${esc(g.ambience.colour)}</span></div>` : ''}
           ${g.items.map(it => `<div class="it">${sw(it.hex)}<span><b>${esc(it.item)}</b> → ${esc(it.colour)}${it.accent ? ' <span class="badge smart">accent</span>' : ''}${it.why ? ` <span class="dim">· ${esc(it.why)}</span>` : ''}</span></div>`).join('')}
           ${g.communicates ? `<p class="small"><b>This tells the audience:</b> ${esc(g.communicates)}</p>` : ''}${g.because ? `<p class="small"><b>Because:</b> ${esc(g.because)}</p>` : ''}
-          ${g.refs.length ? `<div class="k">From the encyclopedia</div>${g.refs.map(r => `<p class="small ref1"><a href="#" data-more="${esc(r.name.split(' / ')[0])}">${esc(r.name)}</a> <span class="dim">(${esc(r.kind)})</span>: ${esc(r.line)}${r.ex ? ` <span class="dim">See: ${esc(String(r.ex).slice(0, 160))}</span>` : ''}</p>`).join('')}` : ''}
-          ${S.suggOn === i && S.suggZ ? `<p class="small okmsg">✓ On your preview now: ${esc([...(g.ambience.colour ? [g.ambience.colour + ' ambience'] : []), ...S.suggZ.mapped.map(m => `${m.item} → ${m.to}`)].join(', ') || 'the overall look')}. Drag across the picture to compare.</p>
-            ${S.suggZ.skipped.length ? `<p class="small dim">Not changed: ${esc(S.suggZ.skipped.map(x => `${x.item} (${x.why})`).join('; '))}.</p>` : ''}` : ''}
-          <div class="row wrap"><button class="primary" data-sgprev="${i}">${S.suggOn === i ? 'Try it again' : 'Try this on my frame'}</button>${S.suggOn === i ? `<button data-dapply="0">Apply</button><button data-dtweak="0">Tweak</button>` : ''}<button data-sghow="${i}">${S.suggHow === i ? 'Hide the steps' : 'What is left to do by hand'}</button></div>
-          ${S.suggHow === i ? `<div class="how">${howTo(g, host.name, S.suggOn === i ? S.suggZ : zonesFor(g, S.study, S.reading ? S.reading.swatches : [])).map((x, k) => `<div class="howrow"><span class="num">${k + 1}</span><span class="small grow">${esc(x)}</span></div>`).join('')}</div><div class="row"><button data-sgcopy="${i}">Copy the steps</button></div>` : ''}` : ''}</div>`; }).join('')}`;
+          ${g.refs.length ? `<div class="k">From the encyclopedia</div>${g.refs.map(r => `<p class="small ref1"><a href="#" data-more="${esc(r.name.split(' / ')[0])}">${esc(r.name)}</a> <span class="dim">(${esc(r.kind)})</span>: ${esc(r.line)}${r.ex ? ` <span class="dim">See: ${esc(String(r.ex).slice(0, 160))}</span>` : ''}</p>${imgStrip(r.name)}`).join('')}` : ''}
+          ${S.suggOn === i && S.suggZ ? suggStatus(g) : ''}
+          <div class="row wrap"><button class="primary" data-sgprev="${i}">${S.suggOn === i ? 'Rebuild it' : 'Try this on my frame'}</button>${S.suggOn === i ? `<button data-dapply="0">Apply</button><button data-dtweak="0">Tweak</button>` : ''}<button data-sghow="${i}">${S.suggHow === i ? 'Hide the walkthrough' : 'How to finish this look'}</button><button data-sgpic="${i}">${g.pic ? 'Hide the AI’s picture' : 'Show the AI’s picture'}</button></div>
+          ${g.picBusy ? '<p class="small todo">The AI is painting its version of your frame… (about half a minute)</p>' : ''}${g.picErr ? `<p class="small warn">${esc(g.picErr)}</p>` : ''}
+          ${g.pic ? `<div class="k">The AI’s picture of this idea</div><img class="aipic" src="${g.pic}"><p class="small dim">An AI repainted your frame to show the idea. It is a concept, not a grade: it can change details a colour grade cannot. Compare it with “Try this on my frame”, which is what you can actually apply.</p>` : ''}
+          ${S.suggHow === i ? `<div class="how">${howTo(g, host.name, S.suggOn === i ? S.suggZ : zonesFor(g, S.study, S.reading ? S.reading.swatches : []), S.suggOn === i ? liveCoverage() : null).map(sec => `<div class="k">${esc(sec.h)}</div>${sec.steps.map((x, k) => `<div class="howrow"><span class="num">${k + 1}</span><span class="small grow">${esc(x)}</span></div>`).join('')}`).join('')}</div><div class="row"><button data-sgcopy="${i}">Copy the walkthrough</button></div>` : ''}` : ''}</div>`; }).join('')}`;
+  }
+  /** What the colour zones on the preview reach right now (follows every tweak). */
+  function liveCoverage() { return S.frame && hasZones(S.extra) ? zoneCoverage(downsample(S.frame, 160), S.extra) : []; }
+  function suggStatus(g) {
+    const z = S.suggZ, cov = liveCoverage(), rows = [];
+    if ((S.extra.ambAmt || 0) > 0 && g.ambience.colour) rows.push(`<div class="it">${sw(g.ambience.hex)}<span><b>Ambience</b> → ${esc(g.ambience.colour)}: on, at ${Math.round(S.extra.ambAmt * 100)}%</span></div>`);
+    for (const m of z.mapped) { const c = cov.find(x => x.zone === m.zone), amt = S.extra[`z${m.zone}Amt`] || 0, it = g.items.find(x => x.item === m.item) || {};
+      rows.push(`<div class="it">${sw(it.hex)}<span><b>${esc(m.item)}</b> → ${esc(m.to)}: ${amt <= 0 ? '<span class="warn">switched off</span>' : !c || c.share < 0.004 ? '<span class="warn">this zone is finding almost nothing in your frame. Open Tweak › Colour zones and drag “Zone ' + m.zone + ' pick hue” until it changes.</span>' : `changing about ${Math.max(1, Math.round(c.share * 100))}% of the picture`}</span></div>`); }
+    return `<div class="k">On your preview now</div>${rows.join('') || '<p class="small">Only the overall look.</p>'}
+      ${z.skipped.length ? `<p class="small dim">Not changed: ${esc(z.skipped.map(x => `${x.item} (${x.why})`).join('; '))}.</p>` : ''}<p class="small dim">Measured from your frame; it updates as you tweak. Drag across the picture to compare.</p>`;
   }
   function wireAI(body) {
     wireSmart(body);
@@ -490,12 +502,16 @@ export async function startApp(host, root) {
     if ($('#aiUse', body)) $('#aiUse', body).onclick = () => { for (const k of ['genre', 'feeling', 'role']) if (S.study.answers[k].length) S.intent[k] = S.study.answers[k]; saveIntent(); busy('Finding directions', async () => { await suggest(); render(); }); };
     body.querySelectorAll('[data-sg]').forEach(el => el.onclick = e => { if (e.target.closest('button') || e.target.closest('a')) return; const i = +el.dataset.sg, top = body.scrollTop; S.suggOpen = S.suggOpen === i ? -1 : i; S.suggHow = -1; render(); body.scrollTop = top; });
     body.querySelectorAll('[data-sghow]').forEach(b => b.onclick = () => { const i = +b.dataset.sghow, top = body.scrollTop; S.suggHow = S.suggHow === i ? -1 : i; render(); body.scrollTop = top; });
-    body.querySelectorAll('[data-sgcopy]').forEach(b => b.onclick = async () => { const g = S.sugg[+b.dataset.sgcopy]; toast((await copyText(`${g.title}\n` + howTo(g, host.name, zonesFor(g, S.study, S.reading ? S.reading.swatches : [])).map((x, k) => `${k + 1}. ${x}`).join('\n'))) ? 'Steps copied' : 'Could not copy'); });
+    body.querySelectorAll('[data-sgcopy]').forEach(b => b.onclick = async () => { const g = S.sugg[+b.dataset.sgcopy]; toast((await copyText(`${g.title}\n\n` + howTo(g, host.name, zonesFor(g, S.study, S.reading ? S.reading.swatches : [])).map(sec => sec.h + '\n' + sec.steps.map((x, k) => `${k + 1}. ${x}`).join('\n')).join('\n\n'))) ? 'Walkthrough copied' : 'Could not copy'); });
+    body.querySelectorAll('[data-sgpic]').forEach(b => b.onclick = async () => { const i = +b.dataset.sgpic, g = S.sugg[i]; if (g.pic) { g.pic = ''; S.focusSg = i; return render(); } if (g.picBusy) return;
+      g.picBusy = true; g.picErr = ''; S.focusSg = i; render();
+      try { g.pic = await picture(await smartCfg(), g, toBase64(encodeJPEG(downsample(S.frame, 768), 86)), httpPost); } catch (e) { g.picErr = e.message || String(e); }
+      g.picBusy = false; if (S.tab === 'shot') { S.focusSg = i; softRender(); } });
     body.querySelectorAll('[data-sgprev]').forEach(b => b.onclick = () => busy('Building this suggestion', async () => { const i = +b.dataset.sgprev, g = S.sugg[i], top = body.scrollTop;
       // the Lukuluku look for the overall grade (a clean pass-through when the AI named none), then one colour zone per item
       const di = S.smartDirs.findIndex(d => d.id === g.recipe); if (di >= 0) choose(di); else { S.chosen = -1; S.look = NEUTRAL_LOOK(); S.extra = { ...XDEF }; }
       const z = zonesFor(g, S.study, S.reading ? S.reading.swatches : []); S.extra = { ...S.extra, ...zoneDefaults(), ...z.params, skinGuard: Math.max(S.extra.skinGuard || 0, 0.7) };
-      S.recipe = { name: g.title, presetId: null }; S.suggOn = i; S.suggZ = z; S.view = 'split'; S.dockHidden = false; stageCache.key = ''; render(); body.scrollTop = top;
+      S.recipe = { name: g.title, presetId: null }; S.suggOn = i; S.suggZ = z; S.view = 'split'; S.dockHidden = false; stageCache.key = ''; S.focusSg = i; render();
       toast(z.mapped.length || z.params.ambAmt ? `“${g.title}” is on your preview: drag across the picture to compare` : 'Only the overall look could be previewed for this one; see “What is left to do by hand”'); }));
   }
   // What the timeline says about this shot. Context proposes; the editor decides.
@@ -634,6 +650,10 @@ export async function startApp(host, root) {
       <div class="card"><div class="k">Grade</div>${slider('G', 'exp', 'Exposure', -3, 3, 0.05)}${slider('G', 'con', 'Contrast', 0.5, 1.6, 0.01)}${slider('G', 'sat', 'Saturation', 0, 2, 0.01)}${slider('G', 'vib', 'Vibrance', -1, 1, 0.01)}${slider('G', 'temp', 'Temperature', -1, 1, 0.01)}${slider('G', 'tint', 'Tint', -1, 1, 0.01)}${slider('G', 'hi', 'Highlights', -1, 1, 0.01)}${slider('G', 'sh', 'Shadows', -1, 1, 0.01)}${slider('G', 'bk', 'Blacks', -1, 1, 0.01)}${slider('G', 'wh', 'Whites', -1, 1, 0.01)}</div>
       <div class="card"><div class="k">Skin Guard</div><p class="small dim">The look may add to skin, but cannot take away its hue, density or light beyond what you allow.</p>
         ${slider('X', 'skinGuard', 'Skin Guard', 0, 1, 0.01)}${slider('X', 'skinHue', 'Protect hue', 0, 1, 0.01)}${slider('X', 'skinDensity', 'Protect density', 0, 1, 0.01)}${slider('X', 'skinLight', 'Protect light', 0, 1, 0.01)}</div>
+        ${hasZones(S.extra) ? `<div class="card" id="zonesCard"><div class="k">Colour zones</div><p class="small dim">Each zone grabs one colour in your shot and moves it to a new one. They come from an AI suggestion; adjust them here.</p>
+          ${slider('X', 'ambAmt', 'Ambience amount', 0, 1, 0.01)}${(S.extra.ambAmt || 0) > 0 ? slider('X', 'ambHue', 'Ambience hue', 0, 360, 1) : ''}
+          ${[1, 2, 3, 4].filter(n => (S.extra[`z${n}Amt`] || 0) > 0 || (S.suggZ && S.suggZ.mapped.some(m => m.zone === n))).map(n => { const m = S.suggZ && S.suggZ.mapped.find(x => x.zone === n);
+            return `<div class="q">Zone ${n}${m ? `: ${esc(m.item)} → ${esc(m.to)}` : ''}</div>${slider('X', `z${n}Amt`, 'Amount', 0, 1, 0.01)}${slider('X', `z${n}Hue`, 'Pick hue', 0, 360, 1)}${slider('X', `z${n}Wid`, 'Hue width', 5, 120, 1)}${slider('X', `z${n}ToHue`, 'New hue', 0, 360, 1)}${slider('X', `z${n}ToC`, 'New colourfulness', 0, 0.4, 0.005)}`; }).join('')}</div>` : ''}
       <div class="card"><div class="k">Match to reference</div>${X.matchAmt > 0 ? `<p class="small">Matching ${esc(S.refName || 'a reference')}.</p>${slider('X', 'matchAmt', 'Match amount', 0, 1, 0.01)}` : '<p class="small dim">Set a frame from your timeline as the reference, then park on the shot to match. Or use “Match my shot to this” on a similar frame in Shot.</p>'}
         <div class="row wrap"><button id="setref">Use the current frame as reference</button><button id="matchref" ${S.refFrameStats ? '' : 'disabled'}>Match this frame to it</button>${X.matchAmt > 0 ? '<button id="nomatch">Clear match</button>' : ''}</div></div>
       ${hasCurves(G) ? '<p class="warn small">This look has curves from Lukuluku. The effect applies everything except curves; the .cube LUT includes them.</p>' : ''}
@@ -691,6 +711,10 @@ export async function startApp(host, root) {
   }
 
   // ENCYCLOPEDIA ----------------------------------------------------------
+  /** Pictures for an encyclopedia entry: its own reference frame, plus the context frames that belong to it. */
+  function encImages(title) { const t = String(title).split(':')[0].trim().toLowerCase(), F = (refs() && refs().frames) || [];
+    return F.filter(f => ['psy', 'pal', 'nar', 'aut'].includes(f.kind) && f.title.toLowerCase() === t).concat(F.filter(f => f.kind === 'ctx' && f.title.toLowerCase().startsWith(t + ':'))).slice(0, 4); }
+  const imgStrip = title => { const im = encImages(title); return im.length ? `<div class="encimgs">${im.map(f => `<div class="encimg"><img src="${up.frameUrl(f.thumb)}" onerror="this.parentNode.style.display='none'"><div class="small dim">${esc(f.kind === 'ctx' ? f.title.split(':').slice(1).join(':').trim() : f.reading || '')}</div></div>`).join('')}</div>` : ''; };
   function libraryEntries() {
     const e = enc(), out = [];
     e.HUES.forEach(h => out.push({ s: 'Colour psychology', t: h.name + ': ' + h.tag, body: h.p.join(' ') + ' Bright side: ' + h.pos + ' Dark side: ' + h.neg + ' Craft: ' + h.craft, looks: h.looks, ex: h.ex.map(x => `${x[0]} (${x[1]}, ${x[2]}): ${x[3]}`), hex: h.hex }));
@@ -710,7 +734,7 @@ export async function startApp(host, root) {
     const list = q ? all.filter(x => x.t.toLowerCase().includes(q)).concat(all.filter(x => !x.t.toLowerCase().includes(q) && (x.body + ' ' + (x.ex || []).join(' ')).toLowerCase().includes(q))) : all;
     body.innerHTML = `<div class="row"><button id="encBack">← Back</button><input id="q" placeholder="Search the encyclopedia (red, Deakins, bleach bypass, skin…)" value="${esc(S.encQ)}"></div>
       <div class="dim small">${list.length} entries · ${esc(enc().title)} <a data-url="${esc(config.sources.encyclopedia.app)}" href="#">open the full encyclopedia</a></div>
-      ${list.slice(0, 60).map(x => `<div class="card"><div class="k">${esc(x.s)}</div><h3>${x.hex ? `<span class="sw" style="background:${x.hex}"></span>` : ''}${esc(x.t)}</h3>${x.pal ? swatchBar(x.pal.map(h => ({ hex: h, share: 1 }))) : ''}<p class="small">${esc(x.body)}</p>${x.ex ? `<ul class="small">${x.ex.map(t => `<li>${esc(t)}</li>`).join('')}</ul>` : ''}${lookChips(x.looks || [])}</div>`).join('')}`;
+      ${list.slice(0, 60).map(x => `<div class="card"><div class="k">${esc(x.s)}</div><h3>${x.hex ? `<span class="sw" style="background:${x.hex}"></span>` : ''}${esc(x.t)}</h3>${x.pal ? swatchBar(x.pal.map(h => ({ hex: h, share: 1 }))) : ''}${imgStrip(x.t)}<p class="small">${esc(x.body)}</p>${x.ex ? `<ul class="small">${x.ex.map(t => `<li>${esc(t)}</li>`).join('')}</ul>` : ''}${lookChips(x.looks || [])}</div>`).join('')}`;
     $('#encBack', body).onclick = () => go(S.back || 'shot');
     const q$ = $('#q', body); q$.oninput = () => { S.encQ = q$.value; clearTimeout(renderEnc.t); renderEnc.t = setTimeout(() => { renderEnc(body); const n = $('#q', body); n.focus(); try { n.setSelectionRange(S.encQ.length, S.encQ.length); } catch {} }, 250); };
   }

@@ -91,7 +91,7 @@ test('Premiere panel: grab, mark, read markers, apply the effect, update', { ski
     assert.match(window_seen[0].messages.at(-1).content, /EDITOR'S MESSAGE: this is the opening shot/); assert.match(window_seen[0].messages.at(-1).content, /LAYERS IN SCOPE: V/);
     await page.click('#aiSuggest'); await page.waitForSelector('.sg', { timeout: 15000 }); assert.equal(await page.locator('.sg').count(), 2);
     await page.click('.sg'); { const t = await page.innerText('.sg.on'); assert.match(t, /candy floss/i); assert.match(t, /cool pink/); assert.match(t, /Complementary/); assert.match(t, /Pink|Yellow/, 'colour entries are added as references'); assert.doesNotMatch(t, /Not A Real Entry/); }
-    await page.click('[data-sgprev="0"]'); await page.waitForSelector('.sg.on .okmsg'); assert.match(await page.innerText('.sg.on .okmsg'), /golden yellow ambience/); await page.click('[data-sghow="0"]'); assert.match(await page.innerText('.how'), /by hand|already set/);
+    await page.click('[data-sgprev="0"]'); await page.waitForFunction(() => /On your preview now/i.test((document.querySelector('.sg.on') || {}).innerText || '')); assert.match(await page.innerText('.sg.on'), /Ambience → golden yellow: on/); await page.click('[data-sghow="0"]'); assert.match(await page.innerText('.how'), /Already done|Needs a mask/i);
     { const z = await page.evaluate(() => 0); }
     await page.click('#scope .lay'); await page.click('#reread'); await page.waitForFunction(() => window.__pp.calls.some(c => /read without unticked layers/.test(c)), null, { timeout: 15000 });
     await page.waitForFunction(() => window.__pp.calls.some(c => /layers back on/.test(c)), null, { timeout: 15000 });

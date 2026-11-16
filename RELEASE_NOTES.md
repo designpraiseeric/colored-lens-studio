@@ -1,6 +1,15 @@
 # Release notes
 Each `## <version>` block becomes the text of the in-app update banner and the GitHub Release.
 
+## 0.8.0
+- "On your preview now" is measured, not assumed: for each item it says how much of your frame the zone is really changing, or that it is finding nothing and which slider fixes it. It updates as you tweak.
+- Colour zones have their own sliders in the Tweak tab (amount, pick hue, hue width, new hue, new colourfulness, ambience).
+- "How to finish this look" is a proper walkthrough in three parts: what is already done, how to correct a zone, and click-by-click masking for items colour alone cannot separate.
+- The list no longer jumps away after "Try this on my frame".
+- "Show the AI's picture": the AI repaints your frame to show the idea, for comparing with the real preview. This uses Google's image models, which need billing switched on for your key (about 3 US cents a picture); on a free key it explains that instead.
+- The encyclopedia now shows its reference pictures, in the Encyclopedia view and under each suggestion's references.
+- "Open in Lukuluku" works in Premiere Pro.
+
 ## 0.7.2
 - Fixed "The exported frame did not appear": Colored Lens now waits up to a minute for Premiere to render the frame on heavy timelines (it gave up after six seconds), and says so while it waits.
 - Reading a shot now switches off every Lukuluku Look in the picture for the read, including one on an adjustment layer above the shot, so the reading is of the shot itself and the frame renders faster.
