@@ -17,8 +17,15 @@ chmod 755 "$HELPER" 2>/dev/null; chown root:wheel "$AGENT" 2>/dev/null; chmod 64
 xattr -dr com.apple.quarantine "$HELPER" 2>/dev/null
 if [ -n "$USER_ID" ] && [ "$USER_NAME" != "root" ]; then
   sudo -u "$USER_NAME" mkdir -p "/Users/$USER_NAME/Library/Application Support/ColoredLens/bridge"
+  # Stop the old helper and wait until it is really gone: starting the new one too soon fails ("Bootstrap failed: 5").
   launchctl bootout "gui/$USER_ID/com.designpraise.coloredlens.helper" 2>/dev/null
-  launchctl bootstrap "gui/$USER_ID" "$AGENT" && echo "helper started" || echo "helper will start at next login"
+  for i in 1 2 3 4 5 6 7 8 9 10; do launchctl print "gui/$USER_ID/com.designpraise.coloredlens.helper" >/dev/null 2>&1 || break; sleep 1; done
+  STARTED=""
+  for i in 1 2 3 4 5 6; do
+    if launchctl bootstrap "gui/$USER_ID" "$AGENT" 2>/dev/null || launchctl print "gui/$USER_ID/com.designpraise.coloredlens.helper" >/dev/null 2>&1; then STARTED=1; break; fi; sleep 2; done
+  launchctl kickstart "gui/$USER_ID/com.designpraise.coloredlens.helper" 2>/dev/null
+  # Last resort: run it directly for this login session; the launch agent takes over at the next login.
+  if [ -z "$STARTED" ]; then echo "launchd would not start the helper; running it directly"; launchctl asuser "$USER_ID" sudo -u "$USER_NAME" nohup "$HELPER" >/tmp/ColoredLensHelper.log 2>&1 </dev/null & disown 2>/dev/null; else echo "helper started"; fi
 fi
 # 3. The Premiere Pro panel: Adobe's own installer agent installs the .ccx for the logged-in user. That agent waits
 # for the Creative Cloud app and can sit there for many minutes when it is closed, so it runs in the background

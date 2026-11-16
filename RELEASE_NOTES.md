@@ -1,6 +1,10 @@
 # Release notes
 Each `## <version>` block becomes the text of the in-app update banner and the GitHub Release.
 
+## 0.5.1
+- Mac: updating no longer leaves the Colored Lens Helper stopped ("the helper is not running"). The installer now waits for the old helper to close before starting the new one.
+- Everything in 0.5.0: the brighter DesignPraise colours and the Simple view.
+
 ## 0.5.0
 A brighter look and a simpler panel.
 - New colours from the DesignPraise palette: a bright panel with violet as the main colour, amber and magenta accents, and a gradient header. Prefer dark? Press "Dark" at the top right.
