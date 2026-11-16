@@ -246,3 +246,9 @@ input, select, textarea { background: var(--p1); color: var(--ink); border: 1px 
 .encimgs { display: flex; flex-direction: row; flex-wrap: wrap; margin: 6px 0; }
 .encimg { width: 46%; margin: 0 4% 6px 0; } .encimg img { width: 100%; border-radius: 6px; display: block; }
 .aipic { width: 100%; border-radius: 8px; display: block; margin: 6px 0; }
+/* 0.8.1 */
+.encimgs { display: flex; flex-direction: row; flex-wrap: nowrap; margin: 6px 0; }
+.encimg { width: 130px; flex: none; margin: 0 8px 6px 0; } .encimg img { width: 130px; height: 74px; border-radius: 6px; display: block; }
+.sghead { cursor: pointer; }
+/* text boxes: one plain dark field (UXP draws its own frame; fighting it gave a two-tone box) */
+input, select, textarea { background: #17161A; color: #FFFFFF; border: none; border-radius: 6px; }

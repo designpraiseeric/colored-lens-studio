@@ -98,7 +98,9 @@ export function validate(o) {
 const withTimeout = (p, ms, what) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(what + ' took too long (over ' + Math.round(ms / 1000) + ' s)')), ms))]);
 async function postJSON(post, url, headers, body, ms = 120000) {
   const r = await withTimeout(post(url, { 'content-type': 'application/json', ...headers }, JSON.stringify(body)), ms, 'The model');
-  if (r.status < 200 || r.status >= 300) throw new Error(`The model answered ${r.status}: ${String(r.text).slice(0, 200)}`);
+  if (r.status < 200 || r.status >= 300) { let msg = String(r.text).slice(0, 200); try { const j = JSON.parse(r.text); msg = (j.error && (j.error.message || j.error)) || msg; } catch { /* not JSON */ }
+    if (/repeat limit|prediction aborted/i.test(msg)) throw new Error('REPEAT: the AI on this computer got stuck repeating itself and stopped.');
+    throw new Error(`The model answered ${r.status}: ${String(msg).slice(0, 200)}`); }
   return JSON.parse(r.text);
 }
 const trim = u => String(u || '').replace(/\/+$/, '');
@@ -115,7 +117,7 @@ export async function ask(cfg, { prompt, imageB64, images = [], history = [], sy
   }
   if (cfg.provider === 'ollama') {
     const msgs = [{ role: 'system', content: SYS }, ...hist.map(h => ({ role: h.role, content: h.text })), { role: 'user', content: prompt, images: [imageB64, ...more] }];
-    const j = await postJSON(post, trim(cfg.ollamaUrl) + '/api/chat', {}, { model: cfg.ollamaModel, messages: msgs, format: 'json', stream: false, options: { temperature: 0.4, num_ctx: 8192 } }, 300000);
+    const j = await postJSON(post, trim(cfg.ollamaUrl) + '/api/chat', {}, { model: cfg.ollamaModel, messages: msgs, format: 'json', stream: false, options: { temperature: 0.5, num_ctx: 8192, repeat_penalty: 1.15, num_predict: 3500 } }, 300000);
     return (j.message && j.message.content) || '';
   }
   if (cfg.provider === 'openai') {
@@ -229,10 +231,10 @@ Give the number of directions asked for, and make them range widely. Across the 
 - one or two bold, stylised options a brave director might choose;
 - one that deliberately plays against the obvious reading of the scene (counterpoint), if the scene allows it.
 For each direction:
-- "title": names the colour idea itself (for example "Teal walls, amber lamp, her dress the only red"), never just a mood or genre.
+- "title": names the colour idea itself using this frame's own items (which item takes which colour), never just a mood or genre.
 - "idea": one sentence on the colour idea. "structure": the palette structure it uses, by its ENCYCLOPEDIA name.
 - "ambience": the colour of the light and air (name + hex).
-- "items": for every important item in ITEMS, the colour it should become (plain name + hex) and why in one clause. At least four items. At least two of them must change visibly from the colour they have now, and say which single item is the accent the eye should land on. Use the items' names exactly as given. Skin stays believable unless the direction is openly stylised; say what happens to skin.
+- "items": for every important item in ITEMS, the colour it should become (plain name + hex) and why in one clause. At least four items. At least two of them must change visibly from the colour they have now, and say which single item is the accent the eye should land on. Use the items' names exactly as given, and only items that are in ITEMS: never mention things that are not in this frame. Skin stays believable unless the direction is openly stylised; say what happens to skin.
 - "communicates": what this arrangement tells the audience about the person, place or moment. "because": the colour reasoning: the relationships between the items' colours, contrast of hue / value / saturation, where the eye goes first and why, and what it does for the face.
 - "refs": 2 to 4 names copied exactly from ENCYCLOPEDIA that genuinely explain this direction (its structure, a storytelling use, a filmmaker known for it). No filler.
 - "recipe": last and least: the id from RECIPES of the film look that sits best underneath this direction (the item colours are applied on top of it), with optional "tweaks" from TWEAKS.
@@ -279,11 +281,14 @@ export function validateStudy(o) {
     questions: (Array.isArray(o.questions) ? o.questions : []).map(q => S_(q, 200)).filter(Boolean).slice(0, 2), answers: { genre: okIds(GENRES, ans.genre), feeling: okIds(FEELINGS, ans.feeling), role: okIds(ROLES, ans.role) } };
 }
 /** Keeps valid suggestions and attaches encyclopedia references: the ones the model named, plus the entry for every colour it proposed. */
-export function validateSuggest(o, enc) {
+export function validateSuggest(o, enc, study) {
+  const known = (study && study.items || []), cur = n => known.find(x => x.name.toLowerCase() === String(n).toLowerCase());
+  const far = (a, b) => { const A = lchOf(a), B = lchOf(b); return !A || !B ? true : Math.hypot(A.lab[1] - B.lab[1], A.lab[2] - B.lab[2]) + Math.abs(A.L - B.L) * 0.5 > 0.03; };
   const cat = catalogue(enc), find = n => cat.find(c => c.name.toLowerCase() === String(n || '').trim().toLowerCase());
   const col = c => ({ colour: S_(c && c.colour, 40), hex: hexOk(c && c.hex) });
   const out = (Array.isArray(o.suggestions) ? o.suggestions : []).map(sg => { if (!sg) return null;
-    const items = (Array.isArray(sg.items) ? sg.items : []).map(i => ({ item: S_(i && i.item, 80), ...col(i), why: S_(i && i.why, 240), accent: !!(i && i.accent) })).filter(i => i.item && (i.colour || i.hex)).slice(0, 14);
+    const items = (Array.isArray(sg.items) ? sg.items : []).map(i => ({ item: S_(i && i.item, 80), ...col(i), why: S_(i && i.why, 240), accent: !!(i && i.accent) })).filter(i => i.item && (i.colour || i.hex)).filter(i => !known.length || cur(i.item)).map(i => ({ ...i, changes: !cur(i.item) || far(cur(i.item).hex, i.hex) })).slice(0, 14);
+    if (known.length && items.filter(i => i.changes).length < 1) return null; // nothing would actually change
     const amb = col(sg.ambience), r = RECIPES.find(x => x.id === sg.recipe), tweaks = {};
     for (const [k, v] of Object.entries(sg.tweaks || {})) if (TWEAKS[k] && Number.isFinite(+v)) tweaks[k] = Math.min(TWEAKS[k][1], Math.max(TWEAKS[k][0], +v));
     const refs = []; const add = (c, via) => { if (c && !refs.some(x => x.name === c.name)) refs.push({ ...c, via }); };
@@ -301,7 +306,7 @@ const lchOf = hex => { const h = hexOk(hex); if (!h) return null; const [r, g, b
  * (from the AI's study, snapped to the nearest real colour measured in the frame) and moved to its proposed colour.
  * Up to four zones; skin is left to Skin Guard. Returns { params, mapped:[{item,from,to}], skipped:[{item,why}] }.
  */
-export function zonesFor(sg, study, swatches = []) {
+export function zonesFor(sg, study, swatches = [], frame = null) {
   const params = {}, mapped = [], skipped = [], sw = swatches.map(x => (typeof x === 'string' ? x : x && (x.hex || x[0]))).map(lchOf).filter(Boolean);
   const amb = lchOf(sg.ambience && sg.ambience.hex); if (amb && amb.C > 0.02) { params.ambHue = +amb.h.toFixed(1); params.ambAmt = 0.5; }
   const cands = [];
@@ -322,7 +327,15 @@ export function zonesFor(sg, study, swatches = []) {
     const clash = used.find(u => (u.from.C < 0.035) === (c.from.C < 0.035) && (c.from.C < 0.035 ? Math.abs(u.from.L - c.from.L) < 0.12 : Math.min(Math.abs(u.from.h - c.from.h), 360 - Math.abs(u.from.h - c.from.h)) < 18 && Math.abs(u.from.L - c.from.L) < 0.25));
     if (clash) { skipped.push({ item: c.it.item, why: `it is the same colour as the ${clash.it.item} now, so it needs a mask` }); continue; }
     if (used.length >= 4) { skipped.push({ item: c.it.item, why: 'four zones are already in use' }); continue; }
-    used.push(c); const i = used.length, n = c.from.C < 0.035, P = (k, v) => { params[`z${i}${k}`] = +(+v).toFixed(4); };
+    const n = c.from.C < 0.035;
+    // how much of the picture has this colour? A small item whose colour is all over the frame cannot be picked by colour.
+    if (frame) { let hit = 0, tot = 0; const N = frame.w * frame.h, step = Math.max(1, Math.floor(N / 5000));
+      for (let q = 0; q < N; q += step) { const lab = srgbToOklab(frame.data[q * 4] / 255, frame.data[q * 4 + 1] / 255, frame.data[q * 4 + 2] / 255), C = Math.hypot(lab[1], lab[2]); let h = Math.atan2(lab[2], lab[1]) * 57.29578; if (h < 0) h += 360; let dh = Math.abs(h - c.from.h); if (dh > 180) dh = 360 - dh;
+        if (n ? C < 0.03 && Math.abs(lab[0] - c.from.L) < 0.14 : dh < 24 && C > Math.max(0.025, c.from.C * 0.45) && Math.abs(lab[0] - c.from.L) < 0.32) hit++; tot++; }
+      const share = hit / Math.max(1, tot), small = /\b(glare|reflection|stud|earring|button|trim|frame|frames|text|logo|subtitle|ring|watch|lip|eye)/i.test(c.it.item);
+      if (share > (n ? 0.12 : 0.5) || (small && share > 0.08)) { skipped.push({ item: c.it.item, why: `about ${Math.round(share * 100)}% of the picture has that same colour, so it needs a mask` }); continue; }
+      if (share < 0.002) { skipped.push({ item: c.it.item, why: 'that colour could not be found in the frame' }); continue; } }
+    used.push(c); const i = used.length, P = (k, v) => { params[`z${i}${k}`] = +(+v).toFixed(4); };
     P('Amt', 0.85); P('Hue', c.from.h); P('Wid', 24); P('Cmin', n ? 0 : Math.max(0.025, c.from.C * 0.45)); P('Cmax', n ? 0.03 : 0.5);
     P('Lmin', Math.max(0, c.from.L - (n ? 0.14 : 0.32))); P('Lmax', Math.min(1, c.from.L + (n ? 0.14 : 0.32)));
     P('ToHue', c.to.h); P('ToC', Math.min(0.4, c.to.C)); P('dL', Math.max(-0.15, Math.min(0.15, (c.to.L - c.from.L) * 0.5)));

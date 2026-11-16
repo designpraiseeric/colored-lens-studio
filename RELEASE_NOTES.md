@@ -1,6 +1,15 @@
 # Release notes
 Each `## <version>` block becomes the text of the in-app update banner and the GitHub Release.
 
+## 0.8.1
+Fixes from a full test in Premiere Pro.
+- The page no longer jumps or closes a suggestion when you press a button inside it; a suggestion opens and closes from its title only.
+- A zone is no longer created for a small item whose colour is all over the picture (it said "changing 34% of the picture" for a glint on glasses). Those items are listed as needing a mask.
+- Suggestions can no longer mention things that are not in your frame, and one that would not actually change anything is dropped. Items that stay the same are shown as "stays".
+- The AI on your own computer (Ollama): asks for fewer suggestions, recovers when it gets stuck repeating itself, and says plainly that a small local model gives simpler advice.
+- Encyclopedia pictures are small thumbnails in a row instead of full-width images.
+- Text boxes no longer have a heavy two-tone frame. The Tweak tab always shows the preview. Quick looks no longer repeat the same opening sentence.
+
 ## 0.8.0
 - "On your preview now" is measured, not assumed: for each item it says how much of your frame the zone is really changing, or that it is finding nothing and which slider fixes it. It updates as you tweak.
 - Colour zones have their own sliders in the Tweak tab (amount, pick hue, hue width, new hue, new colourfulness, ambience).

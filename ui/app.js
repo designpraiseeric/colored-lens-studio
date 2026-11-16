@@ -273,10 +273,13 @@ export async function startApp(host, root) {
   // ---------- tabs ----------
   function render() {
     root.querySelectorAll('.tab').forEach(b => { const on = b.dataset.tab === S.tab; b.classList.toggle('on', on); b.setAttribute('aria-selected', on ? 'true' : 'false'); });
-    const body = $('#body', root); if (body && render.lastTab !== S.tab) { body.scrollTop = 0; render.lastTab = S.tab; }
+    // Same tab: keep the reader where they were (re-drawing must never throw them to the top or bottom of the page).
+    const body = $('#body', root), same = body && render.lastTab === S.tab, keep = same ? body.scrollTop : 0; render.lastTab = S.tab;
     if (!up.content.encyclopedia) return;
+    if (S.tab === 'tweak' && S.dockHidden && S.frame && !same) S.dockHidden = false; // tweaking blind is pointless
     renderDock();
     ({ shot: renderShot, scene: renderScene, tweak: renderTweak, presets: renderPresets, enc: renderEnc, smart: renderSmart, guide: renderGuide })[S.tab](body);
+    body.scrollTop = keep;
     renderCoach();
   }
 
@@ -368,7 +371,6 @@ export async function startApp(host, root) {
       S.extra = { ...S.extra, ...computeMatch(matchStats(S.frame), ref.ms) }; S.refName = m.title; go('tweak'); toast(`Match to “${m.title}” set in Tweak`);
     });
     wireDirections(body); wireAI(body);
-    if (S.focusSg != null) { const el = body.querySelector(`[data-sg="${S.focusSg}"]`); S.focusSg = null; if (el) body.scrollTop += el.getBoundingClientRect().top - body.getBoundingClientRect().top - 6; }
   }
 
   // ---------- the AI: what is in scope, what it sees, and its colour suggestions ----------
@@ -416,7 +418,7 @@ export async function startApp(host, root) {
     let vision = true; if (real.provider === 'apple') { const a = await detectApple(host.bridge); if (!a.ok) throw new Error(appleReason(a.reason)); vision = !!a.image; }
     S.ai.vision = vision; S.smart.using = provName(real.provider) + (real.provider === 'ollama' ? ' · ' + real.ollamaModel : real.provider === 'openai' ? ' · ' + real.openaiModel : '');
     const range = await sampleRange(), lite = real.provider === 'apple';
-    const a = { reading: S.reading, skin: S.skin, intent: S.intent, ctx: S.ctx, neigh: S.neigh, summary: frameSummary(S.reading, enc()), layers: scopeLayers(), range, vision, message, enc: enc(), lite, understanding: S.study, count: lite ? 4 : 10 };
+    const a = { reading: S.reading, skin: S.skin, intent: S.intent, ctx: S.ctx, neigh: S.neigh, summary: frameSummary(S.reading, enc()), layers: scopeLayers(), range, vision, message, enc: enc(), lite, understanding: S.study, count: lite || S.ai.small || real.provider === 'ollama' || real.provider === 'openai' ? (S.ai.small ? 3 : 5) : 10 };
     status(kind === 'study' ? 'The AI is studying the frame…' : 'The AI is working out colour suggestions…');
     const text = await ask(real, { prompt: kind === 'study' ? buildStudy(a) : buildSuggest(a), system: kind === 'study' ? SYSTEM_STUDY : SYSTEM_SUGGEST, imageB64: toBase64(encodeJPEG(downsample(S.frame, 768), 84)), mime: 'image/jpeg',
       images: range && range.sheet ? [toBase64(encodeJPEG(range.sheet, 80))] : [], history: S.smart.history }, httpPost, host.bridge);
@@ -424,23 +426,25 @@ export async function startApp(host, root) {
   }
   async function studyFrame(message) {
     if (aiBusy || !S.frame) return; aiBusy = true; S.ai.error = ''; S.ai.busy = message ? 'Thinking about what you said…' : 'Studying the frame…'; render();
-    try { const res = validateStudy(await aiCall('study', message));
+    try { let rawS; try { rawS = await aiCall('study', message); } catch (e) { if (!/^REPEAT/.test(e.message)) throw e; rawS = await aiCall('study', message); }
+      const res = validateStudy(rawS);
       if (message) S.ai.chat.push({ you: message, ai: res.reply || 'Understood. I have updated my reading of the frame.' });
       S.smart.history.push({ role: 'user', text: message || '(study this frame)' }, { role: 'assistant', text: JSON.stringify({ purpose: res.purpose, mood: res.mood, reply: res.reply }).slice(0, 900) });
       if (res.items.length || !S.study) S.study = res; else S.study = { ...S.study, ...Object.fromEntries(Object.entries(res).filter(([k, v]) => v && v.length && k !== 'items')) };
-    } catch (e) { if (e.message !== 'none') { console.error(e); S.ai.error = e.message || String(e); } }
+    } catch (e) { if (e.message !== 'none') { console.error(e); S.ai.error = String(e.message || e).replace(/^REPEAT: /, ''); } }
     finally { aiBusy = false; S.ai.busy = ''; status(); softRender(); }
   }
   async function suggestColours(message) {
     if (aiBusy || !S.frame) return; aiBusy = true; S.ai.error = ''; S.ai.busy = 'Working out colour suggestions… (this can take a minute)'; render();
     try { if (!S.study) S.study = validateStudy(await aiCall('study', ''));
-      const res = validateSuggest(await aiCall('suggest', message), enc());
+      let raw; try { raw = await aiCall('suggest', message); } catch (e) { if (!/^REPEAT/.test(e.message)) throw e; S.ai.small = true; status('The AI stumbled; asking for fewer suggestions…'); try { raw = await aiCall('suggest', message); } catch (e2) { throw new Error(/^REPEAT/.test(e2.message) ? 'The AI on this computer keeps getting stuck on this frame. Try again, or switch to Gemini under “AI” for fuller suggestions.' : e2.message); } }
+      const res = validateSuggest(raw, enc(), S.study);
       if (!res.suggestions.length) throw new Error('The AI did not return usable suggestions. Try again, or tell it more about the scene.');
       if (message) S.ai.chat.push({ you: message, ai: res.reply || `${res.suggestions.length} new suggestions below.` });
       S.sugg = res.suggestions; S.suggOpen = -1; S.suggHow = -1; S.suggOn = -1; S.suggZ = null;
       const picks = res.suggestions.filter(x => x.recipe).map(x => ({ recipe: x.recipe, why: x.idea || x.communicates, tweaks: x.tweaks })).filter((p, i, arr) => arr.findIndex(q => q.recipe === p.recipe) === i);
       S.smartDirs = picks.length ? await enrich(directionsFromPicks(picks, S.intent, { reading: S.reading, skin: S.skin, input: S.input })) : []; S.chosen = -1;
-    } catch (e) { if (e.message !== 'none') { console.error(e); S.ai.error = e.message || String(e); } }
+    } catch (e) { if (e.message !== 'none') { console.error(e); S.ai.error = String(e.message || e).replace(/^REPEAT: /, ''); } }
     finally { aiBusy = false; S.ai.busy = ''; status(); softRender(); }
   }
   const sw = hex => (hex ? `<span class="sw" style="background:${hex}"></span>` : '');
@@ -450,6 +454,7 @@ export async function startApp(host, root) {
     if (S.ai.none) return `<div class="card smart" id="aicard"><div class="k">Give Colored Lens its eyes</div><p class="small">Colored Lens is built around an AI that looks at your frame, names what is in it and suggests colours item by item. It is free, but this computer needs one to be set up first (about three minutes, once).</p>
       <div class="row wrap"><button id="aiSetup" class="primary">Set it up now</button><button id="aiRetry">Try again</button></div><p class="small dim">Until then you still get the quick looks below.</p></div>`;
     return `<div class="card smart" id="aicard"><div class="row tight"><div class="k grow">What the AI sees <span class="dim">· ${esc(S.smart.using || provName(c.provider))}</span></div><button id="smSetup" class="small">AI settings</button></div>
+      ${u && /ollama|local/i.test(S.smart.using || '') ? '<p class="small dim">A small AI on this computer is doing this. It is private, but its colour suggestions are simpler and it can make mistakes; Gemini gives fuller ones.</p>' : ''}
       ${u ? `${S.ai.vision === false ? '<p class="small warn">This AI cannot look at the picture yet, so this is built from measurements. For item-by-item detail, set up Gemini or Ollama in AI settings.</p>' : ''}
         ${u.caveat ? `<p class="small dim">${esc(u.caveat)}</p>` : ''}
         ${u.items.length ? `<div class="items">${u.items.map(i => `<div class="it">${sw(i.hex)}<span><b>${esc(i.name)}</b> <span class="dim">${esc([i.colour, i.where].filter(Boolean).join(' · '))}</span></span></div>`).join('')}</div>` : ''}
@@ -467,17 +472,17 @@ export async function startApp(host, root) {
     if (!S.sugg.length) return '';
     return `<div class="k sect" id="sugg">Colour suggestions (${S.sugg.length})</div><p class="small dim">Each one says what colour to give what, what that tells the audience, and why. Tap one to open it.</p>
       ${S.sugg.map((g, i) => { const open = S.suggOpen === i, di = g.recipe ? S.smartDirs.findIndex(d => d.id === g.recipe) : -1;
-        return `<div class="sg ${open ? 'on' : ''}" data-sg="${i}"><div class="row tight"><b class="grow">${i + 1}. ${esc(g.title)}</b><span class="pal">${[g.ambience, ...g.items].map(c => sw(c.hex)).join('')}</span></div>
-        <p class="small">${g.structure ? `<span class="badge">${esc(g.structure)}</span> ` : ''}${esc(g.idea || g.communicates)}</p>
+        return `<div class="sg ${open ? 'on' : ''}"><div class="sghead" role="button" tabindex="0" data-sg="${i}"><div class="row tight"><b class="grow">${i + 1}. ${esc(g.title)}</b><span class="pal">${[g.ambience, ...g.items].map(c => sw(c.hex)).join('')}</span></div>
+        <p class="small">${g.structure ? `<span class="badge">${esc(g.structure)}</span> ` : ''}${esc(g.idea || g.communicates)}</p><div class="more">${open ? 'Close ▴' : 'Open: colours item by item, why, references, try it ▾'}</div></div>
         ${open ? `${g.ambience.colour ? `<div class="it">${sw(g.ambience.hex)}<span><b>Ambience</b> → ${esc(g.ambience.colour)}</span></div>` : ''}
-          ${g.items.map(it => `<div class="it">${sw(it.hex)}<span><b>${esc(it.item)}</b> → ${esc(it.colour)}${it.accent ? ' <span class="badge smart">accent</span>' : ''}${it.why ? ` <span class="dim">· ${esc(it.why)}</span>` : ''}</span></div>`).join('')}
+          ${g.items.map(it => `<div class="it">${sw(it.hex)}<span class="${it.changes === false ? 'dim' : ''}"><b>${esc(it.item)}</b> ${it.changes === false ? 'stays' : '→'} ${esc(it.colour)}${it.accent ? ' <span class="badge smart">accent</span>' : ''}${it.why ? ` <span class="dim">· ${esc(it.why)}</span>` : ''}</span></div>`).join('')}
           ${g.communicates ? `<p class="small"><b>This tells the audience:</b> ${esc(g.communicates)}</p>` : ''}${g.because ? `<p class="small"><b>Because:</b> ${esc(g.because)}</p>` : ''}
-          ${g.refs.length ? `<div class="k">From the encyclopedia</div>${g.refs.map(r => `<p class="small ref1"><a href="#" data-more="${esc(r.name.split(' / ')[0])}">${esc(r.name)}</a> <span class="dim">(${esc(r.kind)})</span>: ${esc(r.line)}${r.ex ? ` <span class="dim">See: ${esc(String(r.ex).slice(0, 160))}</span>` : ''}</p>${imgStrip(r.name)}`).join('')}` : ''}
+          ${g.refs.length ? `<div class="k">From the encyclopedia</div>${g.refs.map(r => `<p class="small ref1"><a href="#" data-more="${esc(r.name.split(' / ')[0])}">${esc(r.name)}</a> <span class="dim">(${esc(r.kind)})</span>: ${esc(r.line)}${r.ex ? ` <span class="dim">See: ${esc(String(r.ex).slice(0, 160))}</span>` : ''}</p>${imgStrip(r.name, 2)}`).join('')}` : ''}
           ${S.suggOn === i && S.suggZ ? suggStatus(g) : ''}
           <div class="row wrap"><button class="primary" data-sgprev="${i}">${S.suggOn === i ? 'Rebuild it' : 'Try this on my frame'}</button>${S.suggOn === i ? `<button data-dapply="0">Apply</button><button data-dtweak="0">Tweak</button>` : ''}<button data-sghow="${i}">${S.suggHow === i ? 'Hide the walkthrough' : 'How to finish this look'}</button><button data-sgpic="${i}">${g.pic ? 'Hide the AI’s picture' : 'Show the AI’s picture'}</button></div>
           ${g.picBusy ? '<p class="small todo">The AI is painting its version of your frame… (about half a minute)</p>' : ''}${g.picErr ? `<p class="small warn">${esc(g.picErr)}</p>` : ''}
           ${g.pic ? `<div class="k">The AI’s picture of this idea</div><img class="aipic" src="${g.pic}"><p class="small dim">An AI repainted your frame to show the idea. It is a concept, not a grade: it can change details a colour grade cannot. Compare it with “Try this on my frame”, which is what you can actually apply.</p>` : ''}
-          ${S.suggHow === i ? `<div class="how">${howTo(g, host.name, S.suggOn === i ? S.suggZ : zonesFor(g, S.study, S.reading ? S.reading.swatches : []), S.suggOn === i ? liveCoverage() : null).map(sec => `<div class="k">${esc(sec.h)}</div>${sec.steps.map((x, k) => `<div class="howrow"><span class="num">${k + 1}</span><span class="small grow">${esc(x)}</span></div>`).join('')}`).join('')}</div><div class="row"><button data-sgcopy="${i}">Copy the walkthrough</button></div>` : ''}` : ''}</div>`; }).join('')}`;
+          ${S.suggHow === i ? `<div class="how">${howTo(g, host.name, S.suggOn === i ? S.suggZ : zonesFor(g, S.study, S.reading ? S.reading.swatches : [], S.frame ? downsample(S.frame, 160) : null), S.suggOn === i ? liveCoverage() : null).map(sec => `<div class="k">${esc(sec.h)}</div>${sec.steps.map((x, k) => `<div class="howrow"><span class="num">${k + 1}</span><span class="small grow">${esc(x)}</span></div>`).join('')}`).join('')}</div><div class="row"><button data-sgcopy="${i}">Copy the walkthrough</button></div>` : ''}` : ''}</div>`; }).join('')}`;
   }
   /** What the colour zones on the preview reach right now (follows every tweak). */
   function liveCoverage() { return S.frame && hasZones(S.extra) ? zoneCoverage(downsample(S.frame, 160), S.extra) : []; }
@@ -500,9 +505,9 @@ export async function startApp(host, root) {
     if ($('#aiTell', body)) $('#aiTell', body).onclick = () => { const m = $('#smMsg', body).value.trim(); if (!m) return toast('Type something for the AI first'); studyFrame(m); };
     if ($('#aiSuggest', body)) $('#aiSuggest', body).onclick = () => suggestColours(($('#smMsg', body).value || '').trim());
     if ($('#aiUse', body)) $('#aiUse', body).onclick = () => { for (const k of ['genre', 'feeling', 'role']) if (S.study.answers[k].length) S.intent[k] = S.study.answers[k]; saveIntent(); busy('Finding directions', async () => { await suggest(); render(); }); };
-    body.querySelectorAll('[data-sg]').forEach(el => el.onclick = e => { if (e.target.closest('button') || e.target.closest('a')) return; const i = +el.dataset.sg, top = body.scrollTop; S.suggOpen = S.suggOpen === i ? -1 : i; S.suggHow = -1; render(); body.scrollTop = top; });
+    body.querySelectorAll('[data-sg]').forEach(el => el.onclick = () => { const i = +el.dataset.sg; S.suggOpen = S.suggOpen === i ? -1 : i; S.suggHow = -1; render(); });
     body.querySelectorAll('[data-sghow]').forEach(b => b.onclick = () => { const i = +b.dataset.sghow, top = body.scrollTop; S.suggHow = S.suggHow === i ? -1 : i; render(); body.scrollTop = top; });
-    body.querySelectorAll('[data-sgcopy]').forEach(b => b.onclick = async () => { const g = S.sugg[+b.dataset.sgcopy]; toast((await copyText(`${g.title}\n\n` + howTo(g, host.name, zonesFor(g, S.study, S.reading ? S.reading.swatches : [])).map(sec => sec.h + '\n' + sec.steps.map((x, k) => `${k + 1}. ${x}`).join('\n')).join('\n\n'))) ? 'Walkthrough copied' : 'Could not copy'); });
+    body.querySelectorAll('[data-sgcopy]').forEach(b => b.onclick = async () => { const g = S.sugg[+b.dataset.sgcopy]; toast((await copyText(`${g.title}\n\n` + howTo(g, host.name, zonesFor(g, S.study, S.reading ? S.reading.swatches : [], S.frame ? downsample(S.frame, 160) : null)).map(sec => sec.h + '\n' + sec.steps.map((x, k) => `${k + 1}. ${x}`).join('\n')).join('\n\n'))) ? 'Walkthrough copied' : 'Could not copy'); });
     body.querySelectorAll('[data-sgpic]').forEach(b => b.onclick = async () => { const i = +b.dataset.sgpic, g = S.sugg[i]; if (g.pic) { g.pic = ''; S.focusSg = i; return render(); } if (g.picBusy) return;
       g.picBusy = true; g.picErr = ''; S.focusSg = i; render();
       try { g.pic = await picture(await smartCfg(), g, toBase64(encodeJPEG(downsample(S.frame, 768), 86)), httpPost); } catch (e) { g.picErr = e.message || String(e); }
@@ -510,7 +515,7 @@ export async function startApp(host, root) {
     body.querySelectorAll('[data-sgprev]').forEach(b => b.onclick = () => busy('Building this suggestion', async () => { const i = +b.dataset.sgprev, g = S.sugg[i], top = body.scrollTop;
       // the Lukuluku look for the overall grade (a clean pass-through when the AI named none), then one colour zone per item
       const di = S.smartDirs.findIndex(d => d.id === g.recipe); if (di >= 0) choose(di); else { S.chosen = -1; S.look = NEUTRAL_LOOK(); S.extra = { ...XDEF }; }
-      const z = zonesFor(g, S.study, S.reading ? S.reading.swatches : []); S.extra = { ...S.extra, ...zoneDefaults(), ...z.params, skinGuard: Math.max(S.extra.skinGuard || 0, 0.7) };
+      const z = zonesFor(g, S.study, S.reading ? S.reading.swatches : [], S.frame ? downsample(S.frame, 160) : null); S.extra = { ...S.extra, ...zoneDefaults(), ...z.params, skinGuard: Math.max(S.extra.skinGuard || 0, 0.7) };
       S.recipe = { name: g.title, presetId: null }; S.suggOn = i; S.suggZ = z; S.view = 'split'; S.dockHidden = false; stageCache.key = ''; S.focusSg = i; render();
       toast(z.mapped.length || z.params.ambAmt ? `“${g.title}” is on your preview: drag across the picture to compare` : 'Only the overall look could be previewed for this one; see “What is left to do by hand”'); }));
   }
@@ -581,7 +586,7 @@ export async function startApp(host, root) {
       ${allDirs().map((d, i) => S.simple && !S.moreD && i >= Math.max(3, S.smartDirs.length + 2) && S.chosen !== i ? '' : `<div class="dir ${S.simple ? 'simple' : ''} ${S.chosen === i ? 'on' : ''}" data-dir="${i}">
         <img src="${d.thumb}"><div class="dtext">
           <div><b>${esc(d.name)}</b> <span class="badge ${d.kind}">${esc(KIND_LABEL[d.kind])}</span></div>
-          <p class="small">${esc(d.why.lines[0])}</p>${S.simple ? (d.cont ? `<p class="small cont">${esc(d.cont)}</p>` : '') : `${d.why.lines[1] ? `<p class="small dim">${esc(d.why.lines[1])}</p>` : ''}
+          <p class="small">${esc(S.simple && d.kind !== 'smart' && d.why.lines[0].includes(': ') ? d.why.lines[0].slice(d.why.lines[0].indexOf(': ') + 2).replace(/^./, c => c.toUpperCase()) : d.why.lines[0])}</p>${S.simple ? (d.cont ? `<p class="small cont">${esc(d.cont)}</p>` : '') : `${d.why.lines[1] ? `<p class="small dim">${esc(d.why.lines[1])}</p>` : ''}
           <p class="small">${esc([...d.effect, ...d.notes].join(' '))}</p>${d.cont ? `<p class="small cont">${esc(d.cont)}</p>` : ''}
           <div class="small dim mono">${esc(lookCode(d.look, false))}</div>`}
           ${S.chosen === i ? `<div class="row wrap"><button class="primary" data-dapply="${i}">Apply to selected clips</button><button data-dtweak="${i}">Tweak</button><button data-dsave="${i}">Save as preset</button>${d.why.hue ? `<button data-more="${esc(d.why.hue.name.split(' / ')[0])}">About ${esc(d.why.hue.name.split(' / ')[0])}</button>` : ''}</div>` : ''}
@@ -714,7 +719,7 @@ export async function startApp(host, root) {
   /** Pictures for an encyclopedia entry: its own reference frame, plus the context frames that belong to it. */
   function encImages(title) { const t = String(title).split(':')[0].trim().toLowerCase(), F = (refs() && refs().frames) || [];
     return F.filter(f => ['psy', 'pal', 'nar', 'aut'].includes(f.kind) && f.title.toLowerCase() === t).concat(F.filter(f => f.kind === 'ctx' && f.title.toLowerCase().startsWith(t + ':'))).slice(0, 4); }
-  const imgStrip = title => { const im = encImages(title); return im.length ? `<div class="encimgs">${im.map(f => `<div class="encimg"><img src="${up.frameUrl(f.thumb)}" onerror="this.parentNode.style.display='none'"><div class="small dim">${esc(f.kind === 'ctx' ? f.title.split(':').slice(1).join(':').trim() : f.reading || '')}</div></div>`).join('')}</div>` : ''; };
+  const imgStrip = (title, max = 4) => { const im = encImages(title).slice(0, max); return im.length ? `<div class="encimgs">${im.map(f => `<div class="encimg"><img src="${up.frameUrl(f.thumb)}" onerror="this.parentNode.style.display='none'"><div class="small dim">${esc(f.kind === 'ctx' ? f.title.split(':').slice(1).join(':').trim() : f.reading || '')}</div></div>`).join('')}</div>` : ''; };
   function libraryEntries() {
     const e = enc(), out = [];
     e.HUES.forEach(h => out.push({ s: 'Colour psychology', t: h.name + ': ' + h.tag, body: h.p.join(' ') + ' Bright side: ' + h.pos + ' Dark side: ' + h.neg + ' Craft: ' + h.craft, looks: h.looks, ex: h.ex.map(x => `${x[0]} (${x[1]}, ${x[2]}): ${x[3]}`), hex: h.hex }));
