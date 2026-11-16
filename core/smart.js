@@ -103,7 +103,7 @@ async function postJSON(post, url, headers, body, ms = 120000) {
 const trim = u => String(u || '').replace(/\/+$/, '');
 
 /** One request to the chosen provider. history = [{role:'user'|'assistant', text}] from earlier turns. */
-export async function ask(cfg, { prompt, imageB64, images = [], history = [], system = null, lite = false }, post, bridge) {
+export async function ask(cfg, { prompt, imageB64, images = [], history = [], system = null, lite = false, mime = 'image/png' }, post, bridge) {
   const hist = history.slice(-6), SYS = system || SYSTEM, more = images.filter(Boolean);
   if (cfg.provider === 'apple') {
     if (!bridge) throw new Error(appleReason('notInThisBuild'));
@@ -119,21 +119,32 @@ export async function ask(cfg, { prompt, imageB64, images = [], history = [], sy
   }
   if (cfg.provider === 'openai') {
     const msgs = [{ role: 'system', content: SYS }, ...hist.map(h => ({ role: h.role, content: h.text })),
-      { role: 'user', content: [{ type: 'text', text: prompt }, ...[imageB64, ...more].map(b => ({ type: 'image_url', image_url: { url: 'data:image/png;base64,' + b } }))] }];
+      { role: 'user', content: [{ type: 'text', text: prompt }, ...[imageB64, ...more].map(b => ({ type: 'image_url', image_url: { url: 'data:' + mime + ';base64,' + b } }))] }];
     const j = await postJSON(post, trim(cfg.openaiUrl) + '/chat/completions', cfg.openaiKey ? { authorization: 'Bearer ' + cfg.openaiKey } : {}, { model: cfg.openaiModel, messages: msgs, temperature: 0.4 });
     return j.choices && j.choices[0] && j.choices[0].message ? j.choices[0].message.content : '';
   }
   if (cfg.provider === 'gemini') {
     if (!cfg.geminiKey) throw new Error('Colored Lens could not find your Gemini key. Open “AI” at the top, paste the key again and press “Save key”.');
     const contents = [...hist.map(h => ({ role: h.role === 'assistant' ? 'model' : 'user', parts: [{ text: h.text }] })),
-      { role: 'user', parts: [{ text: prompt }, ...[imageB64, ...more].map(b => ({ inline_data: { mime_type: 'image/png', data: b } }))] }];
-    const j = await postJSON(post, `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(cfg.geminiModel || DEFAULTS.geminiModel)}:generateContent`, { 'x-goog-api-key': cfg.geminiKey },
-      { systemInstruction: { parts: [{ text: SYS }] }, contents, generationConfig: { responseMimeType: 'application/json', temperature: 0.4 } });
+      { role: 'user', parts: [{ text: prompt }, ...[imageB64, ...more].map(b => ({ inline_data: { mime_type: mime, data: b } }))] }];
+    const call = model => postJSON(post, `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, { 'x-goog-api-key': cfg.geminiKey },
+      { systemInstruction: { parts: [{ text: SYS }] }, contents, generationConfig: { responseMimeType: 'application/json', temperature: 0.4 } }, 180000);
+    let j; const model = cfg.geminiModel || DEFAULTS.geminiModel;
+    // Google retires model names; if this one is gone, use the name that always points at the current Flash model
+    try { j = await call(model); } catch (e) { if (/answered 404/.test(e.message) && model !== DEFAULTS.geminiModel) { try { j = await call(DEFAULTS.geminiModel); } catch (e2) { throw geminiError(e2); } } else throw geminiError(e); }
     const parts = j.candidates && j.candidates[0] && j.candidates[0].content ? j.candidates[0].content.parts : [];
     return (parts || []).map(p => p.text || '').join('');
   }
   throw new Error('Smart mode is off');
 }
+
+/** Google's errors, in words an editor can act on. */
+function geminiError(e) { const m = String(e.message || e);
+  if (/API key not valid|API_KEY_INVALID|answered 400.*key/i.test(m)) return new Error('Google says this API key is not valid. Copy the key again from aistudio.google.com/apikey and save it under “AI”.');
+  if (/answered 429/.test(m)) return new Error('Google says the free limit for this key has been reached for now. Wait a minute and try again (the daily limit resets overnight, Pacific time).');
+  if (/answered 403|location is not supported|FAILED_PRECONDITION/i.test(m)) return new Error('Google does not allow this key to be used from here (the free Gemini API is not offered in every country, or the key is restricted). Details: ' + m.slice(0, 160));
+  if (/took too long/.test(m)) return new Error('Google did not answer in time. Check your internet connection and try again.');
+  return e; }
 
 /** What this computer offers: is Ollama running, and which of its models can see images? */
 export async function detectOllama(url, get) {

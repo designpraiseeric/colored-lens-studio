@@ -17,6 +17,7 @@ import config from '../studio.config.json';
 import { sliderHTML, wireSliders } from './slider.js';
 import { COACH, routes, helpPrompt } from './guide.js';
 import { decodeImage, makeFrame } from '../core/image.js';
+import { encodeJPEG } from '../core/jpeg.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -34,7 +35,7 @@ export async function startApp(host, root) {
     intent: normIntent(settings.get('intent', {})), seqId: '', ctx: null, lead: 0, neigh: [], scope: settings.get('scope', 'clip'), input: settings.get('input', 'rec709'),
     directions: [], chosen: -1, look: NEUTRAL_LOOK(), extra: { ...XDEF }, matte: false, recipe: { name: '', presetId: null }, view: 'split', wipe: 0.5,
     guide: { view: 'home', step: 0, route: '' }, tour: null, simple: !!settings.get('simple', 1), layerOff: [], range: settings.get('range', 'shot'), study: null, sugg: [], suggOpen: -1, suggHow: -1, rangeInfo: null, ai: { busy: '', error: '', chat: [], none: false }, theme: settings.get('theme', 'bright'), moreQ: false, moreD: false, dockSize: settings.get('dockSize', 'M'), dockHidden: false, detached: false, smartDirs: [],
-    smart: { cfg: { ...SMART0, ...settings.get('smart', {}) }, turns: [], history: [], detect: null, using: '' }, refFrameStats: null, refName: '', adapt: settings.get('adapt', true), encQ: '', shownCode: '', confirmDel: '', busy: false, showSkin: false, showRefs: false };
+    smart: { cfg: (c => { if (c.geminiModel === 'gemini-2.5-flash') c.geminiModel = SMART0.geminiModel; return c; })({ ...SMART0, ...settings.get('smart', {}) }), turns: [], history: [], detect: null, using: '' }, refFrameStats: null, refName: '', adapt: settings.get('adapt', true), encQ: '', shownCode: '', confirmDel: '', busy: false, showSkin: false, showRefs: false };
   let PV = null, pvEl = null; // pvEl: the separate Preview panel's container, once it has been opened
   const up = new Updater(host, config.pagesBase);
   root.innerHTML = `
@@ -416,8 +417,8 @@ export async function startApp(host, root) {
     const range = await sampleRange(), lite = real.provider === 'apple';
     const a = { reading: S.reading, skin: S.skin, intent: S.intent, ctx: S.ctx, neigh: S.neigh, summary: frameSummary(S.reading, enc()), layers: scopeLayers(), range, vision, message, enc: enc(), lite, understanding: S.study, count: lite ? 4 : 10 };
     status(kind === 'study' ? 'The AI is studying the frame…' : 'The AI is working out colour suggestions…');
-    const text = await ask(real, { prompt: kind === 'study' ? buildStudy(a) : buildSuggest(a), system: kind === 'study' ? SYSTEM_STUDY : SYSTEM_SUGGEST, imageB64: toBase64(encodePNG(downsample(S.frame, 768))),
-      images: range && range.sheet ? [toBase64(encodePNG(range.sheet))] : [], history: S.smart.history }, httpPost, host.bridge);
+    const text = await ask(real, { prompt: kind === 'study' ? buildStudy(a) : buildSuggest(a), system: kind === 'study' ? SYSTEM_STUDY : SYSTEM_SUGGEST, imageB64: toBase64(encodeJPEG(downsample(S.frame, 768), 84)), mime: 'image/jpeg',
+      images: range && range.sheet ? [toBase64(encodeJPEG(range.sheet, 80))] : [], history: S.smart.history }, httpPost, host.bridge);
     return parseReply(text);
   }
   async function studyFrame(message) {
