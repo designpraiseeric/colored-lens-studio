@@ -117,16 +117,21 @@ const uxpSource = (folder, base) => ({ last: -1, kind: 'uxp', entry: null,
   async find() { if (!this.entry) this.entry = (await folder.getEntries()).find(e => e.name.startsWith(base)) || null; if (!this.entry) return null;
     const bytes = new Uint8Array(await this.entry.read({ format: formats.binary })); const e = this.entry;
     return { bytes, remove: () => e.delete() }; } });
+// The exact name is tried first: we know what Premiere was asked for, and reading one path is allowed everywhere,
+// while listing a directory needs the `file:` scheme and is refused outright on some installs. The listing is only
+// there because a few builds bolt a second extension on.
 const plainSource = (dir, base) => ({ last: -1, kind: 'plain',
   async find() { const fs = require('fs'), url = 'file:' + dir + '/';
-    let names = []; try { names = await fs.readdir(url); } catch { return null; }
-    const n = names.map(String).find(x => x.startsWith(base)); if (!n) return null;
-    const raw = await fs.readFile(url + n); const bytes = raw instanceof Uint8Array ? raw : new Uint8Array(raw);
-    return { bytes, remove: () => fs.unlink(url + n) }; } });
+    const names = [base + '.png', base + '.png.png', base];
+    try { const d = await fs.readdir('file:' + dir); for (const n of d.map(String)) if (n.startsWith(base) && !names.includes(n)) names.push(n); } catch { /* listing is a bonus, not the plan */ }
+    for (const n of names) { let raw; try { raw = await fs.readFile(url + n); } catch { continue; }
+      const bytes = raw instanceof Uint8Array ? raw : new Uint8Array(raw); if (!bytes.length) continue;
+      return { bytes, remove: () => fs.unlink(url + n) }; }
+    return null; } });
 /** What is actually sitting in a watched folder — the one thing worth showing when a read comes back empty. */
 async function listNames(s, tmp) {
   if (s.where.includes('temporary')) return (await tmp.getEntries()).map(e => e.name);
-  return (await require('fs').readdir('file:' + s.path + '/')).map(String);
+  return (await require('fs').readdir('file:' + s.path)).map(String);
 }
 const subjectOf = layers => { const L = layers.filter(l => !l.empty);
   return L.find(l => l.selected && l.kind !== 'adjustment') || L.find(l => l.kind === 'video' || l.kind === 'nested') || L.find(l => l.kind !== 'adjustment') || null; };

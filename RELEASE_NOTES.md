@@ -1,8 +1,14 @@
 # Release notes
 Each `## <version>` block becomes the text of the in-app update banner and the GitHub Release.
 
-## 0.10.2
+## 0.10.3
 Reading a frame tells you when it fails, and tries a second way first.
+- **A failed read stays on screen.** It used to say what went wrong in a message that faded after six seconds — on a job that can take a minute and a half, by which time you have looked away. Now the reason sits in the Shot tab with what to try, and a **Show what Premiere wrote** button listing the folders that were watched and what was actually in them.
+- **A second place to look.** On some installs Premiere reports that it exported the frame and never writes it anywhere the panel can see. If nothing appears in Premiere's own temporary folder after nine seconds, the frame is asked for again in your ColoredLens folder, and both are watched from then on — by the exact name Premiere was given, which works even where listing a folder is refused.
+- **The wait says how long it has been waiting**, and it now runs to a minute and a half rather than a minute.
+
+## 0.10.2
+Superseded by 0.10.3 the same morning.
 - **A failed read stays on screen.** It used to say what went wrong in a message that faded after six seconds — on a job that can take a minute and a half, by which time you have looked away. Now the reason sits in the Shot tab with what to try, and a **Show what Premiere wrote** button listing the folders that were watched and what was actually in them.
 - **A second place to look.** On some installs Premiere reports that it exported the frame and never writes it anywhere the panel can see. If nothing appears in Premiere's own temporary folder after nine seconds, the frame is asked for again in your ColoredLens folder, and both are watched from then on.
 - **The wait says how long it has been waiting**, and it now runs to a minute and a half rather than a minute.
