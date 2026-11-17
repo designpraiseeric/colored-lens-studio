@@ -11,7 +11,7 @@ import { parseCode, parseLookInput, formatCode, shareLink, bakeCube, lutFromBin,
 import { cmpVersion, Updater } from '../core/updates.js';
 import { hexToRgb, srgbToOklab, toLCh } from '../core/color.js';
 import { pickDirections, answers, whyFor, continuity, pictureOf } from '../core/directions.js';
-import { validate as smartValidate, parseReply, ask as smartAsk, resolveProvider, buildPrompt, zonesFor } from '../core/smart.js';
+import { validate as smartValidate, parseReply, ask as smartAsk, resolveProvider, buildPrompt, zonesFor, buildStudy, buildTell, validateStudy } from '../core/smart.js';
 import { directionsFromPicks } from '../core/directions.js';
 import { savePreset, presetCode, importPresetCode, listPresets } from '../core/presets.js';
 
@@ -221,4 +221,30 @@ test('the face lift reaches a dark face where a colour zone cannot', () => {
   const w1 = makePixelFn(parseCode('C0', cat), cat, luts, { extra: { skinLift: 0.12 } })(wall);
   const dW = toLCh(srgbToOklab(...w1))[0] - toLCh(srgbToOklab(...w0))[0];
   assert.ok(Math.abs(dW) < 0.02, `a cool grey wall is not a face, moved ${dW.toFixed(3)}`);
+});
+
+test('answering the AI costs a reply, not a whole new study', () => {
+  const understanding = { items: [{ name: 'lamp', where: 'left', colour: 'amber', hex: '#c8822a' }], light: 'window left', mood: 'tired', purpose: 'a beat of rest', scene: 'a bedroom at dusk' };
+  const a = { reading: { pal: { id: 'analogous' }, hues: [{ id: 'amber', share: 0.31 }, { id: 'teal', share: 0.09 }], swatches: ['#c8822a', '#2a3b44'],
+      tones: { shadow: 0.07, mid: 0.33, high: 0.81 }, stats: { contrast: 0.42, warmth: 'warm', saturation: 'muted' } }, skin: { found: true, faces: [{ n: 1, ire: 28 }] }, intent: { genre: [], feeling: [], role: [] }, ctx: null, neigh: [],
+    summary: 'vertical, low key', layers: [], range: { label: 'this shot', samples: [{ t: '0:03', note: 'wider' }] }, vision: true,
+    message: 'the lamp is the only practical; she has just lost her job', enc: { looks: [], entries: [] }, lite: false, understanding, count: 10 };
+  const tell = buildTell(a), study = buildStudy(a);
+  // The whole point: the editor's answer must not pay for a fresh inventory.
+  assert.ok(tell.length < study.length * 0.6, `tell prompt ${tell.length} should be far shorter than study ${study.length}`);
+  assert.match(tell, /lost her job/);           // their answer is in it
+  assert.match(tell, /lamp \(left; amber/);      // so is the reading it already has
+  assert.ok(!/Contact sheet|STUDIED RANGE/.test(tell), 'a reply should not re-send the contact sheet');
+});
+
+test('a reply that changes nothing leaves the reading alone', () => {
+  // SYSTEM_TELL tells the model to omit unchanged fields, so the merge must survive a reply-only answer.
+  const was = validateStudy({ items: [{ name: 'lamp', where: 'left', colour: 'amber', hex: '#c8822a' }], light: 'window left', purpose: 'a beat of rest', questions: ['Is the lamp practical?'] });
+  const res = validateStudy({ reply: 'Good — then it carries the warmth on its own.' });
+  const merged = res.items.length ? res : { ...was, ...Object.fromEntries(Object.entries(res).filter(([k, v]) => v && v.length && k !== 'items')) };
+  assert.equal(merged.items.length, 1);
+  assert.equal(merged.light, 'window left');
+  assert.equal(merged.purpose, 'a beat of rest');
+  assert.match(merged.reply, /carries the warmth/);
+  assert.deepEqual(merged.questions, ['Is the lamp practical?']);
 });

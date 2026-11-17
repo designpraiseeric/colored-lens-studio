@@ -1,6 +1,11 @@
 # Release notes
 Each `## <version>` block becomes the text of the in-app update banner and the GitHub Release.
 
+## 0.12.1
+Talking to the AI is no longer as slow as asking it to start over.
+- **Answering one of its questions took as long as a fresh study** — a minute or two — because telling it anything re-ran the whole inventory of the frame. It now replies to what you said, keeping the reading it already has, and only changes the parts your answer actually changes. The contact sheet is not sent again either.
+- **Tapping one of its questions used to paste the question into the box**, so pressing Send without looking asked the AI its own question back. The question now sits above the box as "Answering: …" and the box is yours for the answer alone, which travels with it.
+
 ## 0.12.0
 Dark skin is recognised as skin, and a face that is too dark can finally be lifted.
 - **The skin model excluded deep skin.** It started at hue 28° and colourfulness 0.022; a real subject in this project measures 24.1° at 0.0158, so every protection built on it — Skin Guard, the hold that keeps colour zones off faces, the checks that say whether a grade damaged a face — scored her face at 0.001 and looked straight through her. The gamut used for protection is now wide enough for the skin that actually turns up in front of this plugin. Finding a face and protecting one now use separate gamuts, because they want opposite things.

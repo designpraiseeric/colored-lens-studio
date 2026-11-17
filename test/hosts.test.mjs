@@ -77,7 +77,10 @@ test('Premiere panel: grab, mark, read markers, apply the effect, update', { ski
     // The AI with a local Ollama (faked): it studies the frame item by item, takes context in chat, then suggests colours per item
     await page.route('http://localhost:11434/**', route => { const u = route.request().url();
       if (u.endsWith('/api/tags')) return route.fulfill({ body: JSON.stringify({ models: [{ name: 'llama3:8b' }, { name: 'gemma3:4b' }] }), contentType: 'application/json' });
-      const body = JSON.parse(route.request().postData()); window_seen.push(body); const study = /understand this frame/.test(body.messages[0].content);
+      const body = JSON.parse(route.request().postData()); window_seen.push(body); const sys = body.messages[0].content;
+      const study = /understand this frame/.test(sys), tell = /already studied this frame/.test(sys);
+      // A reply to the editor is its own prompt now: it answers and leaves everything it did not change out.
+      if (tell) return route.fulfill({ body: JSON.stringify({ message: { content: JSON.stringify({ reply: 'Understood — the lamp is the only practical.', purpose: 'The opening beat, carried by one warm source.', questions: ['Does the lamp stay on through the scene?'] }) } }), contentType: 'application/json' });
       const out = study ? { items: [{ name: 'candy floss', where: 'centre', colour: 'pink', hex: '#f4a6c8' }, { name: 'vendor shirt', where: 'left', colour: 'white', hex: '#eeeeee' }, { name: 'sky', where: 'top', colour: 'pale blue', hex: '#a8c8e8' }], light: 'Low afternoon sun from the right.', mood: 'Warm and busy.', purpose: 'Introduces the beach and the vendor.', scene: 'A day at the beach.', reply: 'Noted: this is the opening.', questions: ['Is this the opening?'], answers: { feeling: ['joyful'] } }
         : { suggestions: [{ title: 'Golden hour candy', idea: 'Gold air with the floss as the one cool-pink accent.', ambience: { colour: 'golden yellow', hex: '#e8b040' }, items: [{ item: 'candy floss', colour: 'cool pink', hex: '#ff8fc8', why: 'the accent the eye lands on' }, { item: 'sky', colour: 'teal', hex: '#3aa0a0', why: 'complements the gold' }], communicates: 'Nostalgia for a perfect day.', because: 'Warm and cool sit opposite on the wheel.', refs: ['Complementary', 'Not A Real Entry'], recipe: 'super8-summer', tweaks: { grainK: 0.6 } },
             { title: 'Bleached noon', idea: 'Drained and hot.', ambience: { colour: 'white', hex: '#f0f0e8' }, items: [{ item: 'vendor shirt', colour: 'bone', hex: '#e8e0d0', why: 'keeps it harsh' }], communicates: 'Heat and fatigue.', because: 'Low saturation reads as exhaustion.', refs: ['Achromatic'], recipe: 'nope' }] };
@@ -86,13 +89,33 @@ test('Premiere panel: grab, mark, read markers, apply the effect, update', { ski
     assert.equal(await page.inputValue('#olModel'), 'gemma3:4b', 'the vision model is picked'); await page.click('#smBack');
     // the layers in the frame are a checklist; unticking one re-reads without it and tells the AI
     await page.waitForSelector('#scope .lay'); const nLay = await page.locator('#scope .lay').count(); assert.ok(nLay >= 2, 'layers are listed: ' + nLay);
-    await page.fill('#smMsg', 'this is the opening shot'); await page.click('#aiTell'); await page.waitForFunction(() => /Noted: this is the opening/.test(document.querySelector('#aicard').innerText), null, { timeout: 15000 });
-    assert.match(await page.innerText('#aicard'), /Noted: this is the opening/); assert.equal(window_seen[0].model, 'gemma3:4b'); assert.ok(window_seen[0].messages.at(-1).images[0].length > 1000, 'the frame is sent');
-    assert.match(window_seen[0].messages.at(-1).content, /EDITOR'S MESSAGE: this is the opening shot/); assert.match(window_seen[0].messages.at(-1).content, /LAYERS IN SCOPE: V/);
+    // The AI already has a reading of this frame, so telling it something is a reply, not a second study:
+    // it answers, keeps what it had, and changes only what the message changes.
+    await page.fill('#smMsg', 'this is the opening shot'); await page.click('#aiTell');
+    await page.waitForFunction(() => /only practical/.test(document.querySelector('#aicard').innerText), null, { timeout: 20000 });
+    { const sent = window_seen.at(-1); assert.equal(sent.model, 'gemma3:4b');
+      assert.match(sent.messages[0].content, /already studied this frame/, 'a reply uses the reply prompt');
+      const txt = sent.messages.at(-1).content;
+      assert.match(txt, /EDITOR'S MESSAGE: this is the opening shot/);
+      assert.ok(sent.messages.at(-1).images[0].length > 1000, 'the frame still goes with it');
+      assert.ok(!/LAYERS IN SCOPE|Contact sheet/.test(txt), 'a reply does not re-send the layer list or the contact sheet');
+      assert.ok(txt.length < 1800, 'a reply prompt stays small: ' + txt.length); }
+    assert.match(await page.innerText('#aicard'), /opening beat/, 'what the answer changed is kept');
+    assert.match(await page.innerText('#aicard'), /Feels like: Warm and busy/, 'what it did not change is kept');
+    assert.match(await page.innerText('#aicard'), /candy floss/, 'the reading it already had is still on screen');
     await page.click('#aiSuggest'); await page.waitForSelector('.sg', { timeout: 15000 }); assert.equal(await page.locator('.sg').count(), 2);
     await page.click('.sg'); { const t = await page.innerText('.sg.on'); assert.match(t, /candy floss/i); assert.match(t, /cool pink/); assert.match(t, /Complementary/); assert.match(t, /Pink|Yellow/, 'colour entries are added as references'); assert.doesNotMatch(t, /Not A Real Entry/); }
     await page.click('[data-sgprev="0"]'); await page.waitForFunction(() => /On your preview now/i.test((document.querySelector('.sg.on') || {}).innerText || '')); assert.match(await page.innerText('.sg.on'), /Ambience → golden yellow: on/); await page.click('[data-sghow="0"]'); assert.match(await page.innerText('.how'), /Already done|Needs a mask/i);
     { const z = await page.evaluate(() => 0); }
+    // Telling the AI something once it has studied the frame is a reply, not a second study: the question it asked
+    // sits above the box, the box holds only the answer, and the prompt no longer carries a fresh inventory request.
+    await page.click('#aicard [data-smq]'); assert.match(await page.innerText('#aicard'), /Answering: Does the lamp stay on/);
+    await page.fill('#smMsg', 'yes, all the way through');
+    const before = window_seen.length;
+    await page.click('#aiTell'); await page.waitForFunction(() => /yes, all the way through/.test(document.querySelector('#aicard').innerText), null, { timeout: 20000 });
+    assert.match(window_seen[before].messages.at(-1).content, /Does the lamp stay on through the scene\? — yes, all the way through/, 'the question travels with the answer');
+    assert.doesNotMatch(await page.innerText('#aicard'), /Answering:/, 'the question clears once it is answered');
+    assert.match(await page.innerText('#aicard'), /opening beat/, 'what the answer changed is kept');
     await page.click('#scope .lay'); await page.click('#reread'); await page.waitForFunction(() => window.__pp.calls.some(c => /read without unticked layers/.test(c)), null, { timeout: 15000 });
     await page.waitForFunction(() => window.__pp.calls.some(c => /layers back on/.test(c)), null, { timeout: 15000 });
     for (let i = 0; i < 100 && !/EXCLUDED LAYERS/.test(window_seen.at(-1).messages.at(-1).content); i++) await page.waitForTimeout(150);

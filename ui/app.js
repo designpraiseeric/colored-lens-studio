@@ -7,7 +7,7 @@ import { readFrame, frameStats, labPixels } from '../core/analysis.js';
 import { srgbToOklab, oklabToSrgb, hueDist, rgbToHex } from '../core/color.js';
 import { checkSkin, vectorscope } from '../core/skin.js';
 import { pngDataUrl, encodePNG, downsample, toBase64 } from '../core/image.js';
-import { PROVIDERS, CLAUDE_MODELS, DEFAULTS as SMART0, buildPrompt, parseReply, validate, ask, buildStudy, buildSuggest, validateStudy, validateSuggest, howTo, zonesFor, picture, SYSTEM_STUDY, SYSTEM_SUGGEST, detectOllama, detectOpenAI, detectApple, appleReason, resolveProvider, nearestHue } from '../core/smart.js';
+import { PROVIDERS, CLAUDE_MODELS, DEFAULTS as SMART0, buildPrompt, parseReply, validate, ask, buildStudy, buildTell, buildSuggest, validateStudy, validateSuggest, howTo, zonesFor, picture, SYSTEM_STUDY, SYSTEM_TELL, SYSTEM_SUGGEST, detectOllama, detectOpenAI, detectApple, appleReason, resolveProvider, nearestHue } from '../core/smart.js';
 import { shotRecord, encodeShot, decodeShot, renderStrip, readSequence, scriptCSV } from '../core/script.js';
 import { fitStrength, scaleLook } from '../core/quality.js';
 import { ZONES, ZONE_KEYS, ZONE_DEF, zoneList, zoneDefaults, zoneCoverage, hasZones, lchHex, hueHistogram, parseLookInput, formatCode, fullGrade, makePixelFn, bakeCube, lookToEngineParams, shareLink, computeMatch, matchStats, hasCurves, GRADE0 } from '../core/look.js';
@@ -37,7 +37,7 @@ export async function startApp(host, root) {
     intent: normIntent(settings.get('intent', {})), seqId: '', ctx: null, lead: 0, neigh: [], scope: settings.get('scope', 'clip'), input: settings.get('input', 'rec709'),
     directions: [], chosen: -1, look: NEUTRAL_LOOK(), extra: { ...XDEF }, matte: false, recipe: { name: '', presetId: null }, view: 'split', wipe: 0.5,
     guide: { view: 'home', step: 0, route: '' }, tour: null, simple: !!settings.get('simple', 1), base: null, strength: 1, fit: null, pickZone: 0, zoneOpen: 0, zoneName: {}, readErr: null, errOpen: false, hueHist: null, hueHistKey: '', scanEvery: +settings.get('scanEvery', 5) || 5, selCount: 0, scanStop: false, scanning: false, scanAsk: null, scanPer: 0, layerOff: [], range: settings.get('range', 'shot'), study: null, sugg: [], suggOpen: -1, suggHow: -1, rangeInfo: null, ai: { busy: '', error: '', chat: [], none: false }, theme: settings.get('theme', 'bright'), moreQ: false, moreD: false, dockSize: settings.get('dockSize', 'M'), dockHidden: false, detached: false, smartDirs: [],
-    smart: { cfg: (c => { if (c.geminiModel === 'gemini-2.5-flash') c.geminiModel = SMART0.geminiModel; return c; })({ ...SMART0, ...settings.get('smart', {}) }), turns: [], history: [], detect: null, using: '' }, refFrameStats: null, refName: '', adapt: settings.get('adapt', true), encQ: '', shownCode: '', confirmDel: '', busy: false, showSkin: false, showRefs: false };
+    smart: { cfg: (c => { if (c.geminiModel === 'gemini-2.5-flash') c.geminiModel = SMART0.geminiModel; return c; })({ ...SMART0, ...settings.get('smart', {}) }), turns: [], history: [], detect: null, using: '', answering: '' }, refFrameStats: null, refName: '', adapt: settings.get('adapt', true), encQ: '', shownCode: '', confirmDel: '', busy: false, showSkin: false, showRefs: false };
   let PV = null, pvEl = null; // pvEl: the separate Preview panel's container, once it has been opened
   const up = new Updater(host, config.pagesBase);
   root.innerHTML = `
@@ -499,16 +499,19 @@ export async function startApp(host, root) {
     if (real.provider === 'openai' && !real.openaiModel) throw new Error('Choose a model for your local server in AI settings');
     let vision = true; if (real.provider === 'apple') { const a = await detectApple(host.bridge); if (!a.ok) throw new Error(appleReason(a.reason)); vision = !!a.image; }
     S.ai.vision = vision; S.smart.using = provName(real.provider) + (real.provider === 'ollama' ? ' · ' + real.ollamaModel : real.provider === 'openai' ? ' · ' + real.openaiModel : '');
-    const range = await sampleRange(), lite = real.provider === 'apple';
+    // A reply to the editor needs neither the contact sheet nor a fresh inventory, so it skips the range sample too.
+    const range = kind === 'tell' ? null : await sampleRange(), lite = real.provider === 'apple';
     const a = { reading: S.reading, skin: S.skin, intent: S.intent, ctx: S.ctx, neigh: S.neigh, summary: frameSummary(S.reading, enc()), layers: scopeLayers(), range, vision, message, enc: enc(), lite, understanding: S.study, count: lite || S.ai.small || real.provider === 'ollama' || real.provider === 'openai' ? (S.ai.small ? 3 : 5) : 10 };
-    status(kind === 'study' ? 'The AI is studying the frame…' : 'The AI is working out colour suggestions…');
-    const text = await ask(real, { prompt: kind === 'study' ? buildStudy(a) : buildSuggest(a), system: kind === 'study' ? SYSTEM_STUDY : SYSTEM_SUGGEST, imageB64: toBase64(encodeJPEG(downsample(S.frame, 768), 84)), mime: 'image/jpeg',
+    status(kind === 'study' ? 'The AI is studying the frame…' : kind === 'tell' ? 'The AI is thinking about what you said…' : 'The AI is working out colour suggestions…');
+    const text = await ask(real, { prompt: kind === 'study' ? buildStudy(a) : kind === 'tell' ? buildTell(a) : buildSuggest(a), system: kind === 'study' ? SYSTEM_STUDY : kind === 'tell' ? SYSTEM_TELL : SYSTEM_SUGGEST, imageB64: toBase64(encodeJPEG(downsample(S.frame, kind === 'tell' ? 448 : 768), 84)), mime: 'image/jpeg',
       images: range && range.sheet && !['ollama', 'openai'].includes(real.provider) ? [toBase64(encodeJPEG(range.sheet, 80))] : [], history: S.smart.history }, httpPost, host.bridge);
     return parseReply(text);
   }
   async function studyFrame(message) {
     if (aiBusy || !S.frame) return; aiBusy = true; S.ai.error = ''; S.ai.busy = message ? 'Thinking about what you said…' : 'Studying the frame…'; render();
-    try { let rawS; try { rawS = await aiCall('study', message); } catch (e) { if (!/^REPEAT/.test(e.message)) throw e; rawS = await aiCall('study', message); }
+    // Telling the AI something is a reply, not a restudy: only a frame it has never seen needs the full pass.
+    const kind = message && S.study ? 'tell' : 'study';
+    try { let rawS; try { rawS = await aiCall(kind, message); } catch (e) { if (!/^REPEAT/.test(e.message)) throw e; rawS = await aiCall(kind, message); }
       const res = validateStudy(rawS);
       if (message) S.ai.chat.push({ you: message, ai: res.reply || 'Understood. I have updated my reading of the frame.' });
       S.smart.history.push({ role: 'user', text: message || '(study this frame)' }, { role: 'assistant', text: JSON.stringify({ purpose: res.purpose, mood: res.mood, reply: res.reply }).slice(0, 900) });
@@ -547,7 +550,8 @@ export async function startApp(host, root) {
       ${S.ai.chat.map(x => `<p class="small you"><b>You:</b> ${esc(x.you)}</p><p class="small"><b>AI:</b> ${esc(x.ai)}</p>`).join('')}
       ${u && u.questions.length ? `<div class="chips">${u.questions.map(q => `<div role="button" tabindex="0" class="chip" data-smq="${esc(q)}">${esc(q)}</div>`).join('')}</div>` : ''}
       ${S.ai.busy ? `<p class="small todo">${esc(S.ai.busy)}</p>` : ''}${S.ai.error ? `<p class="small warn">${esc(S.ai.error)}</p>${/free limit|very busy/i.test(S.ai.error) ? '<div class="row"><button id="aiLocal" class="small">Use the AI on this computer for now</button></div>' : ''}` : ''}
-      ${u ? `<textarea id="smMsg" rows="2" placeholder="Tell it more about this shot or scene, or correct it (e.g. “she has just lost her job; the lamp is the only warm thing left”)"></textarea>
+      ${u && S.smart.answering ? `<div class="row tight answering"><span class="small grow">Answering: ${esc(S.smart.answering)}</span><button id="smDrop" class="small">Not this</button></div>` : ''}
+      ${u ? `<textarea id="smMsg" rows="2" placeholder="${S.smart.answering ? 'Type just your answer' : 'Tell it more about this shot or scene, or correct it (e.g. “she has just lost her job; the lamp is the only warm thing left”)'}"></textarea>
       <div class="row wrap"><button id="aiTell">Tell the AI</button><button id="aiSuggest" class="primary">${S.sugg.length ? 'Suggest again' : 'Suggest colours and looks'}</button></div>` : ''}</div>`;
   }
   function suggHTML() {
@@ -589,7 +593,9 @@ export async function startApp(host, root) {
     if ($('#aiSetup', body)) $('#aiSetup', body).onclick = () => { S.guide = { view: 'smart', step: 0, route: '' }; go('guide'); };
     if ($('#aiRetry', body)) $('#aiRetry', body).onclick = () => studyFrame('');
     if ($('#aiStudy', body)) $('#aiStudy', body).onclick = () => studyFrame('');
-    if ($('#aiTell', body)) $('#aiTell', body).onclick = () => { const m = $('#smMsg', body).value.trim(); if (!m) return toast('Type something for the AI first'); studyFrame(m); };
+    if ($('#aiTell', body)) $('#aiTell', body).onclick = () => { const m = $('#smMsg', body).value.trim(), q = S.smart.answering;
+      if (!m && !q) return toast('Type something for the AI first');
+      S.smart.answering = ''; studyFrame(q && m ? `${q} — ${m}` : q || m); };
     if ($('#aiSuggest', body)) $('#aiSuggest', body).onclick = () => suggestColours(($('#smMsg', body).value || '').trim());
     if ($('#aiUse', body)) $('#aiUse', body).onclick = () => { for (const k of ['genre', 'feeling', 'role']) if (S.study.answers[k].length) S.intent[k] = S.study.answers[k]; saveIntent(); busy('Finding directions', async () => { await suggest(); render(); }); };
     body.querySelectorAll('[data-sg]').forEach(el => el.onclick = () => { const i = +el.dataset.sg; S.suggOpen = S.suggOpen === i ? -1 : i; S.suggHow = -1; render(); });
@@ -1019,14 +1025,18 @@ export async function startApp(host, root) {
       ${last && ['genre', 'feeling', 'role'].some(k => last.res.answers[k].length && JSON.stringify(last.res.answers[k]) !== JSON.stringify(answers(S.intent[k]))) ? `<div class="row wrap"><span class="small grow">Suggests answers: ${esc([['genre', GENRES], ['feeling', FEELINGS], ['role', ROLES]].map(([k, l]) => last.res.answers[k].map(id => (l.find(x => x.id === id) || {}).n).join(' + ')).filter(Boolean).join(' · '))}</span><button id="smUse" class="small">Use these answers</button></div>` : ''}
       ${S.smart.pending ? `<p class="small dim">Thinking about “${esc(S.smart.pending)}”… (a local model can take a minute)</p>` : ''}
       ${S.smart.error ? `<p class="small warn">${esc(S.smart.error)}</p>` : ''}
-      <textarea id="smMsg" rows="2" placeholder="${t.length ? 'Answer, or ask for something else (e.g. warmer but not nostalgic)' : 'Tell it about the scene, or just ask'}"></textarea>
+      ${S.smart.answering ? `<div class="row tight answering"><span class="small grow">Answering: ${esc(S.smart.answering)}</span><button id="smDrop" class="small">Not this</button></div>` : ''}
+      <textarea id="smMsg" rows="2" placeholder="${S.smart.answering ? 'Type just your answer' : t.length ? 'Answer, or ask for something else (e.g. warmer but not nostalgic)' : 'Tell it about the scene, or just ask'}"></textarea>
       <div class="row wrap"><button id="smAsk" class="primary">${t.length ? 'Send' : 'Ask about this frame'}</button>${t.length ? '<button id="smClear" class="small">New conversation</button>' : ''}</div></div>`;
   }
   function wireSmart(body) {
     if ($('#smSetup', body)) $('#smSetup', body).onclick = () => { if (S.smart.cfg.provider === 'off') { S.guide = { view: 'smart', step: 0, route: '' }; go('guide'); } else go('smart'); };
-    if ($('#smAsk', body)) $('#smAsk', body).onclick = () => { const m = $('#smMsg', body).value.trim(); askSmart(m); };
-    if ($('#smClear', body)) $('#smClear', body).onclick = () => { S.smart.turns = []; S.smart.history = []; S.smartDirs = []; S.chosen = -1; render(); };
-    body.querySelectorAll('[data-smq]').forEach(b => b.onclick = () => { const t = $('#smMsg', body); t.value = b.dataset.smq + ' '; t.focus(); });
+    if ($('#smAsk', body)) $('#smAsk', body).onclick = () => { const m = $('#smMsg', body).value.trim();
+      // A tapped question is the thing being answered, so it travels with the answer and the box stays the user's own words.
+      const q = S.smart.answering; S.smart.answering = ''; askSmart(q && m ? `${q} — ${m}` : q && !m ? q : m); };
+    if ($('#smClear', body)) $('#smClear', body).onclick = () => { S.smart.turns = []; S.smart.history = []; S.smartDirs = []; S.chosen = -1; S.smart.answering = ''; render(); };
+    if ($('#smDrop', body)) $('#smDrop', body).onclick = () => { S.smart.answering = ''; render(); };
+    body.querySelectorAll('[data-smq]').forEach(b => b.onclick = () => { S.smart.answering = b.dataset.smq; render(); const t = $('#smMsg'); if (t) t.focus(); });
     if ($('#smUse', body)) $('#smUse', body).onclick = () => { const a = S.smart.turns[S.smart.turns.length - 1].res.answers;
       for (const k of ['genre', 'feeling', 'role']) if (a[k].length) S.intent[k] = a[k]; saveIntent(); busy('Finding directions', async () => { await suggest(); render(); }); };
   }

@@ -281,3 +281,7 @@ select option { background: #17161A; color: #FFFFFF; }
 .zhead .sw { width: 17px; height: 17px; border-radius: 5px; border: 1px solid var(--line); margin-right: 5px; flex: none; }
 .zhead b { margin-left: 4px; font-size: 12px; }
 .zhead .more { margin-left: 6px; }
+
+/* The question a tapped chip is answering, shown above the box so the box holds only the user's own words. */
+.answering { background: var(--p2); border-left: 2px solid var(--acc); border-radius: 3px; padding: 3px 6px; }
+.answering .small { color: var(--ink); }

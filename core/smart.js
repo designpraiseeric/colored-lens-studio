@@ -263,6 +263,14 @@ If the editor wrote a message, answer it in "reply" and update your understandin
 ${JSON_ONLY}
 {"items":[{"name":"","where":"","colour":"","hex":"#000000"}],"light":"","mood":"what the picture feels like now","purpose":"","scene":"what the surrounding scene seems to be","caveat":"","reply":"","questions":[""],"answers":{"genre":[],"feeling":[],"role":[]}}`;
 
+export const SYSTEM_TELL = `You are the colourist's eye inside Colored Lens. You have already studied this frame: UNDERSTANDING SO FAR is your own reading of it, and the picture is attached again for reference.
+The editor has now told you something, or answered a question you asked. Answer them in "reply", in two or three sentences, as a colourist would.
+Then change your reading ONLY where what they said actually changes it. Leave out every field that is unchanged — an empty field means "unchanged", and repeating your whole reading back costs the editor a minute of waiting.
+Only send "items" if what they said means an item was wrong, misnamed or missed; then send the FULL corrected list, because a partial list replaces the old one.
+Ask at most one short follow-up question, and only if the answer would change the colour advice.
+${JSON_ONLY}
+{"reply":"","purpose":"","mood":"","scene":"","light":"","items":[],"questions":[""],"answers":{"genre":[],"feeling":[],"role":[]}}`;
+
 export const SYSTEM_SUGGEST = `You are a senior film colourist and production designer advising inside Colored Lens. You have already studied a frame (UNDERSTANDING lists its items, each with the colour it has now). Now propose colour directions for it.
 A direction is NOT a mood label or a preset name. It is a concrete plan of which thing in the frame takes which colour, and what that arrangement makes the audience feel. Think the way a production designer and a colourist would plan it together: dress, walls, props, practical lights, sky, graphics, and the colour of the light itself.
 Give the number of directions asked for, and make them range widely. Across the set, cover at least these kinds:
@@ -302,6 +310,14 @@ const common = ({ reading, skin, intent, ctx, neigh, summary, layers, range, vis
   ].filter(Boolean);
 };
 export function buildStudy(a) { return [...common(a), `EDITOR'S MESSAGE: ${a.message || '(none: study the frame)'}`].join('\n'); }
+/** A reply to something the editor said. The frame has already been studied, so this asks only for what their
+ *  message changes — no fresh inventory, no contact sheet. A study takes one to two minutes; this should not. */
+export function buildTell(a) {
+  const u = a.understanding || {};
+  return [`FRAME: ${a.summary}`,
+    `UNDERSTANDING SO FAR: ${JSON.stringify({ items: (u.items || []).map(i => `${i.name} (${i.where}; ${i.colour} ${i.hex})`), light: u.light, mood: u.mood, purpose: u.purpose, scene: u.scene })}`,
+    `EDITOR'S MESSAGE: ${a.message}`].join('\n');
+}
 export function buildSuggest(a) {
   const cat = catalogue(a.enc, a.lite), u = a.understanding || {};
   return [...common(a),
