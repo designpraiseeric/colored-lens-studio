@@ -354,8 +354,14 @@ export function zonesFor(sg, study, swatches = [], frame = null) {
   for (const it of sg.items || []) {
     const st = matchItem((study && study.items) || [], it.item);
     const to = lchOf(it.hex); let from = lchOf(st && st.hex);
-    if (/\b(skin|face|complexion|cheek|forehead|hands?)\b/i.test(it.item)) { skipped.push({ item: it.item, why: 'skin is kept natural by Skin Guard' }); continue; }
+    // Skin used to be refused outright. But "the face is underexposed" is the most common thing wrong with a shot,
+    // and a zone is the only tool that can answer it, so skin gets a zone that moves its EXPOSURE and leaves its
+    // colour to Skin Guard. A suggestion that wants to recolour a face still does not get one.
+    const isSkin = /\b(skin|face|complexion|cheek|forehead|hands?)\b/i.test(it.item);
     if (!to || !from) { skipped.push({ item: it.item, why: 'the AI did not give a usable colour for it' }); continue; }
+    if (isSkin) { const dL = to.L - from.L;
+      if (Math.abs(dL) < 0.03) { skipped.push({ item: it.item, why: 'it is already about this bright, and its colour is left to Skin Guard' }); continue; }
+      cands.push({ it, from, to: { ...from, L: to.L }, change: Math.abs(dL), skin: true, dL }); continue; }
     // the AI's idea of the current colour is approximate: use the nearest colour actually measured in the frame
     let best = null, bd = 0.12; for (const c of sw) { const d = Math.hypot(c.lab[0] - from.lab[0], (c.lab[1] - from.lab[1]) * 2, (c.lab[2] - from.lab[2]) * 2); if (d < bd) { bd = d; best = c; } } if (best) from = best;
     let dh = Math.abs(from.h - to.h); if (dh > 180) dh = 360 - dh; const change = Math.hypot(to.lab[1] - from.lab[1], to.lab[2] - from.lab[2]) + Math.abs(to.L - from.L) * 0.5;
@@ -368,16 +374,23 @@ export function zonesFor(sg, study, swatches = [], frame = null) {
     const clash = used.find(u => (u.from.C < 0.035) === (c.from.C < 0.035) && (c.from.C < 0.035 ? Math.abs(u.from.L - c.from.L) < 0.12 : Math.min(Math.abs(u.from.h - c.from.h), 360 - Math.abs(u.from.h - c.from.h)) < 18 && Math.abs(u.from.L - c.from.L) < 0.25));
     if (clash) { skipped.push({ item: c.it.item, why: `it is the same colour as the ${clash.it.item} now, so it needs a mask` }); continue; }
     if (used.length >= 8) { skipped.push({ item: c.it.item, why: 'all eight colour zones are already in use' }); continue; }
-    const n = c.from.C < 0.035;
+    // A mint shirt sits at about 0.02 colourfulness: pale, but with a hue anyone can name. Treating anything under
+    // 0.035 as "grey" meant the shirt, the wall and every other soft colour in a room were all the same zone, which
+    // is why per-item work almost never fired on real footage.
+    const n = c.from.C < 0.015;
     // how much of the picture has this colour? A small item whose colour is all over the frame cannot be picked by colour.
     if (frame) { let hit = 0, tot = 0; const N = frame.w * frame.h, step = Math.max(1, Math.floor(N / 5000));
       for (let q = 0; q < N; q += step) { const lab = srgbToOklab(frame.data[q * 4] / 255, frame.data[q * 4 + 1] / 255, frame.data[q * 4 + 2] / 255), C = Math.hypot(lab[1], lab[2]); let h = Math.atan2(lab[2], lab[1]) * 57.29578; if (h < 0) h += 360; let dh = Math.abs(h - c.from.h); if (dh > 180) dh = 360 - dh;
-        if (n ? C < 0.03 && Math.abs(lab[0] - c.from.L) < 0.14 : dh < 24 && C > Math.max(0.025, c.from.C * 0.45) && Math.abs(lab[0] - c.from.L) < 0.32) hit++; tot++; }
+        // the same test the zone itself will use, or the share is measured against a different set of pixels
+        const wid = c.from.C < 0.035 ? 34 : 24;
+        if (n ? C < 0.015 && Math.abs(lab[0] - c.from.L) < 0.14 : dh < wid && C > Math.max(0.010, c.from.C * 0.45) && Math.abs(lab[0] - c.from.L) < 0.32) hit++; tot++; }
       const share = hit / Math.max(1, tot), small = /\b(glare|reflection|stud|earring|button|trim|frame|frames|text|logo|subtitle|ring|watch|lip|eye)/i.test(c.it.item);
-      if (share > (n ? 0.12 : 0.5) || (small && share > 0.08)) { skipped.push({ item: c.it.item, why: `about ${Math.round(share * 100)}% of the picture has that same colour, so it needs a mask` }); continue; }
+      // skin is exempt: a face is meant to be a large part of the frame, and its zone only moves exposure
+      if (!c.skin && (share > (n ? 0.12 : 0.5) || (small && share > 0.08))) { skipped.push({ item: c.it.item, why: `about ${Math.round(share * 100)}% of the picture has that same colour, so it needs a mask` }); continue; }
       if (share < 0.002) { skipped.push({ item: c.it.item, why: 'that colour could not be found in the frame' }); continue; } }
     used.push(c); const i = used.length, P = (k, v) => { params[`z${i}${k}`] = +(+v).toFixed(4); };
-    P('Amt', 0.85); P('Hue', c.from.h); P('Wid', 24); P('Cmin', n ? 0 : Math.max(0.025, c.from.C * 0.45)); P('Cmax', n ? 0.03 : 0.5);
+    P('Amt', 0.85); P('Hue', c.from.h); P('Wid', c.from.C < 0.035 ? 34 : 24);
+    P('Cmin', n ? 0 : Math.max(0.010, c.from.C * 0.45)); P('Cmax', n ? 0.015 : 0.5);
     P('Lmin', Math.max(0, c.from.L - (n ? 0.14 : 0.32))); P('Lmax', Math.min(1, c.from.L + (n ? 0.14 : 0.32)));
     P('ToHue', c.to.h); P('ToC', Math.min(0.4, c.to.C)); P('dL', Math.max(-0.15, Math.min(0.15, (c.to.L - c.from.L) * 0.5)));
     mapped.push({ item: c.it.item, to: c.it.colour, zone: i });

@@ -265,7 +265,10 @@ V3 applyZones(V3 src, V3 out, const Setup& s) {
     float wh = z[4] <= 0.03f ? 1.f : 1 - smoothstepf(z[2] * 0.6f, z[2] * 1.2f, dh);
     float w = keep * z[0] * wh * soft(sC, z[3], z[4], 0.012f) * soft(so.r, z[5], z[6], 0.05f); if (w <= 0.001f) continue;
     float ref = std::max(0.02f, (z[3] + z[4]) * 0.5f), k = z[4] <= 0.03f ? 1.f : std::clamp(sC / ref, 0.5f, 1.5f), th = z[7] * 0.01745329f, tc = z[8] * k;
-    go.g += (tc * std::cos(th) - go.g) * w; go.b += (tc * std::sin(th) - go.b) * w; go.r += z[9] * w; }
+    // Skin Guard holds a zone off a face's COLOUR, not off its exposure: lifting an underexposed face is ordinary
+    // grading, and refusing it left the plugin able to diagnose a dark face with no way to act on it.
+    float wl = w / std::max(1e-6f, keep);
+    go.g += (tc * std::cos(th) - go.g) * w; go.b += (tc * std::sin(th) - go.b) * w; go.r += z[9] * wl; }
   return oklabToSrgb(go);
 }
 

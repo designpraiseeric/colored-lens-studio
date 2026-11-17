@@ -11,7 +11,7 @@ import { parseCode, parseLookInput, formatCode, shareLink, bakeCube, lutFromBin,
 import { cmpVersion, Updater } from '../core/updates.js';
 import { hexToRgb } from '../core/color.js';
 import { pickDirections, answers, whyFor, continuity, pictureOf } from '../core/directions.js';
-import { validate as smartValidate, parseReply, ask as smartAsk, resolveProvider, buildPrompt } from '../core/smart.js';
+import { validate as smartValidate, parseReply, ask as smartAsk, resolveProvider, buildPrompt, zonesFor } from '../core/smart.js';
 import { directionsFromPicks } from '../core/directions.js';
 import { savePreset, presetCode, importPresetCode, listPresets } from '../core/presets.js';
 
@@ -185,4 +185,19 @@ test('Automatic picks Ollama when it has a vision model, else a Gemini key, else
   assert.equal((await resolveProvider({ provider: 'auto', ollamaUrl: 'x', geminiKey: 'k' }, get(['llama3:8b']))).provider, 'gemini');
   assert.equal((await resolveProvider({ provider: 'auto', ollamaUrl: 'x', geminiKey: 'k', claudeKey: 'c' }, get(['llama3:8b']))).provider, 'claude');
   assert.equal(await resolveProvider({ provider: 'auto', ollamaUrl: 'x' }, async () => { throw new Error('down'); }), null);
+});
+
+test('a suggestion that wants a brighter face gets a zone for it', () => {
+  // "The face is underexposed" is the most common thing wrong with a shot, and for a long time the one thing the
+  // mapper refused to act on: skin was skipped outright, so the only tool that could answer it was never built.
+  const study = { items: [{ name: 'Woman\'s face', hex: '#4a3a33' }, { name: 'shirt', hex: '#d7e7dd' }] };
+  const sg = { items: [{ item: 'Woman\'s face', hex: '#6f574c', colour: 'luminous warm brown' },
+                       { item: 'shirt', hex: '#7fd6a8', colour: 'saturated mint' }] };
+  const z = zonesFor(sg, study, [], null);
+  const face = z.mapped.find(m => /face/i.test(m.item));
+  assert.ok(face, 'the face should map to a zone: ' + JSON.stringify(z.skipped));
+  const i = face.zone;
+  assert.ok(z.params[`z${i}dL`] > 0.01, 'and that zone should lift it: ' + z.params[`z${i}dL`]);
+  assert.ok(Math.abs(z.params[`z${i}ToC`] - z.params[`z${i}Cmin`]) < 0.5, 'without repainting it');
+  assert.ok(z.mapped.find(m => /shirt/i.test(m.item)), 'a pale mint shirt is a colour, not a grey: ' + JSON.stringify(z.skipped));
 });

@@ -1,6 +1,12 @@
 # Release notes
 Each `## <version>` block becomes the text of the in-app update banner and the GitHub Release.
 
+## 0.11.1
+The per-item half of a suggestion finally fires on real footage.
+- **A suggestion that wants a brighter face now gets one.** "The face is underexposed" is the commonest thing wrong with a shot, and a colour zone is the only tool that can answer it — but skin was refused outright, so the plugin could spot the problem and had no way to act on it. Skin now gets a zone that moves its exposure while its colour stays with Skin Guard. A suggestion that wants to repaint a face still does not get one.
+- **A pale colour is a colour.** Anything under 0.035 colourfulness was treated as grey, which on real footage meant a mint shirt, a cream wall and a shadowed doorway were all the same thing and none of them could be targeted. The line is now where grey actually begins, so soft colours in a room can be moved on their own.
+- Together these are why "Only the overall look could be previewed for this one" came back on nearly every suggestion.
+
 ## 0.11.0
 Every look is now fitted to the shot instead of landing at full strength on whatever arrives.
 - **Looks are brought down until your picture can carry them.** A contrast look used to clip a bright face and crush a dark one, because it was built at one strength and applied at that strength to everything. Colored Lens now measures what the look does to your frame and backs it off, the way a colourist would — and tells you, in a line under the preview, how far it came down and what it was doing at full strength. Drag Strength back up any time you want it anyway.

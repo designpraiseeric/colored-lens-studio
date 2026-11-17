@@ -227,7 +227,11 @@ export function applyZones(src, out, p) {
     let dh = Math.abs(sh - z[1]); if (dh > 180) dh = 360 - dh;
     const wh = z[4] <= 0.03 ? 1 : 1 - smooth(z[2] * 0.6, z[2] * 1.2, dh), w = keep * z[0] * wh * soft(sC, z[3], z[4], 0.012) * soft(so[0], z[5], z[6], 0.05); if (w <= 0.001) continue;
     const ref = Math.max(0.02, (z[3] + z[4]) * 0.5), k = z[4] <= 0.03 ? 1 : Math.min(1.5, Math.max(0.5, sC / ref)), th = z[7] * 0.01745329, tc = z[8] * k;
-    go[1] += (tc * Math.cos(th) - go[1]) * w; go[2] += (tc * Math.sin(th) - go[2]) * w; go[0] += z[9] * w; }
+    // Skin Guard holds a zone off a face's COLOUR. It does not hold it off a face's exposure: lifting an
+    // underexposed face is the most ordinary thing a colourist does, and refusing it was why the plugin could
+    // diagnose "the face is underexposed" and then have no way to act on it.
+    const wl = w / Math.max(1e-6, keep);   // the same weight with the skin suppression taken back out
+    go[1] += (tc * Math.cos(th) - go[1]) * w; go[2] += (tc * Math.sin(th) - go[2]) * w; go[0] += z[9] * wl; }
   return oklabToLin(go[0], go[1], go[2]).map(v => Math.min(1, Math.max(0, lin2srgb(v))));
 }
 
