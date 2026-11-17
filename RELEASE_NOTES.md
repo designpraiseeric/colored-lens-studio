@@ -1,6 +1,15 @@
 # Release notes
 Each `## <version>` block becomes the text of the in-app update banner and the GitHub Release.
 
+## 0.9.0
+The Tweak tab, rebuilt — and a bug that was throwing away the AI's suggestions.
+- **Fixed: "The AI did not return usable suggestions."** Colored Lens was discarding whole suggestions when the AI named an item slightly differently from its own list of the frame ("her skin" against "Woman's skin"). It now matches them properly.
+- **Tweak is no longer a wall of sliders.** It opens with what matters: what you are tweaking and where it came from, the four controls that change a shot most, the colour zones, the strength of the look and Skin Guard. "All controls" opens everything, including match to reference and LUT export.
+- Any slider you have moved is marked **CHANGED**, and each card has a "Put back" button that undoes just that card.
+- Controls that cannot do anything are hidden: no Grain slider when the look has no grain, and so on, with a line saying why.
+- Opening Tweak with nothing read now explains what to do instead of showing a live Apply button over an empty look.
+- Film look names have lost their codes ("Kodak print film", not "C1 Kodak print film"), and dropdowns are readable again.
+
 ## 0.8.3
 - Claude is now one of the AIs Colored Lens can use: the strongest readings of a frame and the most useful colour ideas. Choose it under "AI" and paste a key from the Claude Console, or follow the new step-by-step setup. It is paid by use (roughly a penny or two a read) and is not covered by a Claude Pro subscription; pick Opus 5, Fable 5.2, Sonnet 5.5 or Haiku 5.5.
 

@@ -225,6 +225,17 @@ export function catalogue(enc, lite = false) {
     ...enc.AUTS.map(a => ({ name: a.n, kind: 'Filmmaker', line: first(a.t), ex: a.f })));
   return out;
 }
+/** Matches an item name from a suggestion to the item the study found (the AI rarely words them identically). */
+export function matchItem(items, name) {
+  const n = String(name || '').toLowerCase().trim(); if (!n || !items || !items.length) return null;
+  const norm = x => x.toLowerCase().replace(/^(the|a|an|her|his|their|its)\s+/, '').replace(/['’]s\b/g, '').trim();
+  const t = norm(n);
+  let hit = items.find(x => norm(x.name) === t) || items.find(x => norm(x.name).includes(t) || t.includes(norm(x.name)));
+  if (hit) return hit;
+  // last resort: share a meaningful word (skin, shirt, wall, hair…)
+  const words = t.split(/[^a-z]+/).filter(w => w.length > 3);
+  return items.find(x => { const w2 = norm(x.name).split(/[^a-z]+/); return words.some(w => w2.includes(w)); }) || null;
+}
 const hexOk = h => (/^#?[0-9a-f]{6}$/i.test(String(h || '').trim()) ? '#' + String(h).trim().replace('#', '').toLowerCase() : '');
 /** The encyclopedia colour nearest a hex (by hue; greys, black and white by lightness). */
 export function nearestHue(enc, hex) {
@@ -311,13 +322,14 @@ export function validateStudy(o) {
 }
 /** Keeps valid suggestions and attaches encyclopedia references: the ones the model named, plus the entry for every colour it proposed. */
 export function validateSuggest(o, enc, study) {
-  const known = (study && study.items || []), cur = n => known.find(x => x.name.toLowerCase() === String(n).toLowerCase());
+  const known = (study && study.items || []), cur = n => matchItem(known, n);
   const far = (a, b) => { const A = lchOf(a), B = lchOf(b); return !A || !B ? true : Math.hypot(A.lab[1] - B.lab[1], A.lab[2] - B.lab[2]) + Math.abs(A.L - B.L) * 0.5 > 0.03; };
   const cat = catalogue(enc), find = n => cat.find(c => c.name.toLowerCase() === String(n || '').trim().toLowerCase());
   const col = c => ({ colour: S_(c && c.colour, 40), hex: hexOk(c && c.hex) });
   const out = (Array.isArray(o.suggestions) ? o.suggestions : []).map(sg => { if (!sg) return null;
-    const items = (Array.isArray(sg.items) ? sg.items : []).map(i => ({ item: S_(i && i.item, 80), ...col(i), why: S_(i && i.why, 240), accent: !!(i && i.accent) })).filter(i => i.item && (i.colour || i.hex)).filter(i => !known.length || cur(i.item)).map(i => ({ ...i, changes: !cur(i.item) || far(cur(i.item).hex, i.hex) })).slice(0, 14);
-    if (known.length && items.filter(i => i.changes).length < 1) return null; // nothing would actually change
+    const items = (Array.isArray(sg.items) ? sg.items : []).map(i => ({ item: S_(i && i.item, 80), ...col(i), why: S_(i && i.why, 240), accent: !!(i && i.accent) })).filter(i => i.item && (i.colour || i.hex)).map(i => { const c = cur(i.item); return { ...i, known: !!c, changes: !c || far(c.hex, i.hex) }; }).slice(0, 14);
+    // a suggestion that changes nothing at all is not a suggestion; anything else is kept
+    if (items.length && !items.some(i => i.changes) && !col(sg.ambience).colour) return null;
     const amb = col(sg.ambience), r = RECIPES.find(x => x.id === sg.recipe), tweaks = {};
     for (const [k, v] of Object.entries(sg.tweaks || {})) if (TWEAKS[k] && Number.isFinite(+v)) tweaks[k] = Math.min(TWEAKS[k][1], Math.max(TWEAKS[k][0], +v));
     const refs = []; const add = (c, via) => { if (c && !refs.some(x => x.name === c.name)) refs.push({ ...c, via }); };
@@ -340,7 +352,7 @@ export function zonesFor(sg, study, swatches = [], frame = null) {
   const amb = lchOf(sg.ambience && sg.ambience.hex); if (amb && amb.C > 0.02) { params.ambHue = +amb.h.toFixed(1); params.ambAmt = 0.5; }
   const cands = [];
   for (const it of sg.items || []) {
-    const st = (study && study.items || []).find(x => x.name.toLowerCase() === it.item.toLowerCase()) || (study && study.items || []).find(x => x.name.toLowerCase().includes(it.item.toLowerCase()) || it.item.toLowerCase().includes(x.name.toLowerCase()));
+    const st = matchItem((study && study.items) || [], it.item);
     const to = lchOf(it.hex); let from = lchOf(st && st.hex);
     if (/\b(skin|face|complexion|cheek|forehead|hands?)\b/i.test(it.item)) { skipped.push({ item: it.item, why: 'skin is kept natural by Skin Guard' }); continue; }
     if (!to || !from) { skipped.push({ item: it.item, why: 'the AI did not give a usable colour for it' }); continue; }

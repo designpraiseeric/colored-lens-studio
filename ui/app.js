@@ -8,7 +8,7 @@ import { checkSkin, vectorscope } from '../core/skin.js';
 import { pngDataUrl, encodePNG, downsample, toBase64 } from '../core/image.js';
 import { PROVIDERS, CLAUDE_MODELS, DEFAULTS as SMART0, buildPrompt, parseReply, validate, ask, buildStudy, buildSuggest, validateStudy, validateSuggest, howTo, zonesFor, picture, SYSTEM_STUDY, SYSTEM_SUGGEST, detectOllama, detectOpenAI, detectApple, appleReason, resolveProvider } from '../core/smart.js';
 import { shotRecord, encodeShot, decodeShot, renderStrip, readSequence, scriptCSV } from '../core/script.js';
-import { zoneDefaults, zoneCoverage, hasZones, parseLookInput, formatCode, fullGrade, makePixelFn, bakeCube, lookToEngineParams, shareLink, computeMatch, matchStats, hasCurves, GRADE0 } from '../core/look.js';
+import { ZONE_KEYS, zoneDefaults, zoneCoverage, hasZones, parseLookInput, formatCode, fullGrade, makePixelFn, bakeCube, lookToEngineParams, shareLink, computeMatch, matchStats, hasCurves, GRADE0 } from '../core/look.js';
 import { GENRES, FEELINGS, ROLES, KIND_LABEL, pickDirections, describeEffect, whyFor, frameSummary, answers, isDark, continuity, pictureOf, directionsFromPicks } from '../core/directions.js';
 import { previewer, wipe } from '../core/preview.js';
 import { listPresets, savePreset, deletePreset, duplicatePreset, presetCode, importPresetCode, settings } from '../core/presets.js';
@@ -644,53 +644,87 @@ export async function startApp(host, root) {
 
   // TWEAK -----------------------------------------------------------------
   function renderTweak(body) {
-    const C = cat(), L = S.look, G = L.G, X = S.extra;
+    const C = cat(), L = S.look, G = L.G, X = S.extra, simple = S.simple && !S.tweakAll;
     const byNum = o => Object.keys(o).sort((a, b) => +a.replace(/\D/g, '') - +b.replace(/\D/g, ''));
-    const sel = (k, table) => `<label>${esc({ K: 'Lens character', D: 'Diffusion', C: 'Colour science', M: 'Film / video medium' }[k])}<select data-axis="${k}">${byNum(table).map(id => `<option value="${id}" ${L[k] === id ? 'selected' : ''}>${id} ${esc(table[id].short || table[id].name)}</option>`).join('')}</select></label>`;
-    const slider = (obj, key, label, min, max, step) => sliderHTML({ id: obj + ':' + key, label: esc(label), min, max, step, value: +(obj === 'G' ? G : X)[key], def: obj === 'G' ? GRADE0[key] : ({ ...XDEF, matchAmt: 1 })[key] });
+    const sel = (k, table) => `<label>${esc({ K: 'Lens character', D: 'Diffusion', C: 'Colour science', M: 'Film / video medium' }[k])}<select data-axis="${k}">${byNum(table).map(id => `<option value="${id}" ${L[k] === id ? 'selected' : ''}>${esc(table[id].name || table[id].short)}</option>`).join('')}</select></label>`;
+    const defOf = (obj, key) => (obj === 'G' ? GRADE0 : { ...XDEF, matchAmt: 1 })[key];
+    const off = (obj, key) => Math.abs(+(obj === 'G' ? G : X)[key] - +defOf(obj, key)) > 1e-6;
+    const slider = (obj, key, label, min, max, step) => sliderHTML({ id: obj + ':' + key, label: esc(label) + (off(obj, key) ? ' <span class="chg">changed</span>' : ''), min, max, step, value: +(obj === 'G' ? G : X)[key], def: defOf(obj, key) });
+    // a card knows whether anything in it has been moved, so it can offer to put itself back
+    const card = (id, title, note, rows, keys) => { const dirty = keys.some(k => off(k[0], k[1]));
+      return `<div class="card" id="${id}"><div class="row tight"><div class="k grow">${esc(title)}</div>${dirty ? `<button class="small" data-undo="${keys.map(k => k.join(':')).join(',')}">Put back</button>` : ''}</div>${note ? `<p class="small dim">${note}</p>` : ''}${rows}</div>`; };
+    const fx = (table, id, key) => { const f = (table[id] || {}).fx || {}; return (f[key] || 0) > 0; };
+    const hasGrain = fx(C.medium, L.M, 'grain'), hasHal = fx(C.medium, L.M, 'hal'), hasDiff = fx(C.diffusion, L.D, 'k'), hasVig = fx(C.medium, L.M, 'vig') || fx(C.lens, L.K, 'vig');
     const editing = S.recipe.presetId ? listPresets().find(p => p.id === S.recipe.presetId) : null;
+    const from = S.suggOn >= 0 && S.sugg[S.suggOn] ? `the AI suggestion “${esc(S.sugg[S.suggOn].title)}”` : S.chosen >= 0 && allDirs()[S.chosen] ? `the look “${esc(allDirs()[S.chosen].name)}”` : '';
+    const zoneRows = [1, 2, 3, 4].filter(n => (X[`z${n}Amt`] || 0) > 0 || (S.suggZ && S.suggZ.mapped.some(m => m.zone === n)));
+    const zonesHTML = (full) => `${slider('X', 'ambAmt', 'Ambience amount', 0, 1, 0.01)}${(X.ambAmt || 0) > 0 ? slider('X', 'ambHue', 'Ambience hue', 0, 360, 1) : ''}
+      ${zoneRows.map(n => { const m = S.suggZ && S.suggZ.mapped.find(x => x.zone === n);
+        return `<div class="q">Zone ${n}${m ? `: ${esc(m.item)} → ${esc(m.to)}` : ''}</div>${slider('X', `z${n}Amt`, 'Amount', 0, 1, 0.01)}${slider('X', `z${n}Hue`, 'Pick hue', 0, 360, 1)}${full ? slider('X', `z${n}Wid`, 'Hue width', 5, 120, 1) : ''}${slider('X', `z${n}ToHue`, 'New hue', 0, 360, 1)}${full ? slider('X', `z${n}ToC`, 'New colourfulness', 0, 0.4, 0.005) + slider('X', `z${n}dL`, 'Lighter / darker', -0.3, 0.3, 0.005) : ''}`; }).join('')}`;
+    const zoneKeys = ['ambAmt', 'ambHue', ...zoneRows.flatMap(n => ZONE_KEYS.map(k => `z${n}${k}`))].map(k => ['X', k]);
+
     body.innerHTML = `
-      ${S.frame ? '' : '<p class="dim small">Read a frame in Shot to preview the look live while you adjust it.</p>'}
-      <div class="row"><input id="rname" placeholder="Name this look" value="${esc(S.recipe.name)}"></div>
-      ${editing ? `<p class="small dim">Editing preset “${esc(editing.name)}”.</p>` : ''}
-      ${scopeRow()}<div class="row wrap"><button id="apply" class="primary">${S.scope === 'clip' ? 'Apply to selected clips' : 'Apply'}</button>${editing ? '<button id="update">Update preset</button>' : ''}<button id="saveNew">${editing ? 'Save as new preset' : 'Save as preset'}</button><button id="reset">Start from neutral</button></div>
-      <div class="cols">${sel('C', C.color)}${sel('M', C.medium)}${sel('K', C.lens)}${sel('D', C.diffusion)}
-        <label>Footage is<select id="input"><option value="rec709" ${S.input === 'rec709' ? 'selected' : ''}>Normal video (Rec.709)</option><option value="logc3" ${S.input === 'logc3' ? 'selected' : ''}>Log (ARRI LogC3)</option></select></label>
-        <label>Aspect matte<select id="matte"><option value="none" ${!S.matte ? 'selected' : ''}>No matte</option>${Object.keys(C.aspect).sort((a, b) => a - b).map(a => `<option value="${a}" ${S.matte && L.A === a ? 'selected' : ''}>${esc(C.aspect[a].name)}</option>`).join('')}</select></label></div>
-      <p class="small dim">${esc((C.color[L.C] || {}).recipe || '')} ${esc((C.medium[L.M] || {}).recipe || '')}</p>
-      <div class="card"><div class="k">Strength</div>${slider('G', 'lutMix', 'Colour look', 0, 1, 0.01)}${slider('G', 'grainK', 'Grain', 0, 2, 0.01)}${slider('G', 'halK', 'Halation', 0, 2, 0.01)}${slider('G', 'diffK', 'Diffusion glow', 0, 2, 0.01)}${slider('G', 'vigK', 'Vignette', 0, 2, 0.01)}</div>
-      <div class="card"><div class="k">Grade</div>${slider('G', 'exp', 'Exposure', -3, 3, 0.05)}${slider('G', 'con', 'Contrast', 0.5, 1.6, 0.01)}${slider('G', 'sat', 'Saturation', 0, 2, 0.01)}${slider('G', 'vib', 'Vibrance', -1, 1, 0.01)}${slider('G', 'temp', 'Temperature', -1, 1, 0.01)}${slider('G', 'tint', 'Tint', -1, 1, 0.01)}${slider('G', 'hi', 'Highlights', -1, 1, 0.01)}${slider('G', 'sh', 'Shadows', -1, 1, 0.01)}${slider('G', 'bk', 'Blacks', -1, 1, 0.01)}${slider('G', 'wh', 'Whites', -1, 1, 0.01)}</div>
-      <div class="card"><div class="k">Skin Guard</div><p class="small dim">The look may add to skin, but cannot take away its hue, density or light beyond what you allow.</p>
-        ${slider('X', 'skinGuard', 'Skin Guard', 0, 1, 0.01)}${slider('X', 'skinHue', 'Protect hue', 0, 1, 0.01)}${slider('X', 'skinDensity', 'Protect density', 0, 1, 0.01)}${slider('X', 'skinLight', 'Protect light', 0, 1, 0.01)}</div>
-        ${hasZones(S.extra) ? `<div class="card" id="zonesCard"><div class="k">Colour zones</div><p class="small dim">Each zone grabs one colour in your shot and moves it to a new one. They come from an AI suggestion; adjust them here.</p>
-          ${slider('X', 'ambAmt', 'Ambience amount', 0, 1, 0.01)}${(S.extra.ambAmt || 0) > 0 ? slider('X', 'ambHue', 'Ambience hue', 0, 360, 1) : ''}
-          ${[1, 2, 3, 4].filter(n => (S.extra[`z${n}Amt`] || 0) > 0 || (S.suggZ && S.suggZ.mapped.some(m => m.zone === n))).map(n => { const m = S.suggZ && S.suggZ.mapped.find(x => x.zone === n);
-            return `<div class="q">Zone ${n}${m ? `: ${esc(m.item)} → ${esc(m.to)}` : ''}</div>${slider('X', `z${n}Amt`, 'Amount', 0, 1, 0.01)}${slider('X', `z${n}Hue`, 'Pick hue', 0, 360, 1)}${slider('X', `z${n}Wid`, 'Hue width', 5, 120, 1)}${slider('X', `z${n}ToHue`, 'New hue', 0, 360, 1)}${slider('X', `z${n}ToC`, 'New colourfulness', 0, 0.4, 0.005)}`; }).join('')}</div>` : ''}
-      <div class="card"><div class="k">Match to reference</div>${X.matchAmt > 0 ? `<p class="small">Matching ${esc(S.refName || 'a reference')}.</p>${slider('X', 'matchAmt', 'Match amount', 0, 1, 0.01)}` : '<p class="small dim">Set a frame from your timeline as the reference, then park on the shot to match. Or use “Match my shot to this” on a similar frame in Shot.</p>'}
+      ${S.frame ? '' : '<div class="card"><p class="small">Nothing to tweak yet. Open <b>Shot</b>, read the frame under your playhead and pick a direction; it lands here with its settings and a live preview.</p><div class="row"><button id="toshot" class="primary">Go to Shot</button></div></div>'}
+      ${S.frame ? `<div class="card"><div class="row tight"><div class="k grow">${from ? `Tweaking ${from}` : 'Your own look'}</div><div class="more" id="tglAll">${simple ? 'All controls ›' : S.simple ? '‹ Just the useful ones' : ''}</div></div>
+        <div class="row"><input id="rname" placeholder="Name this look" value="${esc(S.recipe.name)}"></div>
+        ${editing ? `<p class="small dim">Editing preset “${esc(editing.name)}”.</p>` : ''}
+        ${scopeRow()}<div class="row wrap"><button id="apply" class="primary">${S.scope === 'clip' ? 'Apply to selected clips' : 'Apply'}</button>${editing ? '<button id="update">Update preset</button>' : ''}<button id="saveNew">${editing ? 'Save as new preset' : 'Save as preset'}</button><button id="reset">Start from neutral</button></div></div>` : ''}
+
+      ${simple ? `<div class="card"><div class="row tight"><div class="k grow">The film look</div><div class="more" id="tglAll2">Change it ›</div></div>
+          <p class="small">${esc([(C.color[L.C] || {}).name, (C.medium[L.M] || {}).name, (C.lens[L.K] || {}).short, (C.diffusion[L.D] || {}).short].filter(x => x && !/^(No |Modern|Clean digital)/.test(x)).join(' · ') || 'Neutral, no film character')}</p>
+          <p class="small dim">${esc((C.color[L.C] || {}).recipe || '')} ${esc((C.medium[L.M] || {}).recipe || '')}</p></div>`
+        : `<div class="cols">${sel('C', C.color)}${sel('M', C.medium)}${sel('K', C.lens)}${sel('D', C.diffusion)}
+          <label>Footage is<select id="input"><option value="rec709" ${S.input === 'rec709' ? 'selected' : ''}>Normal video (Rec.709)</option><option value="logc3" ${S.input === 'logc3' ? 'selected' : ''}>Log (ARRI LogC3)</option></select></label>
+          <label>Aspect matte<select id="matte"><option value="none" ${!S.matte ? 'selected' : ''}>No matte</option>${Object.keys(C.aspect).sort((a, b) => a - b).map(a => `<option value="${a}" ${S.matte && L.A === a ? 'selected' : ''}>${esc(C.aspect[a].name)}</option>`).join('')}</select></label></div>
+        <p class="small dim">${esc((C.color[L.C] || {}).recipe || '')} ${esc((C.medium[L.M] || {}).recipe || '')}</p>`}
+
+      ${hasZones(X) ? card('zonesCard', 'Colour zones', 'Each zone grabs one colour in your shot and moves it to a new one. Watch the preview as you drag.', zonesHTML(!simple), zoneKeys) : ''}
+
+      ${card('gradeCard', simple ? 'The main controls' : 'Grade', simple ? 'The four that change a shot most. Double-click a slider to put it back.' : '',
+        slider('G', 'exp', 'Exposure', -3, 3, 0.05) + slider('G', 'con', 'Contrast', 0.5, 1.6, 0.01) + slider('G', 'sat', 'Saturation', 0, 2, 0.01) + slider('G', 'temp', 'Temperature', -1, 1, 0.01)
+        + (simple ? '' : slider('G', 'vib', 'Vibrance', -1, 1, 0.01) + slider('G', 'tint', 'Tint', -1, 1, 0.01) + slider('G', 'hi', 'Highlights', -1, 1, 0.01) + slider('G', 'sh', 'Shadows', -1, 1, 0.01) + slider('G', 'bk', 'Blacks', -1, 1, 0.01) + slider('G', 'wh', 'Whites', -1, 1, 0.01)),
+        [['G', 'exp'], ['G', 'con'], ['G', 'sat'], ['G', 'temp'], ['G', 'vib'], ['G', 'tint'], ['G', 'hi'], ['G', 'sh'], ['G', 'bk'], ['G', 'wh']])}
+
+      ${card('strengthCard', 'Strength of the look', simple ? '' : 'Scales what the film look adds. A control is hidden when this look has nothing of that kind to scale.',
+        slider('G', 'lutMix', 'Colour look', 0, 1, 0.01) + (hasGrain ? slider('G', 'grainK', 'Grain', 0, 2, 0.01) : '') + (hasHal ? slider('G', 'halK', 'Halation', 0, 2, 0.01) : '') + (hasDiff ? slider('G', 'diffK', 'Diffusion glow', 0, 2, 0.01) : '') + (hasVig ? slider('G', 'vigK', 'Vignette', 0, 2, 0.01) : '')
+        + (hasGrain || hasHal || hasDiff || hasVig ? '' : '<p class="small dim">This look has no grain, halation, glow or vignette to scale. Choose a film medium above to add them.</p>'),
+        [['G', 'lutMix'], ['G', 'grainK'], ['G', 'halK'], ['G', 'diffK'], ['G', 'vigK']])}
+
+      ${card('skinCard2', 'Skin Guard', 'Holds faces back from the look. Raise it if skin went odd.',
+        slider('X', 'skinGuard', 'Skin Guard', 0, 1, 0.01) + (simple ? '' : slider('X', 'skinHue', 'Protect hue', 0, 1, 0.01) + slider('X', 'skinDensity', 'Protect density', 0, 1, 0.01) + slider('X', 'skinLight', 'Protect light', 0, 1, 0.01)),
+        [['X', 'skinGuard'], ['X', 'skinHue'], ['X', 'skinDensity'], ['X', 'skinLight']])}
+
+      ${simple ? '' : `<div class="card"><div class="k">Match to reference</div>${X.matchAmt > 0 ? `<p class="small">Matching ${esc(S.refName || 'a reference')}.</p>${slider('X', 'matchAmt', 'Match amount', 0, 1, 0.01)}` : '<p class="small dim">Set a frame from your timeline as the reference, then park on the shot to match. Or use “Match my shot to this” on a similar frame in Shot.</p>'}
         <div class="row wrap"><button id="setref">Use the current frame as reference</button><button id="matchref" ${S.refFrameStats ? '' : 'disabled'}>Match this frame to it</button>${X.matchAmt > 0 ? '<button id="nomatch">Clear match</button>' : ''}</div></div>
       ${hasCurves(G) ? '<p class="warn small">This look has curves from Lukuluku. The effect applies everything except curves; the .cube LUT includes them.</p>' : ''}
       <div class="card"><div class="k">More</div>
         <div class="row"><input id="code" placeholder="Paste a Lukuluku look code or share link" value="${esc(lookCode(L, S.matte))}"><button id="parse">Use</button></div>
         <div class="row wrap"><button id="cube">Export .cube</button><button id="open">Open in Lukuluku</button></div>
-        <p class="small dim">${esc(host.applyNote || '')}</p></div>`;
-    const changed = () => { $('#code', body).value = lookCode(S.look, S.matte); drawStage(); };
-    body.querySelectorAll('[data-axis]').forEach(s => s.onchange = () => { S.look[s.dataset.axis] = s.value; changed(); });
-    $('#input', body).onchange = e => { S.input = e.target.value; settings.set('input', S.input); changed(); };
-    $('#matte', body).onchange = e => { S.matte = e.target.value !== 'none'; if (S.matte) S.look.A = e.target.value; changed(); };
-    $('#rname', body).onchange = e => { S.recipe.name = e.target.value; };
+        <p class="small dim">${esc(host.applyNote || '')}</p></div>`}
+      ${simple ? '<div class="row"><div class="more" id="tglAll3">All controls: every setting, match to reference, LUT export ›</div></div>' : ''}`;
+
+    const changed = () => { const c = $('#code', body); if (c) c.value = lookCode(S.look, S.matte); drawStage(); };
+    body.querySelectorAll('[data-axis]').forEach(s2 => s2.onchange = () => { S.look[s2.dataset.axis] = s2.value; render(); });
+    ['#tglAll', '#tglAll2', '#tglAll3'].forEach(id => { const el = $(id, body); if (el) el.onclick = () => { S.tweakAll = !S.tweakAll; render(); }; });
+    if ($('#toshot', body)) $('#toshot', body).onclick = () => go('shot');
+    body.querySelectorAll('[data-undo]').forEach(b2 => b2.onclick = () => { for (const pair of b2.dataset.undo.split(',')) { const [o, k] = pair.split(':'); (o === 'G' ? S.look.G : S.extra)[k] = defOf(o, k); } render(); });
+    if ($('#input', body)) $('#input', body).onchange = e => { S.input = e.target.value; settings.set('input', S.input); changed(); };
+    if ($('#matte', body)) $('#matte', body).onchange = e => { S.matte = e.target.value !== 'none'; if (S.matte) S.look.A = e.target.value; changed(); };
+    if ($('#rname', body)) $('#rname', body).onchange = e => { S.recipe.name = e.target.value; };
     wireSliders(body, (id, v) => { const [obj, key] = id.split(':'); (obj === 'G' ? S.look.G : S.extra)[key] = v; drawStage(); });
-    $('#apply', body).onclick = () => busy('Applying', () => applyLookToClips(S.look, S.extra, S.input, S.matte));
+    if ($('#apply', body)) $('#apply', body).onclick = () => busy('Applying', () => applyLookToClips(S.look, S.extra, S.input, S.matte));
     if ($('#update', body)) $('#update', body).onclick = () => busy('Saving', () => saveCurrentAsPreset($('#rname', body).value, false));
-    $('#saveNew', body).onclick = () => busy('Saving', async () => { await saveCurrentAsPreset($('#rname', body).value, true); render(); });
-    $('#reset', body).onclick = () => { S.look = NEUTRAL_LOOK(); S.extra = { ...XDEF }; S.matte = false; S.recipe = { name: '', presetId: null }; S.chosen = -1; render(); };
-    $('#parse', body).onclick = () => { try { const l = parseLookInput($('#code', body).value, C); S.look = l; toast('Look loaded: ' + formatCode(l)); render(); } catch (e) { toast(e.message, 4000); } };
-    $('#setref', body).onclick = () => busy('Grabbing reference', async () => { const g = await host.grabFrame(); S.refFrameStats = matchStats(g.frame); S.refName = `${g.clipName || 'frame'} ${g.timecode || ''}`; toast('Reference set: now park on the shot to match'); render(); });
-    $('#matchref', body).onclick = () => busy('Matching', async () => { await grab(); S.extra = { ...S.extra, ...computeMatch(matchStats(S.frame), S.refFrameStats) }; render(); });
+    if ($('#saveNew', body)) $('#saveNew', body).onclick = () => busy('Saving', async () => { await saveCurrentAsPreset($('#rname', body).value, true); render(); });
+    if ($('#reset', body)) $('#reset', body).onclick = () => { S.look = NEUTRAL_LOOK(); S.extra = { ...XDEF }; S.matte = false; S.recipe = { name: '', presetId: null }; S.chosen = -1; S.suggOn = -1; S.suggZ = null; render(); };
+    if ($('#parse', body)) $('#parse', body).onclick = () => { try { const l = parseLookInput($('#code', body).value, C); S.look = l; toast('Look loaded: ' + formatCode(l)); render(); } catch (e) { toast(e.message, 4000); } };
+    if ($('#setref', body)) $('#setref', body).onclick = () => busy('Grabbing reference', async () => { const g = await host.grabFrame(); S.refFrameStats = matchStats(g.frame); S.refName = `${g.clipName || 'frame'} ${g.timecode || ''}`; toast('Reference set: now park on the shot to match'); render(); });
+    if ($('#matchref', body)) $('#matchref', body).onclick = () => busy('Matching', async () => { await grab(); S.extra = { ...S.extra, ...computeMatch(matchStats(S.frame), S.refFrameStats) }; render(); });
     if ($('#nomatch', body)) $('#nomatch', body).onclick = () => { S.extra.matchAmt = 0; render(); };
-    $('#cube', body).onclick = () => busy('Baking LUT', async () => {
+    if ($('#cube', body)) $('#cube', body).onclick = () => busy('Baking LUT', async () => {
       const cube = bakeCube(S.look, C, await lutsFor(S.look), { input: S.input, extra: S.extra }); const p = await host.saveFile(cube.name + '.cube', cube.text, { title: 'Save the LUT' }); if (p) toast('Saved ' + p); });
-    $('#open', body).onclick = () => host.openUrl(shareLink(S.look, up.content.looks.app));
+    if ($('#open', body)) $('#open', body).onclick = () => host.openUrl(shareLink(S.look, up.content.looks.app));
     if (S.frame) drawStage();
+
   }
 
   // PRESETS ---------------------------------------------------------------
