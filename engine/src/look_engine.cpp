@@ -171,7 +171,7 @@ struct Setup {
   V3 wLift, wGamE, wGainM, wOff, satR, LS, LM, LH, LSat; float lowR, highR, pivot, ucon; bool wpost;
   float hi, sh, wh, bk, bri, gam, lutMix, sharpU;
   float matchAmt, mLg, mLo, mA, mB, mCg; float skinGuard, skinHue, skinDensity, skinLight;
-  float z[4][10]; bool zones; float ambHue, ambAmt;
+  float z[8][10]; bool zones; float ambHue, ambAmt;
 };
 inline V3 puck(float x, float y) { return {1.14f * y, -0.395f * x - 0.581f * y, 2.032f * x}; }
 
@@ -198,7 +198,10 @@ Setup makeSetup(const Params& p) {
   s.lowR = float(p[P_lowR]); s.highR = float(p[P_highR]); s.pivot = float(p[P_pivot]); s.ucon = float(p[P_con]); s.wpost = p[P_wpost] > 0.5;
   s.hi = float(p[P_hi]); s.sh = float(p[P_sh]); s.wh = float(p[P_wh]); s.bk = float(p[P_bk]); s.bri = float(p[P_bri]); s.gam = float(p[P_gam]); s.lutMix = float(p[P_lutMix]); s.sharpU = float(p[P_sharp]);
   s.matchAmt = float(p[P_matchAmt]); s.mLg = float(p[P_mLg]); s.mLo = float(p[P_mLo]); s.mA = float(p[P_mA]); s.mB = float(p[P_mB]); s.mCg = float(p[P_mCg]);
-  s.zones = false; for (int i = 0; i < 4; i++) { for (int k = 0; k < 10; k++) s.z[i][k] = float(p.v[P_z1Amt + i * 10 + k]); if (s.z[i][0] > 0) s.zones = true; }
+  s.zones = false;
+  // zones 1-4 sit together in params.h; 5-8 were appended later, after the ambience pair
+  for (int i = 0; i < 8; i++) { const int base = i < 4 ? P_z1Amt + i * 10 : P_z5Amt + (i - 4) * 10;
+    for (int k = 0; k < 10; k++) s.z[i][k] = float(p.v[base + k]); if (s.z[i][0] > 0) s.zones = true; }
   s.ambHue = float(p[P_ambHue]); s.ambAmt = float(p[P_ambAmt]); if (s.ambAmt > 0) s.zones = true;
   s.skinGuard = float(p[P_skinGuard]); s.skinHue = float(p[P_skinHue]); s.skinDensity = float(p[P_skinDensity]); s.skinLight = float(p[P_skinLight]);
   return s;
@@ -243,7 +246,7 @@ V3 applyZones(V3 src, V3 out, const Setup& s) {
   float sC = std::hypot(so.g, so.b), sh = std::atan2(so.b, so.g) * 57.29578f; if (sh < 0) sh += 360;
   auto soft = [](float x, float lo, float hi, float e) { return smoothstepf(lo - e, lo + e, x) * (1 - smoothstepf(hi - e, hi + e, x)); };
   if (s.ambAmt > 0) { float w = s.ambAmt * smoothstepf(0.12f, 0.55f, go.r), h = s.ambHue * 0.01745329f; go.g += 0.07f * w * std::cos(h); go.b += 0.07f * w * std::sin(h); }
-  for (int i = 0; i < 4; i++) { const float* z = s.z[i]; if (z[0] <= 0) continue;
+  for (int i = 0; i < 8; i++) { const float* z = s.z[i]; if (z[0] <= 0) continue;
     float dh = std::fabs(sh - z[1]); if (dh > 180) dh = 360 - dh;
     float wh = z[4] <= 0.03f ? 1.f : 1 - smoothstepf(z[2] * 0.6f, z[2] * 1.2f, dh);
     float w = z[0] * wh * soft(sC, z[3], z[4], 0.012f) * soft(so.r, z[5], z[6], 0.05f); if (w <= 0.001f) continue;

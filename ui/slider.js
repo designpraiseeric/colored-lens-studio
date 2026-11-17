@@ -4,11 +4,16 @@
 // number box takes typed values. Arrow keys nudge it when it has focus.
 const fmt = (v, step) => (step >= 1 ? String(Math.round(v)) : v.toFixed(2));
 
-export function sliderHTML({ id, label, min, max, step, value, def }) {
+/**
+ * `band` paints the slider's own rail with what it controls — the colour wheel on a hue slider, grey-to-vivid on a
+ * colourfulness one — so the editor can see where they are heading instead of guessing from a number.
+ */
+export function sliderHTML({ id, label, min, max, step, value, def, band, marks, thumbColor }) {
   const pct = ((value - min) / (max - min)) * 100, zero = min < 0 && max > 0 ? ((0 - min) / (max - min)) * 100 : null;
-  return `<div class="sl"><span class="lb">${label}</span>
+  return `<div class="sl ${band ? 'banded' : ''}"><span class="lb">${label}</span>
     <div class="trk" tabindex="0" data-id="${id}" data-min="${min}" data-max="${max}" data-step="${step}" data-def="${def}" data-val="${value}" title="Drag to set · double-click to reset">
-      <div class="rail"></div>${zero != null ? `<div class="zero" style="left:${zero}%"></div>` : ''}<div class="fill" style="width:${pct}%"></div><div class="thumb" style="left:${pct}%"></div></div>
+      ${marks && marks.length ? `<div class="marks">${marks.map(m => `<i style="left:${m.at}%;height:${Math.round(3 + m.h * 11)}px;background:${m.c}"></i>`).join('')}</div>` : ''}
+      <div class="rail" ${band ? `style="background:${band};height:8px;top:6px"` : ''}></div>${zero != null ? `<div class="zero" style="left:${zero}%"></div>` : ''}${band ? '' : `<div class="fill" style="width:${pct}%"></div>`}<div class="thumb" style="left:${pct}%${thumbColor ? ';background:' + thumbColor : ''}"></div></div>
     <input class="num" data-for="${id}" value="${fmt(value, step)}"></div>`;
 }
 
@@ -19,7 +24,7 @@ export function wireSliders(root, onChange) {
     const num = root.querySelector(`.num[data-for="${id}"]`), fill = trk.querySelector('.fill'), thumb = trk.querySelector('.thumb');
     const set = (v, emit = true) => {
       v = Math.min(max, Math.max(min, Math.round(v / step) * step)); v = +v.toFixed(6);
-      trk.dataset.val = v; const pct = ((v - min) / (max - min)) * 100; fill.style.width = pct + '%'; thumb.style.left = pct + '%';
+      trk.dataset.val = v; const pct = ((v - min) / (max - min)) * 100; if (fill) fill.style.width = pct + '%'; thumb.style.left = pct + '%';
       if (num && document.activeElement !== num) num.value = fmt(v, step);
       if (emit) onChange(id, v);
     };

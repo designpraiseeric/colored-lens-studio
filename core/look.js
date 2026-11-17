@@ -178,14 +178,30 @@ export function applySkinGuard(src, out, p) {
 
 /** Colour zones (mirrors applyZones in the C++ engine): pixels picked by their original colour move to a new colour. */
 export const ZONE_KEYS = ['Amt', 'Hue', 'Wid', 'Cmin', 'Cmax', 'Lmin', 'Lmax', 'ToHue', 'ToC', 'dL'], ZONE_DEF = [0, 0, 25, 0.03, 0.4, 0, 1, 0, 0.1, 0];
-export const zoneDefaults = () => { const o = { ambHue: 0, ambAmt: 0 }; for (let i = 1; i <= 4; i++) ZONE_KEYS.forEach((k, j) => { o[`z${i}${k}`] = ZONE_DEF[j]; }); return o; };
-export const hasZones = p => !!p && ((p.ambAmt || 0) > 0 || [1, 2, 3, 4].some(i => (p[`z${i}Amt`] || 0) > 0));
+export const ZONES = 8;
+/** An sRGB hex for an OkLCh colour, so a control can show the colour it is about to pick or make. */
+export function lchHex(h, C = 0.13, L = 0.72) {
+  const a = C * Math.cos(h * Math.PI / 180), b = C * Math.sin(h * Math.PI / 180);
+  const rgb = oklabToLin(L, a, b).map(v => Math.round(Math.min(1, Math.max(0, lin2srgb(v))) * 255));
+  return '#' + rgb.map(v => v.toString(16).padStart(2, '0')).join('');
+}
+/** Where the frame's colours actually sit, as 36 buckets of OkLCh hue (weighted by how colourful each pixel is). */
+export function hueHistogram(frame, bins = 36) {
+  const out = new Array(bins).fill(0), n = frame.w * frame.h, step = Math.max(1, Math.floor(n / 20000));
+  for (let i = 0; i < n; i += step) { const lab = srgbToOklab(frame.data[i * 4] / 255, frame.data[i * 4 + 1] / 255, frame.data[i * 4 + 2] / 255);
+    const C = Math.hypot(lab[1], lab[2]); if (C < 0.02) continue; let h = Math.atan2(lab[2], lab[1]) * 57.29578; if (h < 0) h += 360;
+    out[Math.min(bins - 1, Math.floor(h / (360 / bins)))] += C; }
+  const max = Math.max(1e-6, ...out); return out.map(v => v / max);
+}
+export const zoneDefaults = () => { const o = { ambHue: 0, ambAmt: 0 }; for (let i = 1; i <= ZONES; i++) ZONE_KEYS.forEach((k, j) => { o[`z${i}${k}`] = ZONE_DEF[j]; }); return o; };
+export const zoneList = () => [1, 2, 3, 4, 5, 6, 7, 8];
+export const hasZones = p => !!p && ((p.ambAmt || 0) > 0 || zoneList().some(i => (p[`z${i}Amt`] || 0) > 0));
 export function applyZones(src, out, p) {
   if (!hasZones(p)) return out;
   const so = srgbToOklab(...src), go = srgbToOklab(...out), sC = Math.hypot(so[1], so[2]); let sh = Math.atan2(so[2], so[1]) * 57.29578; if (sh < 0) sh += 360;
   const soft = (x, lo, hi, e) => smooth(lo - e, lo + e, x) * (1 - smooth(hi - e, hi + e, x));
   if (p.ambAmt > 0) { const w = p.ambAmt * smooth(0.12, 0.55, go[0]), h = p.ambHue * 0.01745329; go[1] += 0.07 * w * Math.cos(h); go[2] += 0.07 * w * Math.sin(h); }
-  for (let i = 1; i <= 4; i++) { const z = ZONE_KEYS.map((k, j) => p[`z${i}${k}`] ?? ZONE_DEF[j]); if (!(z[0] > 0)) continue;
+  for (let i = 1; i <= ZONES; i++) { const z = ZONE_KEYS.map((k, j) => p[`z${i}${k}`] ?? ZONE_DEF[j]); if (!(z[0] > 0)) continue;
     let dh = Math.abs(sh - z[1]); if (dh > 180) dh = 360 - dh;
     const wh = z[4] <= 0.03 ? 1 : 1 - smooth(z[2] * 0.6, z[2] * 1.2, dh), w = z[0] * wh * soft(sC, z[3], z[4], 0.012) * soft(so[0], z[5], z[6], 0.05); if (w <= 0.001) continue;
     const ref = Math.max(0.02, (z[3] + z[4]) * 0.5), k = z[4] <= 0.03 ? 1 : Math.min(1.5, Math.max(0.5, sC / ref)), th = z[7] * 0.01745329, tc = z[8] * k;
@@ -196,7 +212,7 @@ export function applyZones(src, out, p) {
 /** How much of a frame each colour zone actually reaches: [{zone, share}] (share of pixels moved at least a quarter of the way). */
 export function zoneCoverage(frame, p) {
   const out = [], n = frame.w * frame.h, step = Math.max(1, Math.floor(n / 6000)), soft = (x, lo, hi, e) => smooth(lo - e, lo + e, x) * (1 - smooth(hi - e, hi + e, x));
-  for (let i = 1; i <= 4; i++) { const z = ZONE_KEYS.map((k, j) => p[`z${i}${k}`] ?? ZONE_DEF[j]); if (!(z[0] > 0)) continue; let hit = 0, tot = 0;
+  for (let i = 1; i <= ZONES; i++) { const z = ZONE_KEYS.map((k, j) => p[`z${i}${k}`] ?? ZONE_DEF[j]); if (!(z[0] > 0)) continue; let hit = 0, tot = 0;
     for (let q = 0; q < n; q += step) { const so = srgbToOklab(frame.data[q * 4] / 255, frame.data[q * 4 + 1] / 255, frame.data[q * 4 + 2] / 255), sC = Math.hypot(so[1], so[2]); let sh = Math.atan2(so[2], so[1]) * 57.29578; if (sh < 0) sh += 360;
       let dh = Math.abs(sh - z[1]); if (dh > 180) dh = 360 - dh; const wh = z[4] <= 0.03 ? 1 : 1 - smooth(z[2] * 0.6, z[2] * 1.2, dh);
       if (wh * soft(sC, z[3], z[4], 0.012) * soft(so[0], z[5], z[6], 0.05) > 0.25) hit++; tot++; }

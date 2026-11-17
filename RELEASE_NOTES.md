@@ -1,6 +1,13 @@
 # Release notes
 Each `## <version>` block becomes the text of the in-app update banner and the GitHub Release.
 
+## 0.10.0
+Colour zones you can see and pick yourself.
+- **Sliders show their colours.** Every hue slider is the colour wheel itself, with your own frame's colours marked underneath as small ticks, so you can see what you are picking and where you are heading. Colourfulness, brightness, exposure, saturation and temperature sliders are painted the same way.
+- **Pick any colour straight from the picture.** Press "Pick a colour from the picture" in Tweak and click the wall, the shirt, the sky: Colored Lens makes a zone from exactly that colour, and you move it wherever you like. No AI needed, no mask.
+- **Eight zones instead of four**, so you can re-colour that many separate parts of one shot at once.
+- Each zone is its own card with a before-and-after swatch, how much of the picture it is really changing, and buttons to re-pick it or remove it.
+
 ## 0.9.1
 From a second stress test in Premiere Pro.
 - **Strength.** Every direction now has a Strength slider next to the wipe: push a look harder or pull it back without opening Tweak. Many looks are deliberately gentle and looked like nothing on a bright shot.

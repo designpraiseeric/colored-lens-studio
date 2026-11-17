@@ -367,7 +367,7 @@ export function zonesFor(sg, study, swatches = [], frame = null) {
   for (const c of cands) {
     const clash = used.find(u => (u.from.C < 0.035) === (c.from.C < 0.035) && (c.from.C < 0.035 ? Math.abs(u.from.L - c.from.L) < 0.12 : Math.min(Math.abs(u.from.h - c.from.h), 360 - Math.abs(u.from.h - c.from.h)) < 18 && Math.abs(u.from.L - c.from.L) < 0.25));
     if (clash) { skipped.push({ item: c.it.item, why: `it is the same colour as the ${clash.it.item} now, so it needs a mask` }); continue; }
-    if (used.length >= 4) { skipped.push({ item: c.it.item, why: 'four zones are already in use' }); continue; }
+    if (used.length >= 8) { skipped.push({ item: c.it.item, why: 'all eight colour zones are already in use' }); continue; }
     const n = c.from.C < 0.035;
     // how much of the picture has this colour? A small item whose colour is all over the frame cannot be picked by colour.
     if (frame) { let hit = 0, tot = 0; const N = frame.w * frame.h, step = Math.max(1, Math.floor(N / 5000));

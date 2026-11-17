@@ -4,11 +4,12 @@
 // The loop: read the frame -> say what it is for -> get directions -> preview them on the frame -> tweak live ->
 // apply to clips -> save as a preset -> apply the preset to other shots.
 import { readFrame, frameStats, labPixels } from '../core/analysis.js';
+import { srgbToOklab } from '../core/color.js';
 import { checkSkin, vectorscope } from '../core/skin.js';
 import { pngDataUrl, encodePNG, downsample, toBase64 } from '../core/image.js';
 import { PROVIDERS, CLAUDE_MODELS, DEFAULTS as SMART0, buildPrompt, parseReply, validate, ask, buildStudy, buildSuggest, validateStudy, validateSuggest, howTo, zonesFor, picture, SYSTEM_STUDY, SYSTEM_SUGGEST, detectOllama, detectOpenAI, detectApple, appleReason, resolveProvider } from '../core/smart.js';
 import { shotRecord, encodeShot, decodeShot, renderStrip, readSequence, scriptCSV } from '../core/script.js';
-import { ZONE_KEYS, zoneDefaults, zoneCoverage, hasZones, parseLookInput, formatCode, fullGrade, makePixelFn, bakeCube, lookToEngineParams, shareLink, computeMatch, matchStats, hasCurves, GRADE0 } from '../core/look.js';
+import { ZONES, ZONE_KEYS, ZONE_DEF, zoneList, zoneDefaults, zoneCoverage, hasZones, lchHex, hueHistogram, parseLookInput, formatCode, fullGrade, makePixelFn, bakeCube, lookToEngineParams, shareLink, computeMatch, matchStats, hasCurves, GRADE0 } from '../core/look.js';
 import { GENRES, FEELINGS, ROLES, KIND_LABEL, pickDirections, describeEffect, whyFor, frameSummary, answers, isDark, continuity, pictureOf, directionsFromPicks } from '../core/directions.js';
 import { previewer, wipe } from '../core/preview.js';
 import { listPresets, savePreset, deletePreset, duplicatePreset, presetCode, importPresetCode, settings } from '../core/presets.js';
@@ -34,7 +35,7 @@ export async function startApp(host, root) {
   const S = { tab: 'shot', back: 'shot', frame: null, meta: null, reading: null, skin: null, sample: null, shots: [],
     intent: normIntent(settings.get('intent', {})), seqId: '', ctx: null, lead: 0, neigh: [], scope: settings.get('scope', 'clip'), input: settings.get('input', 'rec709'),
     directions: [], chosen: -1, look: NEUTRAL_LOOK(), extra: { ...XDEF }, matte: false, recipe: { name: '', presetId: null }, view: 'split', wipe: 0.5,
-    guide: { view: 'home', step: 0, route: '' }, tour: null, simple: !!settings.get('simple', 1), base: null, strength: 1, scanEvery: +settings.get('scanEvery', 5) || 5, selCount: 0, scanStop: false, scanning: false, scanAsk: null, scanPer: 0, layerOff: [], range: settings.get('range', 'shot'), study: null, sugg: [], suggOpen: -1, suggHow: -1, rangeInfo: null, ai: { busy: '', error: '', chat: [], none: false }, theme: settings.get('theme', 'bright'), moreQ: false, moreD: false, dockSize: settings.get('dockSize', 'M'), dockHidden: false, detached: false, smartDirs: [],
+    guide: { view: 'home', step: 0, route: '' }, tour: null, simple: !!settings.get('simple', 1), base: null, strength: 1, pickZone: 0, zoneOpen: 0, hueHist: null, hueHistKey: '', scanEvery: +settings.get('scanEvery', 5) || 5, selCount: 0, scanStop: false, scanning: false, scanAsk: null, scanPer: 0, layerOff: [], range: settings.get('range', 'shot'), study: null, sugg: [], suggOpen: -1, suggHow: -1, rangeInfo: null, ai: { busy: '', error: '', chat: [], none: false }, theme: settings.get('theme', 'bright'), moreQ: false, moreD: false, dockSize: settings.get('dockSize', 'M'), dockHidden: false, detached: false, smartDirs: [],
     smart: { cfg: (c => { if (c.geminiModel === 'gemini-2.5-flash') c.geminiModel = SMART0.geminiModel; return c; })({ ...SMART0, ...settings.get('smart', {}) }), turns: [], history: [], detect: null, using: '' }, refFrameStats: null, refName: '', adapt: settings.get('adapt', true), encQ: '', shownCode: '', confirmDel: '', busy: false, showSkin: false, showRefs: false };
   let PV = null, pvEl = null; // pvEl: the separate Preview panel's container, once it has been opened
   const up = new Updater(host, config.pagesBase);
@@ -200,7 +201,7 @@ export async function startApp(host, root) {
       ${d && S.base ? sliderHTML({ id: 'strength', label: 'Strength', min: 0, max: 1.5, step: 0.05, value: S.strength == null ? 1 : S.strength, def: 1 }) : ''}
       ${d ? `<div class="small">Previewing <b>${esc(S.suggOn >= 0 && S.sugg[S.suggOn] ? S.sugg[S.suggOn].title : d.name)}</b> <span class="dim">(colour, grain and vignette; halation and glow show on the clip)</span></div>
         ${scopeRow()}<div class="row wrap"><button class="primary" data-dapply="${S.chosen}">${esc(applyLabel())}</button><button data-dtweak="${S.chosen}">Tweak</button><button data-dsave="${S.chosen}">Save as preset</button><button id="dclear">Back to the original</button></div>`
-        : `<div class="small dim">${shot ? 'Click a face in the picture to check its skin. Pick a direction below to preview it here.' : 'Live preview: colour, grain and vignette. Halation and diffusion glow show on the clip.'}</div>`}`;
+        : `<div class="small ${S.pickZone ? 'todo' : 'dim'}">${S.pickZone ? 'Click the colour you want to change.' : shot ? 'Click a face in the picture to check its skin. Pick a direction below to preview it here.' : 'Live preview: colour, grain and vignette. Halation and diffusion glow show on the clip.'}</div>`}`;
     return side ? `<div class="dockrow">${stage}<div class="grow dockside">${controls}${rest}</div></div>` : stage + controls + rest;
   }
   // the Preview panel's real size (its own root node), re-checked while it is open so the picture follows a resize
@@ -226,8 +227,17 @@ export async function startApp(host, root) {
     dock.querySelectorAll('[data-dsize]').forEach(b => b.onclick = () => { S.dockSize = b.dataset.dsize; settings.set('dockSize', S.dockSize); renderDock(); });
     wireSliders(dock, (id, v) => { if (id === 'wipe') { S.wipe = v; placeWipe(); } else if (id === 'strength') { setStrength(v); drawStage(); } });
     wireActions(dock);
-    // On the picture itself: drag to move the wipe; a plain click checks the skin at that point.
-    const st = $('#stage', dock), canSample = S.tab === 'shot' || S.detached;
+    // On the picture itself: drag to move the wipe; a plain click checks the skin, or picks a colour for a zone.
+    const st = $('#stage', dock), canSample = S.tab === 'shot' || S.detached || S.pickZone;
+    /** The average colour of a small patch around the click, so one stray pixel does not decide the zone. */
+    const colourAt = (x, y) => { const f = S.frame, cx = Math.round(x * f.w), cy = Math.round(y * f.h), r = Math.max(2, Math.round(Math.min(f.w, f.h) * 0.015));
+      let n = 0, acc = [0, 0, 0];
+      for (let yy = Math.max(0, cy - r); yy <= Math.min(f.h - 1, cy + r); yy++) for (let xx = Math.max(0, cx - r); xx <= Math.min(f.w - 1, cx + r); xx++) {
+        const i = (yy * f.w + xx) * 4; acc[0] += f.data[i]; acc[1] += f.data[i + 1]; acc[2] += f.data[i + 2]; n++; }
+      return acc.map(v => v / Math.max(1, n) / 255); };
+    const pick = (x, y) => { const n = addZoneFromColour(colourAt(x, y), S.pickZone > 0 ? S.pickZone : 0);
+      S.pickZone = 0; if (!n) return toast(`All ${ZONES} colour zones are in use. Remove one first.`);
+      if (S.tab !== 'tweak') go('tweak'); else render(); drawStage(); toast(`Zone ${n} picked. Drag “New hue” to change that colour.`); };
     const sample = (x, y) => busy('Checking skin', async () => { S.sample = [x, y]; runSkin(); await suggest(); S.showSkin = true; render(); toast(S.skin.found ? `Skin sampled: about ${S.skin.ire} IRE` : 'No skin there; try the middle of a cheek'); });
     let drag = null;
     const posOf = e => { const r = st.getBoundingClientRect(); return [Math.min(1, Math.max(0, (e.clientX - r.left) / Math.max(1, r.width))), Math.min(1, Math.max(0, (e.clientY - r.top) / Math.max(1, r.height)))]; };
@@ -236,7 +246,8 @@ export async function startApp(host, root) {
       S.wipe = posOf(e)[0]; placeWipe(); e.preventDefault && e.preventDefault(); };
     const up = e => { if (!drag) return; const d = drag; drag = null; stageDrag = false;
       for (const t of ['pointermove', 'mousemove']) document.removeEventListener(t, move); for (const t of ['pointerup', 'mouseup']) document.removeEventListener(t, up);
-      if (d.moved) renderDock(); else if (canSample) { const [x, y] = posOf(e); sample(x, y); } };
+      if (d.moved) return renderDock();
+      const [x, y] = posOf(e); if (S.pickZone) pick(x, y); else if (canSample) sample(x, y); };
     const down = e => { if (e.button != null && e.button !== 0) return; drag = { x: e.clientX, moved: false }; stageDrag = true;
       const P = e.type === 'pointerdown'; document.addEventListener(P ? 'pointermove' : 'mousemove', move); document.addEventListener(P ? 'pointerup' : 'mouseup', up); e.preventDefault && e.preventDefault(); };
     st.addEventListener(typeof window !== 'undefined' && 'PointerEvent' in window ? 'pointerdown' : 'mousedown', down);
@@ -696,13 +707,39 @@ export async function startApp(host, root) {
   }
 
   // TWEAK -----------------------------------------------------------------
+  // ---------- colour bands: a slider shows the colours it works in ----------
+  const HUE_BAND = (() => { const st = []; for (let h = 0; h <= 360; h += 15) st.push(`${lchHex(h)} ${(h / 360 * 100).toFixed(1)}%`); return `linear-gradient(90deg, ${st.join(',')})`; })();
+  const satBand = h => `linear-gradient(90deg, ${lchHex(h, 0.01)}, ${lchHex(h, 0.2)}, ${lchHex(h, 0.4)})`;
+  const lightBand = h => `linear-gradient(90deg, ${lchHex(h, 0.1, 0.35)}, ${lchHex(h, 0.1, 0.72)}, ${lchHex(h, 0.1, 0.95)})`;
+  const BANDS = { temp: `linear-gradient(90deg, ${lchHex(250, 0.1)}, #d8d8d4, ${lchHex(60, 0.12)})`, tint: `linear-gradient(90deg, ${lchHex(140, 0.1)}, #d8d8d4, ${lchHex(330, 0.12)})`,
+    sat: 'linear-gradient(90deg, #b8b8b4, #8ab0d8 55%, #2f8fe0)', exp: 'linear-gradient(90deg, #111, #8a8a88, #fff)' };
+  /** Where this frame's colours sit, drawn under a hue slider so the editor aims at something real. */
+  function hueMarks() { if (!S.frame) return [];
+    const key = (S.meta && S.meta.timecode) + '|' + S.frame.w;
+    if (!S.hueHist || S.hueHistKey !== key) { S.hueHist = hueHistogram(downsample(S.frame, 160)); S.hueHistKey = key; }
+    return S.hueHist.map((h, i) => ({ at: (i + 0.5) / S.hueHist.length * 100, h, c: lchHex((i + 0.5) * (360 / S.hueHist.length)) })).filter(m => m.h > 0.05); }
+  const zonePick = n => Object.fromEntries(ZONE_KEYS.map(k => [`z${n}${k}`, S.extra[`z${n}${k}`]]));
+  /** Adds a colour zone from a colour the editor clicked in the picture. Returns its number, or 0 when all are in use. */
+  function addZoneFromColour(rgb, into) {
+    const lab = srgbToOklab(rgb[0], rgb[1], rgb[2]), C = Math.hypot(lab[1], lab[2]); let h = Math.atan2(lab[2], lab[1]) * 57.29578; if (h < 0) h += 360;
+    const n = into > 0 ? into : zoneList().find(i => !((S.extra[`z${i}Amt`] || 0) > 0)); if (!n) return 0;
+    const neutral = C < 0.035, P = (k, v) => { S.extra[`z${n}${k}`] = +(+v).toFixed(4); };
+    P('Amt', 0.8); P('Hue', h); P('Wid', 24); P('Cmin', neutral ? 0 : Math.max(0.025, C * 0.45)); P('Cmax', neutral ? 0.03 : 0.5);
+    P('Lmin', Math.max(0, lab[0] - (neutral ? 0.14 : 0.32))); P('Lmax', Math.min(1, lab[0] + (neutral ? 0.14 : 0.32)));
+    if (!(into > 0)) { P('ToHue', h); P('ToC', Math.min(0.4, Math.max(0.03, C))); P('dL', 0); }
+    if (!S.base) S.base = { look: clone(S.look), extra: { ...S.extra } }; else S.base.extra = { ...S.base.extra, ...zonePick(n) };
+    S.zoneOpen = n; return n;
+  }
+  function clearZone(n) { ZONE_KEYS.forEach((k, j) => { S.extra[`z${n}${k}`] = ZONE_DEF[j]; if (S.base) S.base.extra[`z${n}${k}`] = ZONE_DEF[j]; });
+    if (S.suggZ) S.suggZ.mapped = S.suggZ.mapped.filter(m => m.zone !== n); if (S.zoneOpen === n) S.zoneOpen = 0; }
+
   function renderTweak(body) {
     const C = cat(), L = S.look, G = L.G, X = S.extra, simple = S.simple && !S.tweakAll;
     const byNum = o => Object.keys(o).sort((a, b) => +a.replace(/\D/g, '') - +b.replace(/\D/g, ''));
     const sel = (k, table) => `<label>${esc({ K: 'Lens character', D: 'Diffusion', C: 'Colour science', M: 'Film / video medium' }[k])}<select data-axis="${k}">${byNum(table).map(id => `<option value="${id}" ${L[k] === id ? 'selected' : ''}>${esc(table[id].name || table[id].short)}</option>`).join('')}</select></label>`;
     const defOf = (obj, key) => (obj === 'G' ? GRADE0 : { ...XDEF, matchAmt: 1 })[key];
     const off = (obj, key) => Math.abs(+(obj === 'G' ? G : X)[key] - +defOf(obj, key)) > 1e-6;
-    const slider = (obj, key, label, min, max, step) => sliderHTML({ id: obj + ':' + key, label: esc(label) + (off(obj, key) ? ' <span class="chg">changed</span>' : ''), min, max, step, value: +(obj === 'G' ? G : X)[key], def: defOf(obj, key) });
+    const slider = (obj, key, label, min, max, step, opt = {}) => sliderHTML({ id: obj + ':' + key, label: esc(label) + (off(obj, key) ? ' <span class="chg">changed</span>' : ''), min, max, step, value: +(obj === 'G' ? G : X)[key], def: defOf(obj, key), ...opt });
     // a card knows whether anything in it has been moved, so it can offer to put itself back
     const card = (id, title, note, rows, keys) => { const dirty = keys.some(k => off(k[0], k[1]));
       return `<div class="card" id="${id}"><div class="row tight"><div class="k grow">${esc(title)}</div>${dirty ? `<button class="small" data-undo="${keys.map(k => k.join(':')).join(',')}">Put back</button>` : ''}</div>${note ? `<p class="small dim">${note}</p>` : ''}${rows}</div>`; };
@@ -710,11 +747,34 @@ export async function startApp(host, root) {
     const hasGrain = fx(C.medium, L.M, 'grain'), hasHal = fx(C.medium, L.M, 'hal'), hasDiff = fx(C.diffusion, L.D, 'k'), hasVig = fx(C.medium, L.M, 'vig') || fx(C.lens, L.K, 'vig');
     const editing = S.recipe.presetId ? listPresets().find(p => p.id === S.recipe.presetId) : null;
     const from = S.suggOn >= 0 && S.sugg[S.suggOn] ? `the AI suggestion “${esc(S.sugg[S.suggOn].title)}”` : S.chosen >= 0 && allDirs()[S.chosen] ? `the look “${esc(allDirs()[S.chosen].name)}”` : '';
-    const zoneRows = [1, 2, 3, 4].filter(n => (X[`z${n}Amt`] || 0) > 0 || (S.suggZ && S.suggZ.mapped.some(m => m.zone === n)));
-    const zonesHTML = (full) => `${slider('X', 'ambAmt', 'Ambience amount', 0, 1, 0.01)}${(X.ambAmt || 0) > 0 ? slider('X', 'ambHue', 'Ambience hue', 0, 360, 1) : ''}
-      ${zoneRows.map(n => { const m = S.suggZ && S.suggZ.mapped.find(x => x.zone === n);
-        return `<div class="q">Zone ${n}${m ? `: ${esc(m.item)} → ${esc(m.to)}` : ''}</div>${slider('X', `z${n}Amt`, 'Amount', 0, 1, 0.01)}${slider('X', `z${n}Hue`, 'Pick hue', 0, 360, 1)}${full ? slider('X', `z${n}Wid`, 'Hue width', 5, 120, 1) : ''}${slider('X', `z${n}ToHue`, 'New hue', 0, 360, 1)}${full ? slider('X', `z${n}ToC`, 'New colourfulness', 0, 0.4, 0.005) + slider('X', `z${n}dL`, 'Lighter / darker', -0.3, 0.3, 0.005) : ''}`; }).join('')}`;
+    const zoneRows = zoneList().filter(n => (X[`z${n}Amt`] || 0) > 0 || (S.suggZ && S.suggZ.mapped.some(m => m.zone === n)));
     const zoneKeys = ['ambAmt', 'ambHue', ...zoneRows.flatMap(n => ZONE_KEYS.map(k => `z${n}${k}`))].map(k => ['X', k]);
+    const zoneSlider = (n, k, label, min, max, step, opt = {}) => sliderHTML({ id: `X:z${n}${k}`, label: esc(label), min, max, step, value: +X[`z${n}${k}`], def: defOf('X', `z${n}${k}`), ...opt });
+    const zoneBlock = (n, full) => {
+      const m = S.suggZ && S.suggZ.mapped.find(x => x.zone === n), from = X[`z${n}Hue`], to = X[`z${n}ToHue`], toC = X[`z${n}ToC`];
+      const grey = (X[`z${n}Cmax`] || 0) <= 0.035, open = S.zoneOpen === n, cov = (liveCoverage().find(c => c.zone === n) || {}).share;
+      return `<div class="zone ${open ? 'on' : ''}"><div class="row tight zhead" role="button" tabindex="0" data-zone="${n}">
+          <span class="sw" style="background:${grey ? '#9a9a96' : lchHex(from, Math.max(0.05, (X[`z${n}Cmin`] || 0) + 0.05))}"></span><span class="small dim">→</span><span class="sw" style="background:${lchHex(to, Math.max(0.03, toC))}"></span>
+          <b class="grow">${m ? esc(m.item) + ' → ' + esc(m.to) : `Zone ${n}`}</b>
+          <span class="small dim">${cov == null ? '' : Math.max(1, Math.round(cov * 100)) + '%'}</span><span class="more">${open ? '▴' : '▾'}</span></div>
+        ${open ? `${zoneSlider(n, 'Amt', 'How strongly', 0, 1, 0.01)}
+          <div class="q">The colour it grabs${grey ? ' (greys and neutrals)' : ''}</div>
+          ${zoneSlider(n, 'Hue', 'Pick hue', 0, 360, 1, { band: HUE_BAND, marks: hueMarks(), thumbColor: lchHex(from) })}
+          ${zoneSlider(n, 'Wid', 'How wide a slice of the wheel', 5, 120, 1)}
+          ${full ? zoneSlider(n, 'Cmin', 'Only colours at least this strong', 0, 0.4, 0.005, { band: satBand(from) }) + zoneSlider(n, 'Cmax', 'and at most this strong', 0, 0.5, 0.005, { band: satBand(from) })
+            + zoneSlider(n, 'Lmin', 'Only parts at least this bright', 0, 1, 0.01, { band: lightBand(from) }) + zoneSlider(n, 'Lmax', 'and at most this bright', 0, 1, 0.01, { band: lightBand(from) }) : ''}
+          <div class="q">What it becomes</div>
+          ${zoneSlider(n, 'ToHue', 'New hue', 0, 360, 1, { band: HUE_BAND, thumbColor: lchHex(to) })}
+          ${zoneSlider(n, 'ToC', 'How colourful', 0, 0.4, 0.005, { band: satBand(to) })}
+          ${zoneSlider(n, 'dL', 'Lighter / darker', -0.3, 0.3, 0.005, { band: lightBand(to) })}
+          <div class="row wrap"><button data-zpick="${n}">Re-pick from the picture</button><button data-zdel="${n}">Remove this zone</button></div>` : ''}</div>`;
+    };
+    const zonesHTML = (full) => `${S.pickZone ? '<p class="small todo">Now click that colour in the picture above.</p>' : ''}
+      <div class="row wrap"><button id="zadd" class="${S.pickZone ? '' : 'primary'}">${S.pickZone ? 'Cancel picking' : 'Pick a colour from the picture'}</button><span class="small dim">${zoneRows.length} of ${ZONES} in use</span></div>
+      ${zoneRows.map(n => zoneBlock(n, full)).join('')}
+      <div class="q">The light and air over everything</div>
+      ${sliderHTML({ id: 'X:ambAmt', label: 'Ambience amount', min: 0, max: 1, step: 0.01, value: +X.ambAmt, def: 0 })}
+      ${(X.ambAmt || 0) > 0 ? sliderHTML({ id: 'X:ambHue', label: 'Ambience hue', min: 0, max: 360, step: 1, value: +X.ambHue, def: 0, band: HUE_BAND, thumbColor: lchHex(X.ambHue) }) : ''}`;
 
     body.innerHTML = `
       ${S.frame ? '' : '<div class="card"><p class="small">Nothing to tweak yet. Open <b>Shot</b>, read the frame under your playhead and pick a direction; it lands here with its settings and a live preview.</p><div class="row"><button id="toshot" class="primary">Go to Shot</button></div></div>'}
@@ -731,11 +791,11 @@ export async function startApp(host, root) {
           <label>Aspect matte<select id="matte"><option value="none" ${!S.matte ? 'selected' : ''}>No matte</option>${Object.keys(C.aspect).sort((a, b) => a - b).map(a => `<option value="${a}" ${S.matte && L.A === a ? 'selected' : ''}>${esc(C.aspect[a].name)}</option>`).join('')}</select></label></div>
         <p class="small dim">${esc((C.color[L.C] || {}).recipe || '')} ${esc((C.medium[L.M] || {}).recipe || '')}</p>`}
 
-      ${hasZones(X) ? card('zonesCard', 'Colour zones', 'Each zone grabs one colour in your shot and moves it to a new one. Watch the preview as you drag.', zonesHTML(!simple), zoneKeys) : ''}
+      ${S.frame ? card('zonesCard', 'Colour zones', 'Pick any colour in your shot and move it somewhere else — a wall, a shirt, the sky — without drawing a mask. Up to ' + ZONES + ' at a time. Watch the preview as you drag.', zonesHTML(!simple), zoneKeys) : ''}
 
       ${card('gradeCard', simple ? 'The main controls' : 'Grade', simple ? 'The four that change a shot most. Double-click a slider to put it back.' : '',
-        slider('G', 'exp', 'Exposure', -3, 3, 0.05) + slider('G', 'con', 'Contrast', 0.5, 1.6, 0.01) + slider('G', 'sat', 'Saturation', 0, 2, 0.01) + slider('G', 'temp', 'Temperature', -1, 1, 0.01)
-        + (simple ? '' : slider('G', 'vib', 'Vibrance', -1, 1, 0.01) + slider('G', 'tint', 'Tint', -1, 1, 0.01) + slider('G', 'hi', 'Highlights', -1, 1, 0.01) + slider('G', 'sh', 'Shadows', -1, 1, 0.01) + slider('G', 'bk', 'Blacks', -1, 1, 0.01) + slider('G', 'wh', 'Whites', -1, 1, 0.01)),
+        slider('G', 'exp', 'Exposure', -3, 3, 0.05, { band: BANDS.exp }) + slider('G', 'con', 'Contrast', 0.5, 1.6, 0.01) + slider('G', 'sat', 'Saturation', 0, 2, 0.01, { band: BANDS.sat }) + slider('G', 'temp', 'Temperature', -1, 1, 0.01, { band: BANDS.temp })
+        + (simple ? '' : slider('G', 'vib', 'Vibrance', -1, 1, 0.01) + slider('G', 'tint', 'Tint', -1, 1, 0.01, { band: BANDS.tint }) + slider('G', 'hi', 'Highlights', -1, 1, 0.01) + slider('G', 'sh', 'Shadows', -1, 1, 0.01) + slider('G', 'bk', 'Blacks', -1, 1, 0.01) + slider('G', 'wh', 'Whites', -1, 1, 0.01)),
         [['G', 'exp'], ['G', 'con'], ['G', 'sat'], ['G', 'temp'], ['G', 'vib'], ['G', 'tint'], ['G', 'hi'], ['G', 'sh'], ['G', 'bk'], ['G', 'wh']])}
 
       ${card('strengthCard', 'Strength of the look', simple ? '' : 'Scales what the film look adds. A control is hidden when this look has nothing of that kind to scale.',
@@ -758,6 +818,10 @@ export async function startApp(host, root) {
 
     const changed = () => { const c = $('#code', body); if (c) c.value = lookCode(S.look, S.matte); drawStage(); };
     body.querySelectorAll('[data-axis]').forEach(s2 => s2.onchange = () => { S.look[s2.dataset.axis] = s2.value; render(); });
+    if ($('#zadd', body)) $('#zadd', body).onclick = () => { S.pickZone = S.pickZone ? 0 : -1; if (S.pickZone) { S.dockHidden = false; toast('Now click that colour in the picture'); } render(); };
+    body.querySelectorAll('[data-zone]').forEach(el => el.onclick = () => { const n = +el.dataset.zone; S.zoneOpen = S.zoneOpen === n ? 0 : n; render(); });
+    body.querySelectorAll('[data-zdel]').forEach(b2 => b2.onclick = () => { clearZone(+b2.dataset.zdel); drawStage(); render(); });
+    body.querySelectorAll('[data-zpick]').forEach(b2 => b2.onclick = () => { S.pickZone = +b2.dataset.zpick; S.dockHidden = false; toast('Now click that colour in the picture'); render(); });
     ['#tglAll', '#tglAll2', '#tglAll3'].forEach(id => { const el = $(id, body); if (el) el.onclick = () => { S.tweakAll = !S.tweakAll; render(); }; });
     if ($('#toshot', body)) $('#toshot', body).onclick = () => go('shot');
     body.querySelectorAll('[data-undo]').forEach(b2 => b2.onclick = () => { for (const pair of b2.dataset.undo.split(',')) { const [o, k] = pair.split(':'); (o === 'G' ? S.look.G : S.extra)[k] = defOf(o, k); } render(); });
