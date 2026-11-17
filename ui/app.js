@@ -35,7 +35,7 @@ export async function startApp(host, root) {
   const S = { tab: 'shot', back: 'shot', frame: null, meta: null, reading: null, skin: null, sample: null, shots: [],
     intent: normIntent(settings.get('intent', {})), seqId: '', ctx: null, lead: 0, neigh: [], scope: settings.get('scope', 'clip'), input: settings.get('input', 'rec709'),
     directions: [], chosen: -1, look: NEUTRAL_LOOK(), extra: { ...XDEF }, matte: false, recipe: { name: '', presetId: null }, view: 'split', wipe: 0.5,
-    guide: { view: 'home', step: 0, route: '' }, tour: null, simple: !!settings.get('simple', 1), base: null, strength: 1, pickZone: 0, zoneOpen: 0, zoneName: {}, hueHist: null, hueHistKey: '', scanEvery: +settings.get('scanEvery', 5) || 5, selCount: 0, scanStop: false, scanning: false, scanAsk: null, scanPer: 0, layerOff: [], range: settings.get('range', 'shot'), study: null, sugg: [], suggOpen: -1, suggHow: -1, rangeInfo: null, ai: { busy: '', error: '', chat: [], none: false }, theme: settings.get('theme', 'bright'), moreQ: false, moreD: false, dockSize: settings.get('dockSize', 'M'), dockHidden: false, detached: false, smartDirs: [],
+    guide: { view: 'home', step: 0, route: '' }, tour: null, simple: !!settings.get('simple', 1), base: null, strength: 1, pickZone: 0, zoneOpen: 0, zoneName: {}, readErr: null, errOpen: false, hueHist: null, hueHistKey: '', scanEvery: +settings.get('scanEvery', 5) || 5, selCount: 0, scanStop: false, scanning: false, scanAsk: null, scanPer: 0, layerOff: [], range: settings.get('range', 'shot'), study: null, sugg: [], suggOpen: -1, suggHow: -1, rangeInfo: null, ai: { busy: '', error: '', chat: [], none: false }, theme: settings.get('theme', 'bright'), moreQ: false, moreD: false, dockSize: settings.get('dockSize', 'M'), dockHidden: false, detached: false, smartDirs: [],
     smart: { cfg: (c => { if (c.geminiModel === 'gemini-2.5-flash') c.geminiModel = SMART0.geminiModel; return c; })({ ...SMART0, ...settings.get('smart', {}) }), turns: [], history: [], detect: null, using: '' }, refFrameStats: null, refName: '', adapt: settings.get('adapt', true), encQ: '', shownCode: '', confirmDel: '', busy: false, showSkin: false, showRefs: false };
   let PV = null, pvEl = null; // pvEl: the separate Preview panel's container, once it has been opened
   const up = new Updater(host, config.pagesBase);
@@ -121,7 +121,8 @@ export async function startApp(host, root) {
     // a new shot starts with every layer ticked; re-reading the same shot keeps the editor's ticks
     const key = S.ctx && S.ctx.subject ? `${S.ctx.subject.track}|${S.ctx.subject.name}|${S.ctx.subject.start}` : ''; if (key !== S.layerKey) { S.layerOff = []; S.layerKey = key; }
     try { S.selCount = await (host.selectionCount ? host.selectionCount() : 0); } catch { S.selCount = 0; }
-    const g = await host.grabFrame(undefined, { clean: true, hide: S.layerOff, onSlow: () => status('Premiere is still rendering this frame (heavy timelines take a while)…') }); S.frame = g.frame; S.meta = g; g.readWithout = S.layerOff.slice().sort(); S.sample = null; S.chosen = -1; S.lead = 0;
+    S.readErr = null;
+    const g = await host.grabFrame(undefined, { clean: true, hide: S.layerOff, onSlow: s => status(`Waiting for Premiere to render this frame — ${s}s (heavy timelines take a while)…`) }); S.frame = g.frame; S.meta = g; g.readWithout = S.layerOff.slice().sort(); S.sample = null; S.chosen = -1; S.lead = 0;
     S.study = null; S.sugg = []; S.suggOpen = S.suggHow = -1; S.rangeInfo = null; S.ai = { busy: '', error: '', chat: [], none: false };
     S.smartDirs = []; S.smart.turns = []; S.smart.history = [];
     // answers belong to the scene (marker range) when there is one, otherwise to the sequence
@@ -379,6 +380,11 @@ export async function startApp(host, root) {
     body.innerHTML = `
       <div class="row"><button id="grab" class="primary">${esc(host.grabLabel || 'Read the frame under the playhead')}</button>${S.frame ? `<span class="small dim">${esc(S.meta.clipName || '')} ${esc(S.meta.timecode || '')}</span>` : ''}</div>
       ${S.frame ? '' : `<p class="dim">Park the playhead on a shot and read it. Colored Lens tells you what the frame is doing, asks what it is for, and suggests directions you can preview, tweak, apply and save.</p>`}
+      ${S.readErr ? `<div class="card alert"><div class="row tight"><div class="k grow">The frame did not come back</div><button class="small" id="errGo">Dismiss</button></div>
+        <p>${esc(S.readErr.msg)}</p>
+        <p class="small dim">Things that help: let the timeline's render bar finish; park on a shot whose media is online; close other exports. If it keeps happening on every shot, tell me what the details below say.</p>
+        ${S.readErr.detail ? `<button class="small" id="errDet">${S.errOpen ? 'Hide' : 'Show'} what Premiere wrote</button>
+          ${S.errOpen ? `<pre class="small mono">${esc(S.readErr.detail.join('\n\n'))}</pre>` : ''}` : ''}</div>` : ''}
       ${S.ctx ? contextCard(S.ctx) : ''}
       <div id="reading">${r ? (S.simple ? readingSimple(r, k) : readingCard(r, k)) : ''}</div>
       <div class="card" id="intent"><div class="k">What is this for?</div>
@@ -388,8 +394,15 @@ export async function startApp(host, root) {
       <div id="dirs">${directionsHTML()}</div>
       ${k && !S.simple ? skinCard(k) : ''}
       ${r && r.matches.length && !S.simple ? `<div class="card"><div class="row tight"><div class="k grow">Similar frames in the encyclopedia</div><button class="small" id="togRefs">${S.showRefs ? 'Hide' : 'Show'}</button></div>${S.showRefs ? refsHTML(r) : ''}</div>` : ''}`;
-    $('#grab', body).onclick = () => busy('Reading frame', async () => { await grab(); await suggest(); render();
-      if (S.smart.cfg.provider !== 'off' && S.smart.cfg.autoAsk !== false) studyFrame(''); });
+    // A read takes up to a minute and a half. If it fails, a toast that fades in six seconds is no report at all —
+    // the editor has walked away and comes back to a tab that looks untouched. The reason stays on screen.
+    $('#grab', body).onclick = async () => { if (S.busy) return; S.busy = true; status('Reading frame…');
+      try { await grab(); await suggest(); S.busy = false; render();
+        if (S.smart.cfg.provider !== 'off' && S.smart.cfg.autoAsk !== false) studyFrame(''); }
+      catch (e) { console.error(e); S.readErr = { msg: e.message || String(e), detail: e.detail || null }; S.busy = false; render(); }
+      finally { S.busy = false; status(); } };
+    if ($('#errGo', body)) $('#errGo', body).onclick = () => { S.readErr = null; render(); };
+    if ($('#errDet', body)) $('#errDet', body).onclick = () => { S.errOpen = !S.errOpen; render(); };
     body.querySelectorAll('[data-intent]').forEach(b => b.onclick = () => {
       const [key, id] = b.dataset.intent.split(':'), cur = answers(S.intent[key]);
       S.intent[key] = cur.includes(id) ? cur.filter(x => x !== id) : cur.length < 2 ? [...cur, id] : [cur[0], id]; saveIntent();

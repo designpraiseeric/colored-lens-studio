@@ -106,6 +106,28 @@ async function scenesOf(seq) {
   const starts = list.filter(m => /^\s*(scene|sc[\s\d._-])/i.test(m.name));
   return starts.map((m, i) => ({ name: m.name, start: m.start, end: starts[i + 1] ? starts[i + 1].start : end }));
 }
+/** A folder outside the UXP sandbox that Premiere can certainly write a frame into, and the panel can certainly read. */
+function plainFrameDir() {
+  try { const home = require('os').homedir(); if (!home) return null; const h = String(home).replace(/\\/g, '/');
+    return os === 'mac' ? h + '/Library/Application Support/ColoredLens' : h + '/AppData/Local/Temp';
+  } catch { return null; }
+}
+/** The two ways of watching for the exported frame: a UXP folder entry, and a plain path through `fs`. */
+const uxpSource = (folder, base) => ({ last: -1, kind: 'uxp', entry: null,
+  async find() { if (!this.entry) this.entry = (await folder.getEntries()).find(e => e.name.startsWith(base)) || null; if (!this.entry) return null;
+    const bytes = new Uint8Array(await this.entry.read({ format: formats.binary })); const e = this.entry;
+    return { bytes, remove: () => e.delete() }; } });
+const plainSource = (dir, base) => ({ last: -1, kind: 'plain',
+  async find() { const fs = require('fs'), url = 'file:' + dir + '/';
+    let names = []; try { names = await fs.readdir(url); } catch { return null; }
+    const n = names.map(String).find(x => x.startsWith(base)); if (!n) return null;
+    const raw = await fs.readFile(url + n); const bytes = raw instanceof Uint8Array ? raw : new Uint8Array(raw);
+    return { bytes, remove: () => fs.unlink(url + n) }; } });
+/** What is actually sitting in a watched folder — the one thing worth showing when a read comes back empty. */
+async function listNames(s, tmp) {
+  if (s.where.includes('temporary')) return (await tmp.getEntries()).map(e => e.name);
+  return (await require('fs').readdir('file:' + s.path + '/')).map(String);
+}
 const subjectOf = layers => { const L = layers.filter(l => !l.empty);
   return L.find(l => l.selected && l.kind !== 'adjustment') || L.find(l => l.kind === 'video' || l.kind === 'nested') || L.find(l => l.kind !== 'adjustment') || null; };
 
@@ -141,21 +163,36 @@ const host = {
     let w = 960, h = 540;
     try { const r = await seq.getFrameSize(); const s = Math.min(1, 960 / r.width); w = Math.round(r.width * s); h = Math.round(r.height * s); } catch { /* keep 16:9 */ }
     const tmp = await lfs.getTemporaryFolder(), base = 'cl_frame_' + Date.now();
+    // Two places are watched. The UXP temporary folder is the documented one, but on some installs Premiere
+    // reports success and nothing we can see ever lands there, so a plain folder under the user's own home is
+    // tried as well — the same folder the helper already uses, so it exists and is certainly writable.
+    const sources = [uxpSource(tmp, base)], plain = plainFrameDir(), seen = [{ where: 'Premiere’s temporary folder', path: tmp.nativePath }];
+    if (plain) seen.push({ where: 'your ColoredLens folder', path: plain });
     // PNG is the format Adobe's own sample exports. Whatever Premiere actually writes, decodeImage reads it by its bytes.
     const ok = await ppro.Exporter.exportSequenceFrame(seq, t, base + '.png', tmp.nativePath, w, h);
     if (!ok) throw new Error('Premiere could not export this frame');
     // The export lands a moment later (and some builds add a second extension): wait until the file stops growing.
-    let entry = null, last = -1, bytes = null;
-    // A heavy timeline (nests, adjustment layers, effects) can take Premiere half a minute to render one frame.
-    for (let i = 0; i < 800; i++) {
-      if (i === 60 && opts.onSlow) opts.onSlow();
-      if (!entry) entry = (await tmp.getEntries()).find(e => e.name.startsWith(base)) || null;
-      if (entry) { const b = new Uint8Array(await entry.read({ format: formats.binary })); if (b.length > 0 && b.length === last) { bytes = b; break; } last = b.length; }
-      await new Promise(r => setTimeout(r, 75));
+    // A heavy timeline (nests, adjustment layers, effects) can take Premiere most of a minute to render one frame.
+    let got = null, second = false, said = 0;
+    const t0 = Date.now(), LIMIT = opts.waitMs || 90000;
+    while (Date.now() - t0 < LIMIT) {
+      for (const s of sources) { const f = await s.find(); if (!f) continue;
+        if (f.bytes.length > 0 && f.bytes.length === s.last) { got = f; break; } s.last = f.bytes.length; }
+      if (got) break;
+      // Nothing in the documented folder after nine seconds: ask Premiere again, somewhere we can certainly read.
+      if (!second && plain && Date.now() - t0 > 9000) { second = true;
+        try { if (await ppro.Exporter.exportSequenceFrame(seq, t, base + '.png', plain, w, h)) sources.push(plainSource(plain, base)); } catch (e) { console.warn('second export', e); } }
+      const secs = Math.round((Date.now() - t0) / 1000);
+      if (opts.onSlow && secs >= 5 && secs - said >= 5) { said = secs; opts.onSlow(secs); }
+      await new Promise(r => setTimeout(r, 120));
     }
-    if (!bytes) throw new Error(entry ? 'Premiere started writing the frame but did not finish. Try again.' : 'Premiere did not hand over the frame within a minute. It may be busy rendering: wait for it to settle, then read again.');
-    var frame = decodeImage(bytes);
-    try { await entry.delete(); } catch { /* temp folder is cleaned by UXP */ }
+    if (!got) { const e = new Error('Premiere said it exported this frame but never wrote the file. It may still be rendering — wait for the timeline’s render bar to settle and read again.');
+      e.detail = []; for (const s of seen) { let names = []; try { names = await listNames(s, tmp); } catch (err) { names = ['(could not be listed: ' + (err.message || err) + ')']; }
+        e.detail.push(`${s.where} — ${s.path}\n${names.length ? names.slice(0, 8).join(', ') : '(empty)'}`); }
+      e.detail.push(`Asked Premiere for: ${base}.png${second ? ' (twice, in both folders)' : ''}`);
+      throw e; }
+    var frame = decodeImage(got.bytes);
+    try { await got.remove(); } catch { /* temp folder is cleaned by UXP */ }
     } finally { for (const comp of bypassed) try { await setBypass(proj, comp, false); } catch (e) { console.warn('restore look', e); }
       if (hidden.length) try { transaction(proj, 'Colored Lens: layers back on', ca => hidden.forEach(it => ca.addAction(it.createSetDisabledAction(false)))); } catch (e) { console.warn('restore layers', e); } }
     let clipName = '';

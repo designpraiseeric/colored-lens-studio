@@ -1,6 +1,12 @@
 # Release notes
 Each `## <version>` block becomes the text of the in-app update banner and the GitHub Release.
 
+## 0.10.2
+Reading a frame tells you when it fails, and tries a second way first.
+- **A failed read stays on screen.** It used to say what went wrong in a message that faded after six seconds — on a job that can take a minute and a half, by which time you have looked away. Now the reason sits in the Shot tab with what to try, and a **Show what Premiere wrote** button listing the folders that were watched and what was actually in them.
+- **A second place to look.** On some installs Premiere reports that it exported the frame and never writes it anywhere the panel can see. If nothing appears in Premiere's own temporary folder after nine seconds, the frame is asked for again in your ColoredLens folder, and both are watched from then on.
+- **The wait says how long it has been waiting**, and it now runs to a minute and a half rather than a minute.
+
 ## 0.10.1
 Colour zones keep their hands off faces, and a pick means what you clicked.
 - **Skin Guard now holds the colour zones back too.** A zone aimed at a wall used to paint the shadows on a face, and Skin Guard could not take it back: the guard only ever puts colour into skin, it never removes colour something else added. Zones now obey Skin Guard directly, so a face stays a face while the rest of the shot moves. Raise Skin Guard to protect more, drop it to zero to colour skin on purpose.
