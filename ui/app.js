@@ -6,7 +6,7 @@
 import { readFrame, frameStats, labPixels } from '../core/analysis.js';
 import { checkSkin, vectorscope } from '../core/skin.js';
 import { pngDataUrl, encodePNG, downsample, toBase64 } from '../core/image.js';
-import { PROVIDERS, DEFAULTS as SMART0, buildPrompt, parseReply, validate, ask, buildStudy, buildSuggest, validateStudy, validateSuggest, howTo, zonesFor, picture, SYSTEM_STUDY, SYSTEM_SUGGEST, detectOllama, detectOpenAI, detectApple, appleReason, resolveProvider } from '../core/smart.js';
+import { PROVIDERS, CLAUDE_MODELS, DEFAULTS as SMART0, buildPrompt, parseReply, validate, ask, buildStudy, buildSuggest, validateStudy, validateSuggest, howTo, zonesFor, picture, SYSTEM_STUDY, SYSTEM_SUGGEST, detectOllama, detectOpenAI, detectApple, appleReason, resolveProvider } from '../core/smart.js';
 import { shotRecord, encodeShot, decodeShot, renderStrip, readSequence, scriptCSV } from '../core/script.js';
 import { zoneDefaults, zoneCoverage, hasZones, parseLookInput, formatCode, fullGrade, makePixelFn, bakeCube, lookToEngineParams, shareLink, computeMatch, matchStats, hasCurves, GRADE0 } from '../core/look.js';
 import { GENRES, FEELINGS, ROLES, KIND_LABEL, pickDirections, describeEffect, whyFor, frameSummary, answers, isDark, continuity, pictureOf, directionsFromPicks } from '../core/directions.js';
@@ -755,7 +755,7 @@ export async function startApp(host, root) {
   const httpPost = host.post || (async (url, headers, body) => { const r = await host.fetch(url, { method: 'POST', headers, body }); return { status: r.status, text: await r.text() }; });
   const httpGet = host.get || (async (url, headers = {}) => { const r = await host.fetch(url, { headers }); return { status: r.status, text: await r.text() }; });
   const secret = host.secret || { get: async k => settings.get('secret.' + k, ''), set: async (k, v) => settings.set('secret.' + k, v) };
-  async function smartCfg() { const c = { ...S.smart.cfg }; c.geminiKey = await secret.get('gemini'); c.openaiKey = await secret.get('openai'); return c; }
+  async function smartCfg() { const c = { ...S.smart.cfg }; c.geminiKey = await secret.get('gemini'); c.claudeKey = await secret.get('claude'); c.openaiKey = await secret.get('openai'); return c; }
   function saveSmart() { settings.set('smart', S.smart.cfg); }
   const provName = id => (PROVIDERS.find(p => p.id === id) || {}).n || id;
   let smartBusy = false;
@@ -803,6 +803,7 @@ export async function startApp(host, root) {
   function renderSmart(body) {
     const c = S.smart.cfg, d = S.smart.detect || {};
     if (S.smart.hasGemini == null) { S.smart.hasGemini = false; secret.get('gemini').then(k => { if (k) { S.smart.hasGemini = true; if (S.tab === 'smart') render(); } }); }
+    if (S.smart.hasClaude == null) { S.smart.hasClaude = false; secret.get('claude').then(k => { if (k) { S.smart.hasClaude = true; if (S.tab === 'smart') render(); } }); }
     const field = (id, label, val, ph, type = 'text') => `<label class="fld"><span class="small dim">${label}</span><input id="${id}" type="${type}" value="${esc(val || '')}" placeholder="${esc(ph || '')}"></label>`;
     body.innerHTML = `<div class="row"><button id="smBack">← Back</button><b class="grow">The AI</b><button id="smGuide" class="small">Step-by-step setup</button></div>
       <p class="small">Colored Lens uses an AI to look at the frame, name what is in it, understand the scene and suggest colours item by item. It is free to you. “Automatic” uses the best one this computer has. Nothing is applied to your project until you say so.</p>
@@ -815,6 +816,9 @@ export async function startApp(host, root) {
         <p class="small dim">Foundry Local: run <span class="mono">foundry service status</span> to see its address. LM Studio: Developer › Start server (usually http://localhost:1234/v1).</p>
         ${d.openai ? (d.openai.ok ? `<label class="fld"><span class="small dim">Model (pick one that can see images)</span><select id="oaModel">${d.openai.models.map(m => `<option ${m === c.openaiModel ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select></label>` : '<p class="small warn">Nothing answered at that address.</p>') : field('oaModel', 'Model', c.openaiModel, 'model id')}
         ${field('oaKey', 'Key (only if your server needs one)', '', '••••', 'password')}<button id="oaTest" class="small">Find the server and its models</button></div>` : ''}
+      ${c.provider === 'claude' || c.provider === 'auto' ? `<div class="card"><div class="k">Claude</div>${field('clKey', 'Your API key (from console.anthropic.com)', '', S.smart.hasClaude ? 'saved: paste to replace' : 'paste your key', 'password')}
+        <label class="fld"><span class="small dim">Model</span><select id="clModel">${CLAUDE_MODELS.map(([id, n]) => `<option value="${id}" ${(c.claudeModel || SMART0.claudeModel) === id ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select></label>
+        <p class="small dim">Your key stays on this computer. Claude API keys are paid by use and are <b>not</b> included in a Claude Pro subscription; add credits in the Claude Console. Anthropic does not train its models on what you send.</p><button id="clSave" class="small">Save key</button></div>` : ''}
       ${c.provider === 'gemini' || c.provider === 'auto' ? `<div class="card"><div class="k">Google Gemini</div>${field('gmKey', 'Your API key (from aistudio.google.com)', '', S.smart.hasGemini ? 'saved: paste to replace' : 'paste your key', 'password')}
         ${field('gmModel', 'Model', c.geminiModel, SMART0.geminiModel)}<p class="small dim">Your key stays on this computer. Check Google's pricing page for which models are free on your account.</p><button id="gmSave" class="small">Save key</button></div>` : ''}
       ${c.provider === 'apple' || (c.provider === 'auto' && host.bridge) ? `<div class="card"><div class="k">Apple Intelligence</div>
@@ -826,13 +830,14 @@ export async function startApp(host, root) {
     $('#smGuide', body).onclick = () => { S.guide = { view: 'smart', step: 0, route: '' }; S.tab = 'guide'; render(); };
     body.querySelectorAll('[data-prov]').forEach(b => b.onclick = () => { c.provider = b.dataset.prov; saveSmart(); S.smart.detect = null; render(); });
     const v = id => ($('#' + id, body) || {}).value;
-    const keep = () => { if (v('olUrl') != null) c.ollamaUrl = v('olUrl'); if (v('olModel') != null) c.ollamaModel = v('olModel'); if (v('oaUrl') != null) c.openaiUrl = v('oaUrl'); if (v('oaModel') != null) c.openaiModel = v('oaModel'); if (v('gmModel') != null) c.geminiModel = v('gmModel'); saveSmart(); };
+    const keep = () => { if (v('clModel') != null) c.claudeModel = v('clModel'); if (v('olUrl') != null) c.ollamaUrl = v('olUrl'); if (v('olModel') != null) c.ollamaModel = v('olModel'); if (v('oaUrl') != null) c.openaiUrl = v('oaUrl'); if (v('oaModel') != null) c.openaiModel = v('oaModel'); if (v('gmModel') != null) c.geminiModel = v('gmModel'); saveSmart(); };
     body.querySelectorAll('input, select').forEach(i => i.onchange = keep);
     if ($('#apTest', body)) $('#apTest', body).onclick = () => busy('Checking Apple Intelligence', async () => { S.smart.detect = { ...d, apple: await detectApple(host.bridge) }; render(); });
     if ($('#olTest', body)) $('#olTest', body).onclick = () => busy('Looking for Ollama', async () => { keep(); const r = await detectOllama(c.ollamaUrl, httpGet); S.smart.detect = { ...d, ollama: r };
       if (r.ok && r.vision.length && !r.vision.includes(c.ollamaModel)) { c.ollamaModel = r.vision[0]; saveSmart(); } render(); });
     if ($('#oaTest', body)) $('#oaTest', body).onclick = () => busy('Looking for the server', async () => { keep(); if (v('oaKey')) await secret.set('openai', v('oaKey')); const r = await detectOpenAI(c.openaiUrl, await secret.get('openai'), httpGet);
       S.smart.detect = { ...d, openai: r }; if (r.ok && r.models.length && !r.models.includes(c.openaiModel)) { c.openaiModel = r.models[0]; saveSmart(); } render(); });
+    if ($('#clSave', body)) $('#clSave', body).onclick = () => busy('Saving', async () => { keep(); if (v('clKey')) { await secret.set('claude', v('clKey').trim()); S.smart.hasClaude = (await secret.get('claude')) === v('clKey').trim(); toast(S.smart.hasClaude ? 'Claude key saved on this computer' : 'The key could not be saved on this computer'); } render(); });
     if ($('#gmSave', body)) $('#gmSave', body).onclick = () => busy('Saving', async () => { keep(); if (v('gmKey')) { await secret.set('gemini', v('gmKey').trim()); S.smart.hasGemini = (await secret.get('gemini')) === v('gmKey').trim(); toast(S.smart.hasGemini ? 'Gemini key saved on this computer' : 'The key could not be saved on this computer'); } render(); });
     if ($('#smAuto', body)) $('#smAuto', body).onclick = () => { c.autoAsk = !c.autoAsk; saveSmart(); render(); };
   }
@@ -871,7 +876,7 @@ export async function startApp(host, root) {
           ${promptBox('smart', 'Not sure which to choose? Ask any AI assistant')}`;
       } else {
         const n = r.steps.length, i = Math.min(G.step || 0, n - 1), st = r.steps[i], last = i === n - 1;
-        const checkLabel = { apple: 'Check Apple Intelligence and switch the AI on', ollama: 'Find Ollama and switch the AI on', gemini: 'Test my key and switch the AI on', settings: 'Open Smart settings' }[st.check];
+        const checkLabel = { apple: 'Check Apple Intelligence and switch the AI on', ollama: 'Find Ollama and switch the AI on', gemini: 'Test my key and switch the AI on', claude: 'Test my key and switch the AI on', settings: 'Open Smart settings' }[st.check];
         body.innerHTML = `<div class="row"><button id="gOther">← All ways</button><b class="grow">${esc(r.n)}</b></div>
           <div class="card wiz"><div class="k">Step ${i + 1} of ${n}</div>
             <div class="dots">${r.steps.map((_, j) => `<span class="dot ${j < i ? 'done' : j === i ? 'now' : ''}"></span>`).join('')}</div>
@@ -893,7 +898,8 @@ export async function startApp(host, root) {
         if ($('#gHelp', body)) $('#gHelp', body).onclick = () => { G.help = true; render(); };
         $('#gOther2', body).onclick = $('#gOther', body).onclick = () => { G.route = ''; G.step = 0; G.msg = ''; G.ok = false; G.help = false; render(); };
         if ($('#gGo', body)) $('#gGo', body).onclick = () => go('shot');
-        if ($('#gKeySave', body)) $('#gKeySave', body).onclick = async () => { const k = $('#gKey', body).value.trim(); if (!k) return toast('Paste your key first'); await secret.set('gemini', k); S.smart.hasGemini = (await secret.get('gemini')) === k; toast(S.smart.hasGemini ? 'Key saved on this computer' : 'The key could not be saved on this computer'); };
+        if ($('#gKeySave', body)) $('#gKeySave', body).onclick = async () => { const k = $('#gKey', body).value.trim(), which = st.key; if (!k) return toast('Paste your key first'); await secret.set(which, k);
+          const ok = (await secret.get(which)) === k; if (which === 'claude') S.smart.hasClaude = ok; else S.smart.hasGemini = ok; toast(ok ? 'Key saved on this computer' : 'The key could not be saved on this computer'); };
         if ($('#gCheck', body)) $('#gCheck', body).onclick = () => { if (st.check === 'settings') { S.smart.cfg.provider = 'openai'; saveSmart(); return go('smart'); }
           busy('Checking', async () => {
             const c = S.smart.cfg; G.ok = false;
@@ -908,10 +914,11 @@ export async function startApp(host, root) {
                 c.provider = 'ollama'; c.ollamaModel = d.vision.includes(c.ollamaModel) ? c.ollamaModel : d.vision[0]; saveSmart();
                 G.msg = `Found Ollama with ${c.ollamaModel}. The AI is on, and your frames stay on this computer.`; G.ok = true;
               } else {
-                if (!(await secret.get('gemini'))) throw new Error('There is no key saved yet. Go back one step and paste your key.');
-                c.provider = 'gemini'; saveSmart(); await testSmart(); G.msg = 'Your key works. The AI is on.'; G.ok = true;
+                const which = st.check === 'claude' ? 'claude' : 'gemini';
+                if (!(await secret.get(which))) throw new Error('There is no key saved yet. Go back one step and paste your key.');
+                c.provider = which; saveSmart(); await testSmart(); G.msg = 'Your key works. The AI is on.'; G.ok = true;
               }
-            } catch (e) { G.msg = e.message || String(e); G.help = true; if (st.check === 'gemini') { c.provider = 'off'; saveSmart(); } }
+            } catch (e) { G.msg = e.message || String(e); G.help = true; if (st.check === 'gemini' || st.check === 'claude') { c.provider = 'off'; saveSmart(); } }
             render();
           }); };
       }

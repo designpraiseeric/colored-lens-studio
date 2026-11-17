@@ -1,6 +1,9 @@
 # Release notes
 Each `## <version>` block becomes the text of the in-app update banner and the GitHub Release.
 
+## 0.8.3
+- Claude is now one of the AIs Colored Lens can use: the strongest readings of a frame and the most useful colour ideas. Choose it under "AI" and paste a key from the Claude Console, or follow the new step-by-step setup. It is paid by use (roughly a penny or two a read) and is not covered by a Claude Pro subscription; pick Opus 5, Fable 5.2, Sonnet 5.5 or Haiku 5.5.
+
 ## 0.8.2
 More fixes from testing in Premiere Pro.
 - The preview now sits beside its controls and takes about a third of the panel at most, so there is room to read underneath (it was taking half the panel).

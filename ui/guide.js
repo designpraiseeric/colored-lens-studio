@@ -71,6 +71,17 @@ export function routes(os) {
       { t: 'Paste the key here', b: `Click in the box below, paste (${mac ? 'Cmd + V' : 'Ctrl + V'}) and press “Save”. The key is kept in your computer's secure storage, never in your project.`, key: 'gemini', see: 'A message says “Key saved on this computer”.', fix: 'If pasting does nothing, click inside the box first so the cursor blinks there.' },
       { t: 'Let Colored Lens test it', b: 'Press the button below. Colored Lens sends a tiny test picture to check the key works.', check: 'gemini', fix: 'If the test fails: go back one step and paste the key again, making sure the whole key was copied.' },
     ] };
+  const claude = { id: 'claude', n: 'Claude (the best suggestions)', tag: 'Paid by use · nothing to install · about 3 minutes',
+    who: 'The strongest reading of a frame and the most useful colour ideas. It costs a little each time you ask (roughly a penny or two), and a Claude Pro subscription does not cover it: an API key is billed on its own. Your frames are not used to train the models.',
+    steps: [
+      { t: 'Open the Claude Console', b: 'Press the button below. A web page opens. Sign in, or make an account. This is separate from the Claude app, even if you already pay for Claude.', url: 'https://console.anthropic.com/settings/keys', label: 'Open the Claude Console',
+        see: 'A page listing API keys (it may be empty).', fix: 'If it asks you to create an organisation first, give it any name and continue.' },
+      { t: 'Add some credit', b: 'In the left-hand menu open “Plans & billing” and add a small amount of credit, for example five dollars. That pays for about a few hundred frame readings.',
+        see: 'Your balance shows the amount you added.', fix: 'If you would rather not pay anything, press “Choose a different way” below and pick Apple Intelligence, Ollama or Gemini, which are free.' },
+      { t: 'Create your key', b: 'Go back to “API keys” and press “Create key”. Give it any name, such as Colored Lens.', see: 'A long line of letters and numbers starting with “sk-ant-”. Copy it now: the page shows it only once.', fix: 'If you lose it, delete that key and create another one.' },
+      { t: 'Paste the key here', b: `Click in the box below, paste (${mac ? 'Cmd + V' : 'Ctrl + V'}) and press “Save”. The key is kept in your computer's secure storage, never in your project.`, key: 'claude', see: 'A message says “Key saved on this computer”.', fix: 'If pasting does nothing, click inside the box first so the cursor blinks there.' },
+      { t: 'Let Colored Lens test it', b: 'Press the button below. Colored Lens sends a tiny test picture to check the key works.', check: 'claude', fix: 'If it says there is no credit, go back two steps and add some. If it says the key is not valid, create a new key and paste it again.' },
+    ] };
   const local = { id: 'openai', n: os === 'win' ? 'Microsoft Foundry Local' : 'LM Studio', tag: 'Free · private · only if you already use it', advanced: true,
     who: 'An alternative to Ollama for people who already have it set up.',
     steps: os === 'win' ? [
@@ -83,7 +94,7 @@ export function routes(os) {
       { t: 'Point Colored Lens at it', b: 'Press the button below. In Smart settings the address is http://localhost:1234/v1. Press “Find the server and its models” and pick the model.', check: 'settings' },
     ] };
   const winai = { id: 'builtin', n: 'Windows built-in AI (Copilot+ PCs)', tag: 'Coming in a later update', who: 'Copilot+ PCs have an AI built in. Colored Lens needs a small helper to reach it from Premiere, and that helper is not ready yet. Ollama gives you the same privacy today.', steps: [] };
-  return mac ? [apple, ollama, gemini, local] : [ollama, gemini, local, winai];
+  return mac ? [apple, claude, ollama, gemini, local] : [claude, ollama, gemini, local, winai];
 }
 
 /** A prompt the editor can paste into any AI assistant for a slower, hand-held walkthrough. */
@@ -100,7 +111,8 @@ What the plugin does: it has a panel called Colored Lens (in Premiere Pro: Windo
 - There is an optional "Smart mode" (an AI helper) that is off by default.
 
 Start by asking me what kind of video I am editing, then walk me through grading my first shot with it. Use plain words and explain any colour term you use.`;
-  const r = { apple: 'Apple Intelligence, the AI built into my Mac. The plugin reaches it through its own small helper, which its installer adds. I need Apple Intelligence switched on in System Settings > Apple Intelligence & Siri, and then I press "Check Apple Intelligence" in the plugin\'s guide.',
+  const r = { claude: 'Claude, through an API key from console.anthropic.com. I pay for what I use (a Claude Pro subscription does not cover API keys), and I paste the key into the plugin under "AI".',
+    apple: 'Apple Intelligence, the AI built into my Mac. The plugin reaches it through its own small helper, which its installer adds. I need Apple Intelligence switched on in System Settings > Apple Intelligence & Siri, and then I press "Check Apple Intelligence" in the plugin\'s guide.',
     ollama: 'Ollama running on my own computer with a vision model (the plugin suggests the command: ollama pull gemma3:4b). The plugin looks for Ollama at http://localhost:11434 and has a button "Find Ollama and its models".',
     gemini: 'a free Google Gemini API key from https://aistudio.google.com/apikey, which I paste into the plugin\'s Smart settings and save.',
     openai: 'a local "OpenAI-compatible" server (Microsoft Foundry Local on Windows, or LM Studio), whose address ending in /v1 I paste into the plugin\'s Smart settings.' }[route] || (os === 'win' ? '' : 'Apple Intelligence if my Mac has an Apple chip (easiest), otherwise ') + 'either Ollama on my own computer (private) or a free Google Gemini API key (quickest). Please first ask me two or three simple questions to help me choose, including whether my footage is confidential and how old my computer is.';
@@ -109,7 +121,7 @@ Start by asking me what kind of video I am editing, then walk me through grading
 What I want to set up: ${r}
 
 Useful facts:
-- In the plugin, Smart settings are behind the word "Smart" at the top of the Colored Lens panel. The choices are: Off, Automatic,${os === 'win' ? '' : ' Apple Intelligence (this Mac),'} Ollama (this computer), Local server (OpenAI-compatible), Google Gemini (your key).
+- In the plugin, Smart settings are behind the word "Smart" at the top of the Colored Lens panel. The choices are: Off, Automatic,${os === 'win' ? '' : ' Apple Intelligence (this Mac),'} Claude (your key), Ollama (this computer), Local server (OpenAI-compatible), Google Gemini (your key).
 ${os === 'win' ? '' : `- For Apple Intelligence: it needs a Mac with an Apple chip (Apple menu > About This Mac shows "Chip: Apple M..."), a recent macOS, and Apple Intelligence switched on in System Settings > Apple Intelligence & Siri. The plugin's helper is installed by the Colored Lens Studio installer; if the plugin says the helper is not running, I should reinstall the latest version, or log out of my Mac and back in.
 `}- For Ollama: download from https://ollama.com/download, open the app so its llama icon shows, then in ${os === 'win' ? 'PowerShell' : 'Terminal'} run: ollama pull gemma3:4b (about 3 GB). Models that can see images include gemma3 and qwen2.5vl. If the plugin says Ollama is not answering, help me check that it is running.
 - For Gemini: the key is created at https://aistudio.google.com/apikey. Frames I ask about are sent to Google.

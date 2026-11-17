@@ -9,13 +9,15 @@ import { RECIPES, GENRES, FEELINGS, ROLES } from './directions.js';
 
 export const PROVIDERS = [
   { id: 'off', n: 'Off', where: 'Rules only. Nothing leaves this computer.' },
-  { id: 'auto', n: 'Automatic', where: 'Uses the best free option this computer has: Apple Intelligence on a Mac that has it, else Ollama when it is running with a vision model, else your Gemini key.' },
+  { id: 'auto', n: 'Automatic', where: 'Uses the best free option this computer has: Apple Intelligence on a Mac that has it, else Ollama when it is running with a vision model, else your Claude or Gemini key.' },
   { id: 'apple', n: 'Apple Intelligence (this Mac)', where: 'Built into recent Macs: free, private, nothing to install. Needs Apple Intelligence switched on in System Settings.', mac: true },
   { id: 'ollama', n: 'Ollama (this computer)', where: 'Free and private: the frame stays on this computer. Install Ollama, then a vision model, e.g. ollama pull gemma3:4b (or qwen2.5vl:7b).' },
   { id: 'openai', n: 'Local server (OpenAI-compatible)', where: 'Microsoft Foundry Local (Windows and Mac), LM Studio and similar. The frame stays on this computer when the server is local.' },
+  { id: 'claude', n: 'Claude (your key)', where: 'The strongest suggestions, with your own key from the Claude Console. Paid by use, not included in a Claude Pro subscription. The frame is sent to Anthropic and is not used to train its models.' },
   { id: 'gemini', n: 'Google Gemini (your key)', where: 'Free tier with your own key from Google AI Studio. The frame is sent to Google, and free-tier requests may be used to improve Google products.' },
 ];
-export const DEFAULTS = { provider: 'auto', autoAsk: true, ollamaUrl: 'http://localhost:11434', ollamaModel: '', openaiUrl: 'http://localhost:5273/v1', openaiModel: '', geminiModel: 'gemini-flash-latest' };
+export const DEFAULTS = { provider: 'auto', autoAsk: true, ollamaUrl: 'http://localhost:11434', ollamaModel: '', openaiUrl: 'http://localhost:5273/v1', openaiModel: '', geminiModel: 'gemini-flash-latest', claudeModel: 'claude-sonnet-5-5' };
+export const CLAUDE_MODELS = [['claude-opus-5', 'Opus 5 — the best reader of a frame; the dearest'], ['claude-fable-5-2', 'Fable 5.2 — the most imaginative'], ['claude-sonnet-5-5', 'Sonnet 5.5 — very good, a fraction of the cost (recommended)'], ['claude-haiku-5-5', 'Haiku 5.5 — quickest and cheapest']];
 const VISION = /llava|gemma3|gemma4|qwen2\.5vl|qwen3-vl|qwen3\.5|qwen3\.6|moondream|minicpm-v|llama3\.2-vision|llama4|granite3\.2-vision|mistral-small3|bakllava/i;
 
 /** The adjustments the AI may make, with their limits (anything else is ignored). */
@@ -126,6 +128,22 @@ export async function ask(cfg, { prompt, imageB64, images = [], history = [], sy
     const j = await postJSON(post, trim(cfg.openaiUrl) + '/chat/completions', cfg.openaiKey ? { authorization: 'Bearer ' + cfg.openaiKey } : {}, { model: cfg.openaiModel, messages: msgs, temperature: 0.4 });
     return j.choices && j.choices[0] && j.choices[0].message ? j.choices[0].message.content : '';
   }
+  if (cfg.provider === 'claude') {
+    if (!cfg.claudeKey) throw new Error('Colored Lens could not find your Claude key. Open “AI” at the top, paste the key again and press “Save key”.');
+    const content = [{ type: 'text', text: prompt }, ...[imageB64, ...more].map(b => ({ type: 'image', source: { type: 'base64', media_type: mime, data: b } }))];
+    const msgs = [...hist.map(h => ({ role: h.role === 'assistant' ? 'assistant' : 'user', content: h.text })), { role: 'user', content },
+      { role: 'assistant', content: '{' }]; // starts the answer as JSON, so nothing is wrapped in chatter
+    const head = { 'x-api-key': cfg.claudeKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' };
+    const call = model => postJSON(post, 'https://api.anthropic.com/v1/messages', head, { model, max_tokens: 4000, temperature: 0.4, system: SYS, messages: msgs }, 180000);
+    const first = cfg.claudeModel || DEFAULTS.claudeModel, order = [first, ...CLAUDE_MODELS.map(m => m[0]).filter(m => m !== first)];
+    let j = null, last = null;
+    for (const model of order) { try { j = await call(model); break; } catch (e) { last = e; const m = String(e.message);
+      if (/answered 404/.test(m)) continue; // this model name is gone or not on this account: try the next
+      if (/answered (503|529|500|502|504)/.test(m)) { await new Promise(r => setTimeout(r, 4000)); try { j = await call(model); break; } catch (e2) { last = e2; continue; } }
+      throw claudeError(e); } }
+    if (!j) throw claudeError(last);
+    return '{' + (j.content || []).map(p => p.text || '').join('');
+  }
   if (cfg.provider === 'gemini') {
     if (!cfg.geminiKey) throw new Error('Colored Lens could not find your Gemini key. Open “AI” at the top, paste the key again and press “Save key”.');
     const contents = [...hist.map(h => ({ role: h.role === 'assistant' ? 'model' : 'user', parts: [{ text: h.text }] })),
@@ -150,6 +168,16 @@ export async function ask(cfg, { prompt, imageB64, images = [], history = [], sy
 }
 
 export const GEMINI_FALLBACKS = ['gemini-flash-latest', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-flash-lite-latest'];
+/** Anthropic's errors, in words an editor can act on. */
+function claudeError(e) { const m = String((e && e.message) || e);
+  if (/answered 401/.test(m)) return new Error('Anthropic says this API key is not valid. Copy it again from console.anthropic.com (Settings › API keys) and save it under “AI”.');
+  if (/credit balance|answered 400.*credit/i.test(m)) return new Error('This Claude key has no credit left. Add credits at console.anthropic.com (Plans & billing). A Claude Pro subscription does not pay for API keys.');
+  if (/answered 429/.test(m)) return new Error('Anthropic says this key has been used too fast for now. Wait a minute and try again.');
+  if (/answered 403/.test(m)) return new Error('Anthropic refused this key (it may be restricted, or billing is not set up for it).');
+  if (/took too long/.test(m)) return new Error('Anthropic did not answer in time. Check your internet connection and try again.');
+  if (/answered 529/.test(m)) return new Error('Claude is very busy right now. Try again in a minute.');
+  return e instanceof Error ? e : new Error(m); }
+
 /** Google's errors, in words an editor can act on. */
 function geminiError(e) { const m = String(e.message || e);
   if (/API key not valid|API_KEY_INVALID|answered 400.*key/i.test(m)) return new Error('Google says this API key is not valid. Copy the key again from aistudio.google.com/apikey and save it under “AI”.');
@@ -179,6 +207,7 @@ export async function resolveProvider(cfg, get, bridge) {
   if (bridge && (await detectApple(bridge)).ok) return { ...cfg, provider: 'apple' };
   const o = await detectOllama(cfg.ollamaUrl || DEFAULTS.ollamaUrl, get);
   if (o.ok && o.vision.length) return { ...cfg, provider: 'ollama', ollamaModel: cfg.ollamaModel && o.models.includes(cfg.ollamaModel) ? cfg.ollamaModel : o.vision[0] };
+  if (cfg.claudeKey) return { ...cfg, provider: 'claude' };
   if (cfg.geminiKey) return { ...cfg, provider: 'gemini' };
   return null;
 }

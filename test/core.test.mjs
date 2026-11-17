@@ -150,22 +150,26 @@ test('Smart mode keeps only valid picks, answers and adjustments', () => {
   assert.equal(d.kind, 'smart'); assert.equal(d.look.C, 'C1'); assert.equal(d.look.G.temp, 0.6); assert.ok(d.extra.skinGuard >= 0.7);
   assert.throws(() => parseReply('no json here'));
 });
-test('Smart mode talks to Ollama, OpenAI-compatible servers and Gemini in their own formats', async () => {
+test('Smart mode talks to Ollama, OpenAI-compatible servers, Claude and Gemini in their own formats', async () => {
   const seen = []; const reply = { picks: [] };
   const post = async (url, headers, body) => { seen.push({ url, headers, body: JSON.parse(body) });
-    const j = url.includes('/api/chat') ? { message: { content: JSON.stringify(reply) } } : url.includes('/chat/completions') ? { choices: [{ message: { content: JSON.stringify(reply) } }] } : { candidates: [{ content: { parts: [{ text: JSON.stringify(reply) }] } }] };
+    const j = url.includes('/api/chat') ? { message: { content: JSON.stringify(reply) } } : url.includes('/chat/completions') ? { choices: [{ message: { content: JSON.stringify(reply) } }] }
+      : url.includes('api.anthropic.com') ? { content: [{ text: JSON.stringify(reply).slice(1) }] } : { candidates: [{ content: { parts: [{ text: JSON.stringify(reply) }] } }] };
     return { status: 200, text: JSON.stringify(j) }; };
   const req = { prompt: buildPrompt({ intent: { genre: [], feeling: ['tense'], role: [] }, message: 'darker' }), imageB64: 'QUJD' };
-  for (const cfg of [{ provider: 'ollama', ollamaUrl: 'http://localhost:11434/', ollamaModel: 'gemma3:4b' }, { provider: 'openai', openaiUrl: 'http://localhost:5273/v1', openaiModel: 'phi-4', openaiKey: 'k' }, { provider: 'gemini', geminiKey: 'g', geminiModel: 'gemini-2.5-flash' }])
+  for (const cfg of [{ provider: 'ollama', ollamaUrl: 'http://localhost:11434/', ollamaModel: 'gemma3:4b' }, { provider: 'openai', openaiUrl: 'http://localhost:5273/v1', openaiModel: 'phi-4', openaiKey: 'k' }, { provider: 'gemini', geminiKey: 'g', geminiModel: 'gemini-2.5-flash' }, { provider: 'claude', claudeKey: 'sk-ant-x', claudeModel: 'claude-opus-5' }])
     assert.deepEqual(parseReply(await smartAsk(cfg, req, post)), reply);
   assert.equal(seen[0].url, 'http://localhost:11434/api/chat'); assert.deepEqual(seen[0].body.messages.at(-1).images, ['QUJD']); assert.equal(seen[0].body.format, 'json');
   assert.equal(seen[1].url, 'http://localhost:5273/v1/chat/completions'); assert.equal(seen[1].headers.authorization, 'Bearer k'); assert.match(seen[1].body.messages.at(-1).content[1].image_url.url, /^data:image\/png;base64,QUJD/);
   assert.match(seen[2].url, /gemini-2\.5-flash:generateContent$/); assert.equal(seen[2].headers['x-goog-api-key'], 'g'); assert.equal(seen[2].body.contents.at(-1).parts[1].inline_data.data, 'QUJD');
+  assert.equal(seen[3].url, 'https://api.anthropic.com/v1/messages'); assert.equal(seen[3].headers['x-api-key'], 'sk-ant-x'); assert.equal(seen[3].headers['anthropic-version'], '2023-06-01');
+  assert.equal(seen[3].body.model, 'claude-opus-5'); assert.equal(seen[3].body.messages.at(-2).content[1].source.data, 'QUJD'); assert.equal(seen[3].body.messages.at(-1).content, '{');
   assert.match(req.prompt, /EDITOR'S MESSAGE: darker/); assert.match(req.prompt, /warm-print/);
 });
 test('Automatic picks Ollama when it has a vision model, else a Gemini key, else nothing', async () => {
   const get = models => async () => ({ status: 200, text: JSON.stringify({ models: models.map(name => ({ name })) }) });
   assert.equal((await resolveProvider({ provider: 'auto', ollamaUrl: 'x' }, get(['llama3:8b', 'gemma3:4b']))).ollamaModel, 'gemma3:4b');
   assert.equal((await resolveProvider({ provider: 'auto', ollamaUrl: 'x', geminiKey: 'k' }, get(['llama3:8b']))).provider, 'gemini');
+  assert.equal((await resolveProvider({ provider: 'auto', ollamaUrl: 'x', geminiKey: 'k', claudeKey: 'c' }, get(['llama3:8b']))).provider, 'claude');
   assert.equal(await resolveProvider({ provider: 'auto', ollamaUrl: 'x' }, async () => { throw new Error('down'); }), null);
 });
