@@ -4,10 +4,10 @@
 // The loop: read the frame -> say what it is for -> get directions -> preview them on the frame -> tweak live ->
 // apply to clips -> save as a preset -> apply the preset to other shots.
 import { readFrame, frameStats, labPixels } from '../core/analysis.js';
-import { srgbToOklab } from '../core/color.js';
+import { srgbToOklab, oklabToSrgb, hueDist, rgbToHex } from '../core/color.js';
 import { checkSkin, vectorscope } from '../core/skin.js';
 import { pngDataUrl, encodePNG, downsample, toBase64 } from '../core/image.js';
-import { PROVIDERS, CLAUDE_MODELS, DEFAULTS as SMART0, buildPrompt, parseReply, validate, ask, buildStudy, buildSuggest, validateStudy, validateSuggest, howTo, zonesFor, picture, SYSTEM_STUDY, SYSTEM_SUGGEST, detectOllama, detectOpenAI, detectApple, appleReason, resolveProvider } from '../core/smart.js';
+import { PROVIDERS, CLAUDE_MODELS, DEFAULTS as SMART0, buildPrompt, parseReply, validate, ask, buildStudy, buildSuggest, validateStudy, validateSuggest, howTo, zonesFor, picture, SYSTEM_STUDY, SYSTEM_SUGGEST, detectOllama, detectOpenAI, detectApple, appleReason, resolveProvider, nearestHue } from '../core/smart.js';
 import { shotRecord, encodeShot, decodeShot, renderStrip, readSequence, scriptCSV } from '../core/script.js';
 import { ZONES, ZONE_KEYS, ZONE_DEF, zoneList, zoneDefaults, zoneCoverage, hasZones, lchHex, hueHistogram, parseLookInput, formatCode, fullGrade, makePixelFn, bakeCube, lookToEngineParams, shareLink, computeMatch, matchStats, hasCurves, GRADE0 } from '../core/look.js';
 import { GENRES, FEELINGS, ROLES, KIND_LABEL, pickDirections, describeEffect, whyFor, frameSummary, answers, isDark, continuity, pictureOf, directionsFromPicks } from '../core/directions.js';
@@ -35,7 +35,7 @@ export async function startApp(host, root) {
   const S = { tab: 'shot', back: 'shot', frame: null, meta: null, reading: null, skin: null, sample: null, shots: [],
     intent: normIntent(settings.get('intent', {})), seqId: '', ctx: null, lead: 0, neigh: [], scope: settings.get('scope', 'clip'), input: settings.get('input', 'rec709'),
     directions: [], chosen: -1, look: NEUTRAL_LOOK(), extra: { ...XDEF }, matte: false, recipe: { name: '', presetId: null }, view: 'split', wipe: 0.5,
-    guide: { view: 'home', step: 0, route: '' }, tour: null, simple: !!settings.get('simple', 1), base: null, strength: 1, pickZone: 0, zoneOpen: 0, hueHist: null, hueHistKey: '', scanEvery: +settings.get('scanEvery', 5) || 5, selCount: 0, scanStop: false, scanning: false, scanAsk: null, scanPer: 0, layerOff: [], range: settings.get('range', 'shot'), study: null, sugg: [], suggOpen: -1, suggHow: -1, rangeInfo: null, ai: { busy: '', error: '', chat: [], none: false }, theme: settings.get('theme', 'bright'), moreQ: false, moreD: false, dockSize: settings.get('dockSize', 'M'), dockHidden: false, detached: false, smartDirs: [],
+    guide: { view: 'home', step: 0, route: '' }, tour: null, simple: !!settings.get('simple', 1), base: null, strength: 1, pickZone: 0, zoneOpen: 0, zoneName: {}, hueHist: null, hueHistKey: '', scanEvery: +settings.get('scanEvery', 5) || 5, selCount: 0, scanStop: false, scanning: false, scanAsk: null, scanPer: 0, layerOff: [], range: settings.get('range', 'shot'), study: null, sugg: [], suggOpen: -1, suggHow: -1, rangeInfo: null, ai: { busy: '', error: '', chat: [], none: false }, theme: settings.get('theme', 'bright'), moreQ: false, moreD: false, dockSize: settings.get('dockSize', 'M'), dockHidden: false, detached: false, smartDirs: [],
     smart: { cfg: (c => { if (c.geminiModel === 'gemini-2.5-flash') c.geminiModel = SMART0.geminiModel; return c; })({ ...SMART0, ...settings.get('smart', {}) }), turns: [], history: [], detect: null, using: '' }, refFrameStats: null, refName: '', adapt: settings.get('adapt', true), encQ: '', shownCode: '', confirmDel: '', busy: false, showSkin: false, showRefs: false };
   let PV = null, pvEl = null; // pvEl: the separate Preview panel's container, once it has been opened
   const up = new Updater(host, config.pagesBase);
@@ -189,8 +189,10 @@ export async function startApp(host, root) {
     const a = S.frame.w / S.frame.h, panelW = pvBox ? pvBox.w : (root.clientWidth || 360), panelH = root.clientHeight || window.innerHeight || 800;
     // In the main panel the picture sits beside its controls when there is room, and never takes more than about a
     // third of the panel's height, so there is always space to read below it.
-    const side = !pvBox && panelW >= 430, avail = Math.max(80, (side ? Math.round(panelW * 0.5) : panelW) - 26);
-    let h = pvBox ? Math.max(60, pvBox.h - (shot && S.chosen >= 0 ? 200 : 100)) : Math.min(DOCK_H[S.dockSize] || 220, Math.round(panelH * (S.dockSize === 'L' ? 0.5 : S.dockSize === 'S' ? 0.2 : 0.32)));
+    // A tall frame is limited by the dock's height, not the panel's width, so it gets more of the height to work with.
+    const tall = a < 0.9, side = !pvBox && panelW >= 430 && !tall, avail = Math.max(80, (side ? Math.round(panelW * 0.5) : panelW) - 26);
+    const capPx = tall ? { S: 200, M: 330, L: 520 } : DOCK_H, capFrac = tall ? { S: 0.28, M: 0.46, L: 0.66 } : { S: 0.2, M: 0.32, L: 0.5 };
+    let h = pvBox ? Math.max(60, pvBox.h - (shot && S.chosen >= 0 ? 200 : 100)) : Math.min(capPx[S.dockSize] || 220, Math.round(panelH * (capFrac[S.dockSize] || 0.32)));
     let w = Math.round(h * a); if (w > avail) { w = avail; h = Math.round(w / a); }
     const stage = `<div id="stage" class="stage2 ${shot ? 'click' : ''}" data-w="${w}" style="width:${w}px;height:${h}px;${side ? 'margin:0 12px 4px 0;flex:none;' : ''}">
         <img id="stB" src="" style="width:${w}px;height:${h}px;"><div id="stClip" style="height:${h}px;"><img id="stA" src="" style="width:${w}px;height:${h}px;"></div><div id="stLine" style="height:${h}px;"><div id="stGrip"></div></div></div>`;
@@ -201,7 +203,7 @@ export async function startApp(host, root) {
       ${d && S.base ? sliderHTML({ id: 'strength', label: 'Strength', min: 0, max: 1.5, step: 0.05, value: S.strength == null ? 1 : S.strength, def: 1 }) : ''}
       ${d ? `<div class="small">Previewing <b>${esc(S.suggOn >= 0 && S.sugg[S.suggOn] ? S.sugg[S.suggOn].title : d.name)}</b> <span class="dim">(colour, grain and vignette; halation and glow show on the clip)</span></div>
         ${scopeRow()}<div class="row wrap"><button class="primary" data-dapply="${S.chosen}">${esc(applyLabel())}</button><button data-dtweak="${S.chosen}">Tweak</button><button data-dsave="${S.chosen}">Save as preset</button><button id="dclear">Back to the original</button></div>`
-        : `<div class="small ${S.pickZone ? 'todo' : 'dim'}">${S.pickZone ? 'Click the colour you want to change.' : shot ? 'Click a face in the picture to check its skin. Pick a direction below to preview it here.' : 'Live preview: colour, grain and vignette. Halation and diffusion glow show on the clip.'}</div>`}`;
+        : `<div class="small ${S.pickZone ? 'todo' : 'dim'}">${S.pickZone ? 'Click the colour you want to change.' : shot ? 'Click a face in the picture to check its skin. Pick a direction below to preview it here.' : 'Live preview: colour, grain and vignette. Halation and diffusion glow show on the clip.'}${!pvBox && w < 170 && host.openPreviewPanel ? ' <b>Small here — Pop out for a preview you can dock as large as you like.</b>' : ''}</div>`}`;
     return side ? `<div class="dockrow">${stage}<div class="grow dockside">${controls}${rest}</div></div>` : stage + controls + rest;
   }
   // the Preview panel's real size (its own root node), re-checked while it is open so the picture follows a resize
@@ -230,11 +232,25 @@ export async function startApp(host, root) {
     // On the picture itself: drag to move the wipe; a plain click checks the skin, or picks a colour for a zone.
     const st = $('#stage', dock), canSample = S.tab === 'shot' || S.detached || S.pickZone;
     /** The average colour of a small patch around the click, so one stray pixel does not decide the zone. */
+    /**
+     * The colour under the click, as a person would name it. A plain average of the patch is wrong on anything
+     * striped, textured or edged — green-and-white stripes average to grey, and a grey pick quietly turns the zone
+     * into "every neutral in the frame". So take the patch's dominant hue and average only the pixels wearing it.
+     */
     const colourAt = (x, y) => { const f = S.frame, cx = Math.round(x * f.w), cy = Math.round(y * f.h), r = Math.max(2, Math.round(Math.min(f.w, f.h) * 0.015));
-      let n = 0, acc = [0, 0, 0];
+      const px = [], BINS = 24, vote = new Array(BINS).fill(0); let mean = [0, 0, 0], maxC = 0;
       for (let yy = Math.max(0, cy - r); yy <= Math.min(f.h - 1, cy + r); yy++) for (let xx = Math.max(0, cx - r); xx <= Math.min(f.w - 1, cx + r); xx++) {
-        const i = (yy * f.w + xx) * 4; acc[0] += f.data[i]; acc[1] += f.data[i + 1]; acc[2] += f.data[i + 2]; n++; }
-      return acc.map(v => v / Math.max(1, n) / 255); };
+        const i = (yy * f.w + xx) * 4, lab = srgbToOklab(f.data[i] / 255, f.data[i + 1] / 255, f.data[i + 2] / 255);
+        const C = Math.hypot(lab[1], lab[2]); let h = Math.atan2(lab[2], lab[1]) * 57.29578; if (h < 0) h += 360;
+        px.push([lab, C, h]); mean = [mean[0] + lab[0], mean[1] + lab[1], mean[2] + lab[2]]; if (C > maxC) maxC = C;
+        if (C >= 0.02) vote[Math.min(BINS - 1, Math.floor(h / (360 / BINS)))] += C; }
+      const n = Math.max(1, px.length), avg = l => oklabToSrgb(l[0] / n, l[1] / n, l[2] / n);
+      if (maxC < 0.03) return avg(mean); // the patch really is neutral
+      let peak = 0; for (let i = 1; i < BINS; i++) if (vote[i] + vote[(i + 1) % BINS] + vote[(i + BINS - 1) % BINS] > vote[peak] + vote[(peak + 1) % BINS] + vote[(peak + BINS - 1) % BINS]) peak = i;
+      const ph = (peak + 0.5) * (360 / BINS), keep = px.filter(p => p[1] >= maxC * 0.35 && hueDist(p[2], ph) <= 30);
+      if (!keep.length) return avg(mean);
+      const k = keep.reduce((a, p) => [a[0] + p[0][0], a[1] + p[0][1], a[2] + p[0][2]], [0, 0, 0]);
+      return oklabToSrgb(k[0] / keep.length, k[1] / keep.length, k[2] / keep.length); };
     const pick = (x, y) => { const n = addZoneFromColour(colourAt(x, y), S.pickZone > 0 ? S.pickZone : 0);
       S.pickZone = 0; if (!n) return toast(`All ${ZONES} colour zones are in use. Remove one first.`);
       if (S.tab !== 'tweak') go('tweak'); else render(); drawStage(); toast(`Zone ${n} picked. Drag “New hue” to change that colour.`); };
@@ -580,8 +596,10 @@ export async function startApp(host, root) {
   const fmtT = sec => { const m = Math.floor(sec / 60), x = Math.floor(sec % 60); return `${m}:${String(x).padStart(2, '0')}`; };
   // Where Apply puts the look. Counts come from the timeline; options with nothing to apply to are greyed out.
   /** What Apply will really do, in the button's own words. */
-  function applyLabel() { const n = S.selCount || 0;
-    if (S.scope !== 'clip') return 'Apply';
+  function applyLabel() { const n = S.selCount || 0, c = (S.ctx && S.ctx.counts) || {};
+    if (S.scope === 'adjust') return 'Apply on the adjustment layer above';
+    if (S.scope === 'source') return c.source > 1 ? `Apply to all ${c.source} clips from this source` : 'Apply to this source';
+    if (S.scope === 'scene') return c.scene > 1 ? `Apply to all ${c.scene} clips in this scene` : 'Apply to this scene';
     return n > 1 ? `Apply to ${n} selected clips` : n === 1 ? 'Apply to the selected clip' : 'Apply to the shot under the playhead'; }
   function scopeRow() {
     const c = S.ctx && S.ctx.counts; if (!c) return '';
@@ -708,22 +726,32 @@ export async function startApp(host, root) {
 
   // TWEAK -----------------------------------------------------------------
   // ---------- colour bands: a slider shows the colours it works in ----------
-  const HUE_BAND = (() => { const st = []; for (let h = 0; h <= 360; h += 15) st.push(`${lchHex(h)} ${(h / 360 * 100).toFixed(1)}%`); return `linear-gradient(90deg, ${st.join(',')})`; })();
+  const HUE_BAND = (() => { const st = []; for (let h = 0; h <= 360; h += 15) st.push(`${lchHex(h, 0.2)} ${(h / 360 * 100).toFixed(1)}%`); return `linear-gradient(90deg, ${st.join(',')})`; })();
   const satBand = h => `linear-gradient(90deg, ${lchHex(h, 0.01)}, ${lchHex(h, 0.2)}, ${lchHex(h, 0.4)})`;
+  /** The wheel centred on the hue this zone grabs, with everything outside the slice drained of colour, so widening
+   *  the slice visibly swallows its neighbours. The rail is repainted while the slider is dragged. */
+  const sliceBand = (h, w) => { const st = []; for (let i = 0; i <= 36; i++) { const d = -180 + i * 10;
+    st.push(`${Math.abs(d) <= (w || 25) ? lchHex(h + d, 0.2) : lchHex(h + d, 0.012, 0.66)} ${(i / 36 * 100).toFixed(1)}%`); } return `linear-gradient(90deg, ${st.join(',')})`; };
   const lightBand = h => `linear-gradient(90deg, ${lchHex(h, 0.1, 0.35)}, ${lchHex(h, 0.1, 0.72)}, ${lchHex(h, 0.1, 0.95)})`;
   const BANDS = { temp: `linear-gradient(90deg, ${lchHex(250, 0.1)}, #d8d8d4, ${lchHex(60, 0.12)})`, tint: `linear-gradient(90deg, ${lchHex(140, 0.1)}, #d8d8d4, ${lchHex(330, 0.12)})`,
-    sat: 'linear-gradient(90deg, #b8b8b4, #8ab0d8 55%, #2f8fe0)', exp: 'linear-gradient(90deg, #111, #8a8a88, #fff)' };
+    exp: 'linear-gradient(90deg, #111, #8a8a88, #fff)' };
+  /** Saturation is "how much colour", not "how blue", so its rail runs grey to vivid in the shot's own leading hue. */
+  const satOfShot = () => { const m = hueMarks(); if (!m.length) return satBand(40);
+    return satBand(m.reduce((a, b) => (b.h > a.h ? b : a)).at * 3.6); };
   /** Where this frame's colours sit, drawn under a hue slider so the editor aims at something real. */
   function hueMarks() { if (!S.frame) return [];
     const key = (S.meta && S.meta.timecode) + '|' + S.frame.w;
     if (!S.hueHist || S.hueHistKey !== key) { S.hueHist = hueHistogram(downsample(S.frame, 160)); S.hueHistKey = key; }
-    return S.hueHist.map((h, i) => ({ at: (i + 0.5) / S.hueHist.length * 100, h, c: lchHex((i + 0.5) * (360 / S.hueHist.length)) })).filter(m => m.h > 0.05); }
+    return S.hueHist.map((h, i) => ({ at: (i + 0.5) / S.hueHist.length * 100, h, c: lchHex((i + 0.5) * (360 / S.hueHist.length), 0.26) })).filter(m => m.h > 0.05); }
   const zonePick = n => Object.fromEntries(ZONE_KEYS.map(k => [`z${n}${k}`, S.extra[`z${n}${k}`]]));
   /** Adds a colour zone from a colour the editor clicked in the picture. Returns its number, or 0 when all are in use. */
   function addZoneFromColour(rgb, into) {
     const lab = srgbToOklab(rgb[0], rgb[1], rgb[2]), C = Math.hypot(lab[1], lab[2]); let h = Math.atan2(lab[2], lab[1]) * 57.29578; if (h < 0) h += 360;
     const n = into > 0 ? into : zoneList().find(i => !((S.extra[`z${i}Amt`] || 0) > 0)); if (!n) return 0;
     const neutral = C < 0.035, P = (k, v) => { S.extra[`z${n}${k}`] = +(+v).toFixed(4); };
+    // Say what was picked, so a zone is never just "Zone 3" in the list
+    const named = nearestHue(enc(), rgbToHex(rgb[0], rgb[1], rgb[2]));
+    S.zoneName[n] = neutral ? 'The greys and neutrals' : `The ${(named ? named.name.split(' / ')[0] : 'colour').toLowerCase()} you picked`;
     P('Amt', 0.8); P('Hue', h); P('Wid', 24); P('Cmin', neutral ? 0 : Math.max(0.025, C * 0.45)); P('Cmax', neutral ? 0.03 : 0.5);
     P('Lmin', Math.max(0, lab[0] - (neutral ? 0.14 : 0.32))); P('Lmax', Math.min(1, lab[0] + (neutral ? 0.14 : 0.32)));
     if (!(into > 0)) { P('ToHue', h); P('ToC', Math.min(0.4, Math.max(0.03, C))); P('dL', 0); }
@@ -755,17 +783,17 @@ export async function startApp(host, root) {
       const grey = (X[`z${n}Cmax`] || 0) <= 0.035, open = S.zoneOpen === n, cov = (liveCoverage().find(c => c.zone === n) || {}).share;
       return `<div class="zone ${open ? 'on' : ''}"><div class="row tight zhead" role="button" tabindex="0" data-zone="${n}">
           <span class="sw" style="background:${grey ? '#9a9a96' : lchHex(from, Math.max(0.05, (X[`z${n}Cmin`] || 0) + 0.05))}"></span><span class="small dim">→</span><span class="sw" style="background:${lchHex(to, Math.max(0.03, toC))}"></span>
-          <b class="grow">${m ? esc(m.item) + ' → ' + esc(m.to) : `Zone ${n}`}</b>
+          <b class="grow">${m ? esc(m.item) + ' → ' + esc(m.to) : esc(S.zoneName[n] || `Zone ${n}`)}</b>
           <span class="small dim">${cov == null ? '' : Math.max(1, Math.round(cov * 100)) + '%'}</span><span class="more">${open ? '▴' : '▾'}</span></div>
         ${open ? `${zoneSlider(n, 'Amt', 'How strongly', 0, 1, 0.01)}
-          <div class="q">The colour it grabs${grey ? ' (greys and neutrals)' : ''}</div>
-          ${zoneSlider(n, 'Hue', 'Pick hue', 0, 360, 1, { band: HUE_BAND, marks: hueMarks(), thumbColor: lchHex(from) })}
-          ${zoneSlider(n, 'Wid', 'How wide a slice of the wheel', 5, 120, 1)}
+          <div class="q">${grey ? 'It grabs the greys and neutrals — everything in the shot with almost no colour of its own, wherever it is' : 'The colour it grabs'}</div>
+          ${grey ? '' : zoneSlider(n, 'Hue', 'Pick hue', 0, 360, 1, { band: HUE_BAND, marks: hueMarks(), thumbColor: lchHex(from, 0.22) })
+            + zoneSlider(n, 'Wid', 'How wide a slice of the wheel', 5, 120, 1, { band: sliceBand(from, X[`z${n}Wid`]), thumbColor: lchHex(from, 0.22) })}
           ${full ? zoneSlider(n, 'Cmin', 'Only colours at least this strong', 0, 0.4, 0.005, { band: satBand(from) }) + zoneSlider(n, 'Cmax', 'and at most this strong', 0, 0.5, 0.005, { band: satBand(from) })
             + zoneSlider(n, 'Lmin', 'Only parts at least this bright', 0, 1, 0.01, { band: lightBand(from) }) + zoneSlider(n, 'Lmax', 'and at most this bright', 0, 1, 0.01, { band: lightBand(from) }) : ''}
-          <div class="q">What it becomes</div>
-          ${zoneSlider(n, 'ToHue', 'New hue', 0, 360, 1, { band: HUE_BAND, thumbColor: lchHex(to) })}
-          ${zoneSlider(n, 'ToC', 'How colourful', 0, 0.4, 0.005, { band: satBand(to) })}
+          <div class="q">What it becomes${grey && (toC || 0) < 0.05 ? ' — greys carry no colour yet, so raise <b>How colourful</b> first, then choose which colour' : ''}</div>
+          ${grey ? zoneSlider(n, 'ToC', 'How colourful', 0, 0.4, 0.005, { band: satBand(to) }) + zoneSlider(n, 'ToHue', 'New hue', 0, 360, 1, { band: HUE_BAND, thumbColor: lchHex(to, 0.22) })
+            : zoneSlider(n, 'ToHue', 'New hue', 0, 360, 1, { band: HUE_BAND, thumbColor: lchHex(to, 0.22) }) + zoneSlider(n, 'ToC', 'How colourful', 0, 0.4, 0.005, { band: satBand(to) })}
           ${zoneSlider(n, 'dL', 'Lighter / darker', -0.3, 0.3, 0.005, { band: lightBand(to) })}
           <div class="row wrap"><button data-zpick="${n}">Re-pick from the picture</button><button data-zdel="${n}">Remove this zone</button></div>` : ''}</div>`;
     };
@@ -774,7 +802,7 @@ export async function startApp(host, root) {
       ${zoneRows.map(n => zoneBlock(n, full)).join('')}
       <div class="q">The light and air over everything</div>
       ${sliderHTML({ id: 'X:ambAmt', label: 'Ambience amount', min: 0, max: 1, step: 0.01, value: +X.ambAmt, def: 0 })}
-      ${(X.ambAmt || 0) > 0 ? sliderHTML({ id: 'X:ambHue', label: 'Ambience hue', min: 0, max: 360, step: 1, value: +X.ambHue, def: 0, band: HUE_BAND, thumbColor: lchHex(X.ambHue) }) : ''}`;
+      ${(X.ambAmt || 0) > 0 ? sliderHTML({ id: 'X:ambHue', label: 'Ambience hue', min: 0, max: 360, step: 1, value: +X.ambHue, def: 0, band: HUE_BAND, thumbColor: lchHex(X.ambHue, 0.22) }) : ''}`;
 
     body.innerHTML = `
       ${S.frame ? '' : '<div class="card"><p class="small">Nothing to tweak yet. Open <b>Shot</b>, read the frame under your playhead and pick a direction; it lands here with its settings and a live preview.</p><div class="row"><button id="toshot" class="primary">Go to Shot</button></div></div>'}
@@ -794,7 +822,7 @@ export async function startApp(host, root) {
       ${S.frame ? card('zonesCard', 'Colour zones', 'Pick any colour in your shot and move it somewhere else — a wall, a shirt, the sky — without drawing a mask. Up to ' + ZONES + ' at a time. Watch the preview as you drag.', zonesHTML(!simple), zoneKeys) : ''}
 
       ${card('gradeCard', simple ? 'The main controls' : 'Grade', simple ? 'The four that change a shot most. Double-click a slider to put it back.' : '',
-        slider('G', 'exp', 'Exposure', -3, 3, 0.05, { band: BANDS.exp }) + slider('G', 'con', 'Contrast', 0.5, 1.6, 0.01) + slider('G', 'sat', 'Saturation', 0, 2, 0.01, { band: BANDS.sat }) + slider('G', 'temp', 'Temperature', -1, 1, 0.01, { band: BANDS.temp })
+        slider('G', 'exp', 'Exposure', -3, 3, 0.05, { band: BANDS.exp }) + slider('G', 'con', 'Contrast', 0.5, 1.6, 0.01) + slider('G', 'sat', 'Saturation', 0, 2, 0.01, { band: satOfShot() }) + slider('G', 'temp', 'Temperature', -1, 1, 0.01, { band: BANDS.temp })
         + (simple ? '' : slider('G', 'vib', 'Vibrance', -1, 1, 0.01) + slider('G', 'tint', 'Tint', -1, 1, 0.01, { band: BANDS.tint }) + slider('G', 'hi', 'Highlights', -1, 1, 0.01) + slider('G', 'sh', 'Shadows', -1, 1, 0.01) + slider('G', 'bk', 'Blacks', -1, 1, 0.01) + slider('G', 'wh', 'Whites', -1, 1, 0.01)),
         [['G', 'exp'], ['G', 'con'], ['G', 'sat'], ['G', 'temp'], ['G', 'vib'], ['G', 'tint'], ['G', 'hi'], ['G', 'sh'], ['G', 'bk'], ['G', 'wh']])}
 
@@ -828,7 +856,17 @@ export async function startApp(host, root) {
     if ($('#input', body)) $('#input', body).onchange = e => { S.input = e.target.value; settings.set('input', S.input); changed(); };
     if ($('#matte', body)) $('#matte', body).onchange = e => { S.matte = e.target.value !== 'none'; if (S.matte) S.look.A = e.target.value; changed(); };
     if ($('#rname', body)) $('#rname', body).onchange = e => { S.recipe.name = e.target.value; };
-    wireSliders(body, (id, v) => { const [obj, key] = id.split(':'); (obj === 'G' ? S.look.G : S.extra)[key] = v; drawStage(); });
+    // A hue slider also repaints its neighbours' rails: the slice it grabs, and the colourfulness and brightness it
+    // becomes. Repainting beats re-rendering here, which would replace the element the editor is still dragging.
+    const repaint = (sel, bg, thumb) => { const t = $(`.trk[data-id="${sel}"]`, body); if (!t) return;
+      const r = t.querySelector('.rail'); if (r && bg) r.style.background = bg;
+      const th = t.querySelector('.thumb'); if (th && thumb) th.style.background = thumb; };
+    const bands = (key, v) => { const z = /^z(\d)(Hue|Wid|ToHue)$/.exec(key); if (!z) return; const n = z[1], X = S.extra;
+      if (z[2] === 'ToHue') { repaint(`X:z${n}ToHue`, null, lchHex(v, 0.22)); repaint(`X:z${n}ToC`, satBand(v)); repaint(`X:z${n}dL`, lightBand(v)); return; }
+      const h = z[2] === 'Hue' ? v : +X[`z${n}Hue`], w = z[2] === 'Wid' ? v : +X[`z${n}Wid`];
+      repaint(`X:z${n}Wid`, sliceBand(h, w)); if (z[2] === 'Hue') { repaint(`X:z${n}Hue`, null, lchHex(h, 0.22));
+        ['Cmin', 'Cmax'].forEach(k => repaint(`X:z${n}${k}`, satBand(h))); ['Lmin', 'Lmax'].forEach(k => repaint(`X:z${n}${k}`, lightBand(h))); } };
+    wireSliders(body, (id, v) => { const [obj, key] = id.split(':'); (obj === 'G' ? S.look.G : S.extra)[key] = v; bands(key, v); drawStage(); });
     if ($('#apply', body)) $('#apply', body).onclick = () => busy('Applying', () => applyLookToClips(S.look, S.extra, S.input, S.matte));
     if ($('#update', body)) $('#update', body).onclick = () => busy('Saving', () => saveCurrentAsPreset($('#rname', body).value, false));
     if ($('#saveNew', body)) $('#saveNew', body).onclick = () => busy('Saving', async () => { await saveCurrentAsPreset($('#rname', body).value, true); render(); });

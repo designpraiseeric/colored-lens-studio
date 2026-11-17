@@ -161,10 +161,14 @@ export function applyMatch(rgb, p) { // display sRGB in/out
   const out = oklabToLin(lab[0] + (L - lab[0]) * t, lab[1] + (a - lab[1]) * t, lab[2] + (b - lab[2]) * t);
   return out.map(v => Math.min(1, Math.max(0, lin2srgb(v))));
 }
-/** How much a source pixel counts as skin (soft edges; wide so deep skin is always included). */
-export function skinWeight(lch) {
+/**
+ * How much a source pixel counts as skin (soft edges; wide so deep skin is always included).
+ * `cMin` is the colourfulness a pixel needs before it can read as skin at all. Skin Guard uses the default; colour
+ * zones pass a lower floor, because skin in shadow is barely colourful and a neutral zone aims straight at it.
+ */
+export function skinWeight(lch, cMin = 0.025) {
   const [L, C, h] = lch; const soft = (x, lo, hi, e) => smooth(lo - e, lo + e, x) * (1 - smooth(hi - e, hi + e, x));
-  return soft(h, 30, 86, 7) * soft(C, 0.025, 0.17, 0.012) * soft(L, 0.17, 0.93, 0.05);
+  return soft(h, 30, 86, 7) * soft(C, cMin, 0.17, 0.012) * soft(L, 0.17, 0.93, 0.05);
 }
 /** The look may add to skin, but cannot take away its hue, density or light beyond what you allow. */
 export function applySkinGuard(src, out, p) {
@@ -201,9 +205,12 @@ export function applyZones(src, out, p) {
   const so = srgbToOklab(...src), go = srgbToOklab(...out), sC = Math.hypot(so[1], so[2]); let sh = Math.atan2(so[2], so[1]) * 57.29578; if (sh < 0) sh += 360;
   const soft = (x, lo, hi, e) => smooth(lo - e, lo + e, x) * (1 - smooth(hi - e, hi + e, x));
   if (p.ambAmt > 0) { const w = p.ambAmt * smooth(0.12, 0.55, go[0]), h = p.ambHue * 0.01745329; go[1] += 0.07 * w * Math.cos(h); go[2] += 0.07 * w * Math.sin(h); }
+  // Skin Guard holds faces back from the zones too. Without this a zone aimed at a wall paints the shadows on a face,
+  // and the guard afterwards cannot see it: the guard only ever puts colour back, never takes away colour something added.
+  const keep = p.skinGuard > 0 ? 1 - skinWeight([so[0], sC, sh], 0.017) * p.skinGuard : 1;
   for (let i = 1; i <= ZONES; i++) { const z = ZONE_KEYS.map((k, j) => p[`z${i}${k}`] ?? ZONE_DEF[j]); if (!(z[0] > 0)) continue;
     let dh = Math.abs(sh - z[1]); if (dh > 180) dh = 360 - dh;
-    const wh = z[4] <= 0.03 ? 1 : 1 - smooth(z[2] * 0.6, z[2] * 1.2, dh), w = z[0] * wh * soft(sC, z[3], z[4], 0.012) * soft(so[0], z[5], z[6], 0.05); if (w <= 0.001) continue;
+    const wh = z[4] <= 0.03 ? 1 : 1 - smooth(z[2] * 0.6, z[2] * 1.2, dh), w = keep * z[0] * wh * soft(sC, z[3], z[4], 0.012) * soft(so[0], z[5], z[6], 0.05); if (w <= 0.001) continue;
     const ref = Math.max(0.02, (z[3] + z[4]) * 0.5), k = z[4] <= 0.03 ? 1 : Math.min(1.5, Math.max(0.5, sC / ref)), th = z[7] * 0.01745329, tc = z[8] * k;
     go[1] += (tc * Math.cos(th) - go[1]) * w; go[2] += (tc * Math.sin(th) - go[2]) * w; go[0] += z[9] * w; }
   return oklabToLin(go[0], go[1], go[2]).map(v => Math.min(1, Math.max(0, lin2srgb(v))));
@@ -215,7 +222,8 @@ export function zoneCoverage(frame, p) {
   for (let i = 1; i <= ZONES; i++) { const z = ZONE_KEYS.map((k, j) => p[`z${i}${k}`] ?? ZONE_DEF[j]); if (!(z[0] > 0)) continue; let hit = 0, tot = 0;
     for (let q = 0; q < n; q += step) { const so = srgbToOklab(frame.data[q * 4] / 255, frame.data[q * 4 + 1] / 255, frame.data[q * 4 + 2] / 255), sC = Math.hypot(so[1], so[2]); let sh = Math.atan2(so[2], so[1]) * 57.29578; if (sh < 0) sh += 360;
       let dh = Math.abs(sh - z[1]); if (dh > 180) dh = 360 - dh; const wh = z[4] <= 0.03 ? 1 : 1 - smooth(z[2] * 0.6, z[2] * 1.2, dh);
-      if (wh * soft(sC, z[3], z[4], 0.012) * soft(so[0], z[5], z[6], 0.05) > 0.25) hit++; tot++; }
+      const keep = p.skinGuard > 0 ? 1 - skinWeight([so[0], sC, sh], 0.017) * p.skinGuard : 1;
+      if (keep * wh * soft(sC, z[3], z[4], 0.012) * soft(so[0], z[5], z[6], 0.05) > 0.25) hit++; tot++; }
     out.push({ zone: i, share: tot ? hit / tot : 0 }); }
   return out;
 }

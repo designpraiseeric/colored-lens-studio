@@ -47,6 +47,19 @@ test('Skin Guard gives back density that a bleach look took from skin', () => {
   const off = makePixelFn(look, cat, luts)(skin), on = makePixelFn(look, cat, luts, { extra: { skinGuard: 1, skinHue: 1, skinDensity: 1, skinLight: 1 } })(skin);
   const chroma = c => Math.max(...c) - Math.min(...c); assert.ok(chroma(on) > chroma(off) * 1.3, `${chroma(on)} vs ${chroma(off)}`);
 });
+test('Skin Guard holds a colour zone off a face', () => {
+  // A zone aimed at the neutrals used to paint the shadows on a face, and the guard could not take it back:
+  // the guard only ever puts colour in, never removes colour a zone added. Zones now obey it directly.
+  const skin = hexToRgb('#4a3a33'), look = parseCode('C0', cat); // deep skin in shadow: low enough in colour for a neutral zone to grab
+  const zone = { z1Amt: 1, z1Cmin: 0, z1Cmax: 0.03, z1Lmin: 0, z1Lmax: 1, z1ToHue: 206, z1ToC: 0.32 };
+  const free = makePixelFn(look, cat, luts, { extra: { ...zone } })(skin);
+  const held = makePixelFn(look, cat, luts, { extra: { ...zone, skinGuard: 1, skinHue: 0.8, skinDensity: 0.7, skinLight: 0.5 } })(skin);
+  const blue = c => c[2] - c[0]; // the cyan the zone pushes in shows up as blue over red
+  assert.ok(blue(free) > blue(held) + 0.05, `guarded skin should stay warmer: free ${blue(free).toFixed(3)} vs held ${blue(held).toFixed(3)}`);
+  const wall = [0.42, 0.43, 0.44], w1 = makePixelFn(look, cat, luts, { extra: { ...zone } })(wall);
+  const w2 = makePixelFn(look, cat, luts, { extra: { ...zone, skinGuard: 1, skinHue: 0.8, skinDensity: 0.7, skinLight: 0.5 } })(wall);
+  assert.ok(Math.abs(blue(w1) - blue(w2)) < 0.02, 'a grey wall is not a face, so the zone still reaches it');
+});
 test('match moves a frame toward its reference', () => {
   const dark = solid(40, 30, () => [0.1, 0.12, 0.2]), bright = solid(40, 30, () => [0.7, 0.6, 0.45]), m = computeMatch(matchStats(dark), matchStats(bright));
   assert.ok(m.mLo > 0 && m.mCg >= 0.4 && m.mCg <= 2);

@@ -1,6 +1,17 @@
 # Release notes
 Each `## <version>` block becomes the text of the in-app update banner and the GitHub Release.
 
+## 0.10.1
+Colour zones keep their hands off faces, and a pick means what you clicked.
+- **Skin Guard now holds the colour zones back too.** A zone aimed at a wall used to paint the shadows on a face, and Skin Guard could not take it back: the guard only ever puts colour into skin, it never removes colour something else added. Zones now obey Skin Guard directly, so a face stays a face while the rest of the shot moves. Raise Skin Guard to protect more, drop it to zero to colour skin on purpose.
+- **Picking a colour grabs the colour, not the average.** Clicking a striped shirt used to average the stripes into grey, and a grey pick quietly turned the zone into "every neutral in the shot". The picker now finds the dominant colour under your cursor and takes that.
+- **Zones say what they are.** A zone you picked is named for what it grabbed — "The orange you picked", "The greys and neutrals" — instead of "Zone 3".
+- **A neutral zone no longer pretends to have a hue.** When a zone grabs the greys, the hue controls that do nothing in that mode are gone, and it tells you to add colour before choosing which.
+- **How wide a slice of the wheel** is drawn as the wheel around the hue you picked, with everything outside the slice drained of colour, so widening it visibly swallows its neighbours. The rails repaint as you drag.
+- **Apply tells the truth for every destination**, not just "This clip": it names the source, the scene with its clip count, or the adjustment layer it will land on.
+- **Saturation's rail** runs grey to vivid in your own shot's leading colour, instead of grey to blue.
+- **Vertical footage** gets more of the panel's height, and says when the preview would be bigger popped out.
+
 ## 0.10.0
 Colour zones you can see and pick yourself.
 - **Sliders show their colours.** Every hue slider is the colour wheel itself, with your own frame's colours marked underneath as small ticks, so you can see what you are picking and where you are heading. Colourfulness, brightness, exposure, saturation and temperature sliders are painted the same way.

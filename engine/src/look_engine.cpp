@@ -223,10 +223,12 @@ V3 applyMatch(V3 rgb, const Setup& s) {
   V3 lab = srgbToOklab(rgb), m = {lab.r * s.mLg + s.mLo, lab.g * s.mCg + s.mA, lab.b * s.mCg + s.mB};
   return oklabToSrgb(mixv(lab, m, s.matchAmt));
 }
-float skinWeight(V3 lab) {
+/** `cMin` is the colourfulness a pixel needs before it can read as skin. Zones pass a lower floor: skin in shadow is
+    barely colourful, and a neutral zone aims straight at it. Mirrors skinWeight in core/look.js. */
+float skinWeight(V3 lab, float cMin = 0.025f) {
   float L = lab.r, Cc = std::hypot(lab.g, lab.b), h = std::atan2(lab.b, lab.g) * 57.29578f; if (h < 0) h += 360;
   auto soft = [](float x, float lo, float hi, float e) { return smoothstepf(lo - e, lo + e, x) * (1 - smoothstepf(hi - e, hi + e, x)); };
-  return soft(h, 30, 86, 7) * soft(Cc, 0.025f, 0.17f, 0.012f) * soft(L, 0.17f, 0.93f, 0.05f);
+  return soft(h, 30, 86, 7) * soft(Cc, cMin, 0.17f, 0.012f) * soft(L, 0.17f, 0.93f, 0.05f);
 }
 V3 applySkinGuard(V3 src, V3 out, const Setup& s) {
   if (s.skinGuard <= 0) return out;
@@ -246,10 +248,12 @@ V3 applyZones(V3 src, V3 out, const Setup& s) {
   float sC = std::hypot(so.g, so.b), sh = std::atan2(so.b, so.g) * 57.29578f; if (sh < 0) sh += 360;
   auto soft = [](float x, float lo, float hi, float e) { return smoothstepf(lo - e, lo + e, x) * (1 - smoothstepf(hi - e, hi + e, x)); };
   if (s.ambAmt > 0) { float w = s.ambAmt * smoothstepf(0.12f, 0.55f, go.r), h = s.ambHue * 0.01745329f; go.g += 0.07f * w * std::cos(h); go.b += 0.07f * w * std::sin(h); }
+  // Skin Guard holds faces back from the zones too; the guard afterwards cannot, since it only ever puts colour back.
+  float keep = s.skinGuard > 0 ? 1 - skinWeight(so, 0.017f) * s.skinGuard : 1.f;
   for (int i = 0; i < 8; i++) { const float* z = s.z[i]; if (z[0] <= 0) continue;
     float dh = std::fabs(sh - z[1]); if (dh > 180) dh = 360 - dh;
     float wh = z[4] <= 0.03f ? 1.f : 1 - smoothstepf(z[2] * 0.6f, z[2] * 1.2f, dh);
-    float w = z[0] * wh * soft(sC, z[3], z[4], 0.012f) * soft(so.r, z[5], z[6], 0.05f); if (w <= 0.001f) continue;
+    float w = keep * z[0] * wh * soft(sC, z[3], z[4], 0.012f) * soft(so.r, z[5], z[6], 0.05f); if (w <= 0.001f) continue;
     float ref = std::max(0.02f, (z[3] + z[4]) * 0.5f), k = z[4] <= 0.03f ? 1.f : std::clamp(sC / ref, 0.5f, 1.5f), th = z[7] * 0.01745329f, tc = z[8] * k;
     go.g += (tc * std::cos(th) - go.g) * w; go.b += (tc * std::sin(th) - go.b) * w; go.r += z[9] * w; }
   return oklabToSrgb(go);
