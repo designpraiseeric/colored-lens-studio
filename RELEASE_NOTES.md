@@ -1,6 +1,17 @@
 # Release notes
 Each `## <version>` block becomes the text of the in-app update banner and the GitHub Release.
 
+## 0.14.0
+Suggestions that brighten a face now brighten the face, and the AI stops making you wait twice.
+- **The AI was brightening dark faces with whole-picture exposure.** Asked to fix an underexposed face, it reached for about +1.2 stops on the whole frame. In front of a bright wall that blew almost a third of the picture to white and lifted the face's highlights five times more than its shadows, which is why the panel refused two suggestions in a row on your shot at any strength. A request like that now goes to "Lift the face", which brightens her shadows and leaves the wall alone, and the panel tells you when it has done so. The AI is also told plainly that exposure moves the whole picture.
+- **Each suggestion now uses its own adjustments.** Suggestions that shared a film look were all borrowing the adjustments of whichever came first, so one bad exposure push spread to several.
+- **Strength now scales everything, including "Lift the face" and colour zones 5–8.** The slider and the fitter were working from two different definitions; now they share one.
+- **When a look does not suit the shot, you are told the worst two reasons, not just the first.** The first one was hiding "blows 31% of the picture".
+- **Burned-in captions are no longer treated as things to recolour.** Change a caption's colour in the caption itself.
+- **Suggestions start the moment the AI has studied the frame**, while you are still reading what it saw, instead of waiting for you to press Suggest.
+- **Reading the same shot again brings back what the AI already said about it**, at once, instead of costing another two to four minutes. "Study it again" is there when you want a fresh one.
+- **The AI's progress shows the seconds as they pass, and there is a Stop button.** Telling the AI something while suggestions are being worked out no longer has to wait for them; if the suggestions on screen were made before what you said, the panel says so.
+
 ## 0.13.0
 The encyclopedia's palette structures are now something you use, not just something you read.
 - **Pick a structure, point at a thing, point at a colour.** Every colour zone you have set up — picked from the picture, or built by a suggestion — is listed with how much of the frame it covers. Tap one, tap a swatch from the structure, and it takes that colour. The rest of the shot is left alone.

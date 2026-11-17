@@ -93,7 +93,10 @@ test('Premiere panel: grab, mark, read markers, apply the effect, update', { ski
     // it answers, keeps what it had, and changes only what the message changes.
     await page.fill('#smMsg', 'this is the opening shot'); await page.click('#aiTell');
     await page.waitForFunction(() => /only practical/.test(document.querySelector('#aicard').innerText), null, { timeout: 20000 });
-    { const sent = window_seen.at(-1); assert.equal(sent.model, 'gemma3:4b');
+    // Suggestions are no longer a second wait: they start by themselves once the AI has a reading (0.14.0).
+    await page.waitForSelector('.sg', { timeout: 20000 });
+    assert.ok(window_seen.some(b => /senior film colourist/.test(b.messages[0].content)), 'suggestions were asked for without pressing Suggest');
+    { const sent = window_seen.findLast(b => /already studied this frame/.test(b.messages[0].content)); assert.ok(sent, 'the reply was sent'); assert.equal(sent.model, 'gemma3:4b');
       assert.match(sent.messages[0].content, /already studied this frame/, 'a reply uses the reply prompt');
       const txt = sent.messages.at(-1).content;
       assert.match(txt, /EDITOR'S MESSAGE: this is the opening shot/);
@@ -103,7 +106,7 @@ test('Premiere panel: grab, mark, read markers, apply the effect, update', { ski
     assert.match(await page.innerText('#aicard'), /opening beat/, 'what the answer changed is kept');
     assert.match(await page.innerText('#aicard'), /Feels like: Warm and busy/, 'what it did not change is kept');
     assert.match(await page.innerText('#aicard'), /candy floss/, 'the reading it already had is still on screen');
-    await page.click('#aiSuggest'); await page.waitForSelector('.sg', { timeout: 15000 }); assert.equal(await page.locator('.sg').count(), 2);
+    await page.click('#aiSuggest'); await page.waitForSelector('.sg', { timeout: 15000 }); await aiIdle(); assert.equal(await page.locator('.sg').count(), 2);
     await page.click('.sg'); { const t = await page.innerText('.sg.on'); assert.match(t, /candy floss/i); assert.match(t, /cool pink/); assert.match(t, /Complementary/); assert.match(t, /Pink|Yellow/, 'colour entries are added as references'); assert.doesNotMatch(t, /Not A Real Entry/); }
     await page.click('[data-sgprev="0"]'); await page.waitForFunction(() => /On your preview now/i.test((document.querySelector('.sg.on') || {}).innerText || '')); assert.match(await page.innerText('.sg.on'), /Ambience → golden yellow: on/); await page.click('[data-sghow="0"]'); assert.match(await page.innerText('.how'), /Already done|Needs a mask/i);
     { const z = await page.evaluate(() => 0); }
@@ -121,6 +124,9 @@ test('Premiere panel: grab, mark, read markers, apply the effect, update', { ski
     for (let i = 0; i < 100 && !/EXCLUDED LAYERS/.test(window_seen.at(-1).messages.at(-1).content); i++) await page.waitForTimeout(150);
     await aiIdle();
     assert.match(window_seen.at(-1).messages.at(-1).content, /EXCLUDED LAYERS/); await page.click('#scope .lay'); await page.click('#reread'); await page.waitForFunction(() => !document.querySelector('#reread'), null, { timeout: 15000 }); await page.waitForTimeout(600); await aiIdle();
+    // ticked back to the question already asked: the same shot gets its earlier reading back, with no new AI call
+    { const n = window_seen.length; await page.waitForSelector('#aiFresh', { timeout: 15000 }); await page.waitForTimeout(500);
+      assert.equal(window_seen.length, n, 'a remembered shot costs no AI call'); assert.match(await page.innerText('#aicard'), /this is that reading, restored/); }
     // Apple Intelligence through the helper (faked): the same questions go to the helper, with the frame
     await page.evaluate(r => { window.__recipe = r; }, 'super8-summer');
     await page.click('#smartBtn'); await page.click('[data-prov="apple"]'); await page.click('#apTest'); await page.waitForSelector('.okmsg'); assert.match(await page.innerText('#body'), /Ready on this Mac/); await page.click('#smBack');

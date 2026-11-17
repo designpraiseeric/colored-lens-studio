@@ -29,7 +29,7 @@ You see one frame and measurements of it, what the editor said the shot is for, 
 Your job: say plainly what you see, read what the colour is doing for this moment, ask at most two short questions when the purpose is unclear, and pick 2 to 4 looks from the RECIPES list that fit what the editor wants.
 Rules:
 - Only use recipe ids from RECIPES. Only use adjustment keys from TWEAKS, inside their ranges, and only when a small change makes the recipe fit this frame better.
-- Faces: if there are people, protect their skin (skinGuard 0.6 to 0.9) unless the editor wants a stylised look on purpose.
+- Faces: if there are people, protect their skin (skinGuard 0.6 to 0.9) unless the editor wants a stylised look on purpose. "exp" moves the whole picture: do not raise it to brighten a dark face in front of a brighter background.
 - Be specific to this frame (what is lit, where the colour is, what the faces need). No film-school boilerplate.
 - If the editor's answers look wrong for the picture, suggest better ones in "answers"; the editor decides.
 <<JSON>>- Reply with JSON only, in this shape:
@@ -285,7 +285,8 @@ For each direction:
 - "items": for every important item in ITEMS, the colour it should become (plain name + hex) and why in one clause. At least four items. At least two of them must change visibly from the colour they have now, and say which single item is the accent the eye should land on. Use the items' names exactly as given, and only items that are in ITEMS: never mention things that are not in this frame. Skin stays believable unless the direction is openly stylised; say what happens to skin.
 - "communicates": what this arrangement tells the audience about the person, place or moment. "because": the colour reasoning: the relationships between the items' colours, contrast of hue / value / saturation, where the eye goes first and why, and what it does for the face.
 - "refs": 2 to 4 names copied exactly from ENCYCLOPEDIA that genuinely explain this direction (its structure, a storytelling use, a filmmaker known for it). No filler.
-- "recipe": last and least: the id from RECIPES of the film look that sits best underneath this direction (the item colours are applied on top of it), with optional "tweaks" from TWEAKS.
+- "recipe": last and least: the id from RECIPES of the film look that sits best underneath this direction (the item colours are applied on top of it), with optional "tweaks" from TWEAKS. "exp" moves the WHOLE picture: never use it to brighten a face. To brighten a face, give the face item a lighter colour; the panel lifts the face alone.
+- Burned-in captions, titles and logos are not items to recolour: leave them out of "items".
 Respect LAYERS IN SCOPE, the editor's answers and everything said in the conversation: if the editor asked for something specific, most directions should serve it. The editor's "feeling" answers describe the scene, they are not a ceiling on boldness. Be specific to this frame. No film-school boilerplate, no repeating the same palette under different names.
 ${JSON_ONLY}
 {"reply":"","suggestions":[{"title":"","idea":"","structure":"","ambience":{"colour":"","hex":"#000000"},"items":[{"item":"","colour":"","hex":"#000000","why":"","accent":false}],"communicates":"","because":"","refs":[""],"recipe":"","tweaks":{}}]}`;
@@ -374,6 +375,9 @@ export function zonesFor(sg, study, swatches = [], frame = null) {
     // and a zone is the only tool that can answer it, so skin gets a zone that moves its EXPOSURE and leaves its
     // colour to Skin Guard. A suggestion that wants to recolour a face still does not get one.
     const isSkin = /\b(skin|face|complexion|cheek|forehead|hands?)\b/i.test(it.item);
+    // A caption or title on a layer above the shot is not part of the picture's colour: it has its own colour on its
+    // own layer, and a zone aimed at it finds nothing in the footage (seen 17 Nov: "Graphic text 'fact'").
+    if (/\b(text|caption|subtitles?|title|lower[- ]third|graphic|logo|watermark)\b/i.test(it.item)) { skipped.push({ item: it.item, why: 'it is a graphic on its own layer: change its colour in the graphic itself, not in the grade' }); continue; }
     if (!to || !from) { skipped.push({ item: it.item, why: 'the AI did not give a usable colour for it' }); continue; }
     if (isSkin) { const dL = to.L - from.L;
       if (Math.abs(dL) < 0.03) { skipped.push({ item: it.item, why: 'it is already about this bright, and its colour is left to Skin Guard' }); continue; }

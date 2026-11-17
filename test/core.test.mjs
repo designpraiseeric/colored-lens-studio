@@ -326,3 +326,21 @@ test('every swatch of a structure can reach every item', () => {
   for (let s = 1; s <= 60; s++) for (const d of dealPalette(items, pal, s)) used.add(d.hex);
   for (const hex of pal) assert.ok(used.has(hex), `${hex} was never dealt to anything`);
 });
+
+// Remembering the AI's reading of a shot (0.14.0): the same shot a moment later is found, a different shot is not,
+// and a different question about the same picture (a layer left out, a wider range) is not answered from memory.
+import { fingerprint, distance, lookup as aiLookup, remember as aiRemember, SAME_SHOT, KEEP } from '../core/aicache.js';
+test('the AI cache knows the same shot from a different one', () => {
+  const mk = (fn, w = 64, h = 96) => { const d = new Uint8ClampedArray(w * h * 4); for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const i = (y * w + x) * 4, v = fn(x, y); d[i] = d[i + 1] = d[i + 2] = v; d[i + 3] = 255; } return { w, h, data: d }; };
+  const a = fingerprint(mk((x, y) => 40 + y * 2)), a2 = fingerprint(mk((x, y) => 42 + y * 2 + ((x * 7 + y * 3) % 5))), b = fingerprint(mk((x, y) => 230 - y * 2));
+  assert.ok(distance(a, a2) < SAME_SHOT, `a moment later is the same shot (${distance(a, a2).toFixed(1)})`);
+  assert.ok(distance(a, b) > SAME_SHOT * 3, 'a different picture is not');
+  let list = aiRemember([], a, 'x|shot', { study: { items: [1] } });
+  assert.ok(aiLookup(list, a2, 'x|shot'), 'found again');
+  assert.equal(aiLookup(list, a2, '2|shot'), null, 'not when a layer was left out of the question');
+  assert.equal(aiLookup(list, b, 'x|shot'), null, 'not for another shot');
+  list = aiRemember(list, a2, 'x|shot', { study: { items: [2] } });
+  assert.equal(list.length, 1, 'the same shot replaces its entry rather than piling up');
+  for (let i = 0; i < 20; i++) list = aiRemember(list, fingerprint(mk((x, y) => (i * 37 + x * i) % 255)), 'x|shot', {});
+  assert.ok(list.length <= KEEP, 'bounded');
+});

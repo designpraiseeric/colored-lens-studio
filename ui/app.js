@@ -21,6 +21,7 @@ import { sliderHTML, wireSliders } from './slider.js';
 import { COACH, routes, helpPrompt } from './guide.js';
 import { decodeImage, makeFrame } from '../core/image.js';
 import { encodeJPEG } from '../core/jpeg.js';
+import { fingerprint, lookup as cacheLookup, remember as cacheRemember, ago } from '../core/aicache.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -125,6 +126,7 @@ export async function startApp(host, root) {
     try { S.selCount = await (host.selectionCount ? host.selectionCount() : 0); } catch { S.selCount = 0; }
     S.readErr = null;
     const g = await host.grabFrame(undefined, { clean: true, hide: S.layerOff, onSlow: s => status(`Waiting for Premiere to render this frame — ${s}s (heavy timelines take a while)…`) }); S.frame = g.frame; S.meta = g; g.readWithout = S.layerOff.slice().sort(); S.sample = null; S.chosen = -1; S.lead = 0;
+    aiGen++; aiBusy = false; S.fp = null;
     S.study = null; S.sugg = []; S.suggOpen = S.suggHow = -1; S.rangeInfo = null; S.ai = { busy: '', error: '', chat: [], none: false };
     S.smartDirs = []; S.smart.turns = []; S.smart.history = [];
     // answers belong to the scene (marker range) when there is one, otherwise to the sequence
@@ -188,14 +190,10 @@ export async function startApp(host, root) {
    */
   function setStrength(k) {
     const b = S.base; if (!b) return; S.strength = k;
-    const L = clone(b.look), X = { ...b.extra }, G = L.G, B = fullGrade(b.look.G);
-    G.lutMix = Math.min(1, (B.lutMix == null ? 1 : B.lutMix) * k);
-    for (const key of ['exp', 'con', 'sat', 'vib', 'temp', 'tint', 'hi', 'sh', 'bk', 'wh', 'bri', 'gam']) {
-      const d0 = GRADE0[key]; if (typeof B[key] !== 'number' || typeof d0 !== 'number') continue; G[key] = d0 + (B[key] - d0) * k; }
-    for (const key of ['grainK', 'halK', 'diffK', 'vigK']) if (typeof B[key] === 'number') G[key] = B[key] * Math.min(1.35, k);
-    X.ambAmt = Math.min(1, (b.extra.ambAmt || 0) * k);
-    for (let n = 1; n <= 4; n++) { const a = b.extra[`z${n}Amt`] || 0; if (a > 0) X[`z${n}Amt`] = Math.min(1, a * k); }
-    S.look = L; S.extra = X;
+    // One definition of strength, shared with the fitter. This used to be a copy that scaled zones 1–4 only and never
+    // the face lift, so the slider showed one thing and the fitter had measured another.
+    const { look, extra } = scaleLook(b.look, b.extra, k, GRADE0, fullGrade);
+    S.look = look; S.extra = extra;
   }
 
   // ---------- the stage: a large before / after preview with a wipe ----------
@@ -222,9 +220,10 @@ export async function startApp(host, root) {
       <div class="row tight">${host.openPreviewPanel ? `<button id="dockPop" class="small" title="${S.detached ? 'Put the preview back in the Colored Lens panel' : 'Open the preview as its own panel, to dock anywhere'}">${S.detached ? 'Back to panel' : 'Pop out'}</button>` : ''}${S.detached ? '' : '<button id="dockHide" class="small" title="Hide the preview">Hide</button>'}</div>`;
     const rest = `${S.view === 'split' ? sliderHTML({ id: 'wipe', label: 'Wipe', min: 0, max: 1, step: 0.01, value: S.wipe, def: 0.5 }) : ''}
       ${d && S.base ? sliderHTML({ id: 'strength', label: 'Strength', min: 0, max: 1.5, step: 0.05, value: S.strength == null ? 1 : S.strength, def: 1 }) : ''}
-      ${d && S.fit && S.fit.fitted ? `<div class="small ${S.fit.suits ? 'dim' : 'warn'}">${S.fit.suits
-        ? `Brought down to ${Math.round(S.fit.k * 100)}% to fit this shot — at full strength it ${esc(S.fit.faults.length ? S.fit.faults[0].say : 'damaged the picture')}. Drag Strength back up if you want it anyway.`
-        : `<b>This look does not suit this shot.</b> Even at ${Math.round(S.fit.k * 100)}% it ${esc((S.fit.faults[0] || {}).say || 'damages the picture')}. Shown so you can judge it yourself.`}</div>` : ''}
+      ${(d || S.suggOn >= 0) && S.fit && S.fit.fitted ? `<div class="small ${S.fit.suits ? 'dim' : 'warn'}">${S.fit.suits
+        ? `Brought down to ${Math.round(S.fit.k * 100)}% to fit this shot — at full strength it ${esc(saysOf(S.fit.full || S.fit.faults) || 'damaged the picture')}. Drag Strength back up if you want it anyway.`
+        : `<b>This look does not suit this shot.</b> Even at ${Math.round(S.fit.k * 100)}% it ${esc(saysOf(S.fit.faults) || 'damages the picture')}. Shown so you can judge it yourself.`}</div>` : ''}
+      ${S.suggOn >= 0 && (S.suggNotes || []).length ? `<div class="small dim">${S.suggNotes.map(esc).join(' ')}</div>` : ''}
       ${d ? `<div class="small">Previewing <b>${esc(S.suggOn >= 0 && S.sugg[S.suggOn] ? S.sugg[S.suggOn].title : d.name)}</b> <span class="dim">(colour, grain and vignette; halation and glow show on the clip)</span></div>
         ${scopeRow()}<div class="row wrap"><button class="primary" data-dapply="${S.chosen}">${esc(applyLabel())}</button><button data-dtweak="${S.chosen}">Tweak</button><button data-dsave="${S.chosen}">Save as preset</button><button id="dclear">Back to the original</button></div>`
         : `<div class="small ${S.pickZone ? 'todo' : 'dim'}">${S.pickZone ? 'Click the colour you want to change.' : shot ? 'Click a face in the picture to check its skin. Pick a direction below to preview it here.' : 'Live preview: colour, grain and vignette. Halation and diffusion glow show on the clip.'}${!pvBox && w < 170 && host.openPreviewPanel ? ' <b>Small here — Pop out for a preview you can dock as large as you like.</b>' : ''}</div>`}`;
@@ -420,8 +419,10 @@ export async function startApp(host, root) {
     // A read takes up to a minute and a half. If it fails, a toast that fades in six seconds is no report at all —
     // the editor has walked away and comes back to a tab that looks untouched. The reason stays on screen.
     $('#grab', body).onclick = async () => { if (S.busy) return; S.busy = true; status('Reading frame…');
-      try { await grab(); await suggest(); S.busy = false; render();
-        if (S.smart.cfg.provider !== 'off' && S.smart.cfg.autoAsk !== false) studyFrame(''); }
+      try { await grab(); await suggest(); S.busy = false;
+        // the same shot, read before: the AI's reading comes back at once instead of costing another two to four minutes
+        const back = await aiRestore(); render();
+        if (!back && autoSuggest()) studyFrame(''); }
       catch (e) { console.error(e); S.readErr = { msg: e.message || String(e), detail: e.detail || null }; S.busy = false; render(); }
       finally { S.busy = false; status(); } };
     if ($('#errGo', body)) $('#errGo', body).onclick = () => { S.readErr = null; render(); };
@@ -489,7 +490,29 @@ export async function startApp(host, root) {
       for (let i = 3; i < sheet.data.length; i += 4) sheet.data[i] = 255; info.sheet = sheet; }
     return (S.rangeInfo = info);
   }
-  let aiBusy = false, stageDrag = false;
+  let aiBusy = false, stageDrag = false, aiGen = 0;
+  // Every AI call carries a generation number. Stop, a new read or a message that pre-empts a background job moves
+  // the number on, and an answer that comes back for an older generation is dropped instead of overwriting the screen.
+  function aiStart(label, prefetch = false) { const gen = ++aiGen; aiBusy = true; S.ai.error = ''; S.ai.busy = label; S.ai.t0 = Date.now(); S.ai.prefetch = prefetch; return gen; }
+  const aiLive = gen => gen === aiGen;
+  function aiEnd(gen) { if (!aiLive(gen)) return; aiBusy = false; S.ai.busy = ''; S.ai.prefetch = false; status(); softRender(); }
+  function aiStop() { aiGen++; aiBusy = false; S.ai.busy = ''; S.ai.prefetch = false; status(); softRender(); }
+  // The busy line counts the seconds without re-drawing the panel (a re-draw would lose a drag or text being typed).
+  setInterval(() => { const el = document.getElementById('aiBusyLine'); if (el && S.ai.busy && S.ai.t0) el.textContent = `${S.ai.busy} ${Math.round((Date.now() - S.ai.t0) / 1000)} s`; }, 1000);
+  // What the AI was asked to look at: the same picture with a title left out, or a wider range, is a different question.
+  const aiScope = () => `${(S.layerOff || []).slice().sort().join(',')}|${S.range || 'shot'}`;
+  function aiSave() { if (!S.frame || !S.study) return;
+    try { const fp = S.fp || (S.fp = fingerprint(S.frame));
+      settings.set('aiCache', cacheRemember(settings.get('aiCache', []), fp, aiScope(), { study: S.study, sugg: S.sugg, chat: S.ai.chat })); } catch (e) { console.warn('ai cache', e); } }
+  async function aiRestore() { if (!S.frame) return false;
+    try { S.fp = fingerprint(S.frame); const hit = cacheLookup(settings.get('aiCache', []), S.fp, aiScope()); if (!hit || !hit.study) return false;
+      S.study = hit.study; S.ai.chat = hit.chat || []; S.ai.restored = hit.t; await setSuggestions(hit.sugg || []); return true; } catch (e) { console.warn('ai restore', e); return false; } }
+  /** Suggestions on screen, and the Smart picks built from their recipes. */
+  async function setSuggestions(list) {
+    S.sugg = list; S.suggOpen = -1; S.suggHow = -1; S.suggOn = -1; S.suggZ = null; S.suggStale = false;
+    const picks = list.filter(x => x.recipe).map(x => ({ recipe: x.recipe, why: x.idea || x.communicates, tweaks: x.tweaks })).filter((p, i, arr) => arr.findIndex(q => q.recipe === p.recipe) === i);
+    S.smartDirs = picks.length ? await enrich(directionsFromPicks(picks, S.intent, { reading: S.reading, skin: S.skin, input: S.input })) : []; S.chosen = -1; }
+  const autoSuggest = () => S.smart.cfg.provider !== 'off' && S.smart.cfg.autoAsk !== false;
   /** Re-draws when the AI answers without throwing away what the editor is in the middle of (typing, scroll position). */
   function softRender() { if (S.tab !== 'shot') return; if (stageDrag) return void setTimeout(softRender, 300); const body = $('#body', root), top = body.scrollTop, m = $('#smMsg', body), txt = m ? m.value : '', had = m && document.activeElement === m;
     render(); body.scrollTop = top; const m2 = $('#smMsg', body); if (m2 && txt) { m2.value = txt; if (had) m2.focus(); } }
@@ -509,29 +532,41 @@ export async function startApp(host, root) {
     return parseReply(text);
   }
   async function studyFrame(message) {
-    if (aiBusy || !S.frame) return; aiBusy = true; S.ai.error = ''; S.ai.busy = message ? 'Thinking about what you said…' : 'Studying the frame…'; render();
+    if (!S.frame) return;
+    // A message pre-empts suggestions being worked out in the background; anything else waits its turn.
+    if (aiBusy) { if (message && S.ai.prefetch) aiStop(); else return; }
+    const gen = aiStart(message ? 'Thinking about what you said…' : 'Studying the frame…'); S.ai.restored = 0; render();
     // Telling the AI something is a reply, not a restudy: only a frame it has never seen needs the full pass.
-    const kind = message && S.study ? 'tell' : 'study';
-    try { let rawS; try { rawS = await aiCall(kind, message); } catch (e) { if (!/^REPEAT/.test(e.message)) throw e; rawS = await aiCall(kind, message); }
+    const kind = message && S.study ? 'tell' : 'study'; let done = false;
+    try { let rawS; try { rawS = await aiCall(kind, message); } catch (e) { if (!/^REPEAT/.test(e.message)) throw e; if (!aiLive(gen)) return; rawS = await aiCall(kind, message); }
+      if (!aiLive(gen)) return;
       const res = validateStudy(rawS);
       if (message) S.ai.chat.push({ you: message, ai: res.reply || 'Understood. I have updated my reading of the frame.' });
       S.smart.history.push({ role: 'user', text: message || '(study this frame)' }, { role: 'assistant', text: JSON.stringify({ purpose: res.purpose, mood: res.mood, reply: res.reply }).slice(0, 900) });
       if (res.items.length || !S.study) S.study = res; else S.study = { ...S.study, ...Object.fromEntries(Object.entries(res).filter(([k, v]) => v && v.length && k !== 'items')) };
-    } catch (e) { if (e.message !== 'none') { console.error(e); S.ai.error = String(e.message || e).replace(/^REPEAT: /, ''); } }
-    finally { aiBusy = false; S.ai.busy = ''; status(); softRender(); }
+      if (message && S.sugg.length) S.suggStale = true; // the suggestions on screen were made before this
+      aiSave(); done = true;
+    } catch (e) { if (aiLive(gen) && e.message !== 'none') { console.error(e); S.ai.error = String(e.message || e).replace(/^REPEAT: /, ''); } }
+    finally { aiEnd(gen); }
+    // The study and the suggestions used to be two waits with the editor in between. Now the suggestions start the
+    // moment the study lands, while the editor is still reading it.
+    if (done && aiLive(gen) && !S.sugg.length && autoSuggest()) suggestColours('', { prefetch: true });
   }
-  async function suggestColours(message) {
-    if (aiBusy || !S.frame) return; aiBusy = true; S.ai.error = ''; S.ai.busy = 'Working out colour suggestions… (this can take a minute)'; render();
-    try { if (!S.study) S.study = validateStudy(await aiCall('study', ''));
-      let raw; try { raw = await aiCall('suggest', message); } catch (e) { if (!/^REPEAT/.test(e.message)) throw e; S.ai.small = true; status('The AI stumbled; asking for fewer suggestions…'); try { raw = await aiCall('suggest', message); } catch (e2) { throw new Error(/^REPEAT/.test(e2.message) ? 'The AI on this computer keeps getting stuck on this frame. Try again, or switch to Gemini under “AI” for fuller suggestions.' : e2.message); } }
+  async function suggestColours(message, opts = {}) {
+    if (!S.frame) return;
+    if (aiBusy) { if (S.ai.prefetch && !opts.prefetch) { // already on its way: let the editor's press take it over
+        if (!message) { S.ai.prefetch = false; S.ai.busy = 'Working out colour suggestions…'; render(); return; } aiStop(); } else return; }
+    const gen = aiStart(opts.prefetch ? 'Working out colour suggestions while you read…' : 'Working out colour suggestions…', !!opts.prefetch); render();
+    try { if (!S.study) { const st = validateStudy(await aiCall('study', '')); if (!aiLive(gen)) return; S.study = st; }
+      let raw; try { raw = await aiCall('suggest', message); } catch (e) { if (!/^REPEAT/.test(e.message)) throw e; if (!aiLive(gen)) return; S.ai.small = true; status('The AI stumbled; asking for fewer suggestions…'); try { raw = await aiCall('suggest', message); } catch (e2) { throw new Error(/^REPEAT/.test(e2.message) ? 'The AI on this computer keeps getting stuck on this frame. Try again, or switch to Gemini under “AI” for fuller suggestions.' : e2.message); } }
+      if (!aiLive(gen)) return;
       const res = validateSuggest(raw, enc(), S.study);
       if (!res.suggestions.length) throw new Error('The AI did not return usable suggestions. Try again, or tell it more about the scene.');
       if (message) S.ai.chat.push({ you: message, ai: res.reply || `${res.suggestions.length} new suggestions below.` });
-      S.sugg = res.suggestions; S.suggOpen = -1; S.suggHow = -1; S.suggOn = -1; S.suggZ = null;
-      const picks = res.suggestions.filter(x => x.recipe).map(x => ({ recipe: x.recipe, why: x.idea || x.communicates, tweaks: x.tweaks })).filter((p, i, arr) => arr.findIndex(q => q.recipe === p.recipe) === i);
-      S.smartDirs = picks.length ? await enrich(directionsFromPicks(picks, S.intent, { reading: S.reading, skin: S.skin, input: S.input })) : []; S.chosen = -1;
-    } catch (e) { if (e.message !== 'none') { console.error(e); S.ai.error = String(e.message || e).replace(/^REPEAT: /, ''); } }
-    finally { aiBusy = false; S.ai.busy = ''; status(); softRender(); }
+      await setSuggestions(res.suggestions); aiSave();
+      if (opts.prefetch) toast(`${res.suggestions.length} colour suggestions are ready below`);
+    } catch (e) { if (aiLive(gen) && e.message !== 'none') { console.error(e); S.ai.error = String(e.message || e).replace(/^REPEAT: /, ''); } }
+    finally { aiEnd(gen); }
   }
   const sw = hex => (hex ? `<span class="sw" style="background:${hex}"></span>` : '');
   function aiCard() {
@@ -550,7 +585,8 @@ export async function startApp(host, root) {
         : (S.ai.busy ? '' : `<p class="small dim">The AI has not studied this frame yet.</p><div class="row"><button id="aiStudy" class="primary">Study this frame</button></div>`)}
       ${S.ai.chat.map(x => `<p class="small you"><b>You:</b> ${esc(x.you)}</p><p class="small"><b>AI:</b> ${esc(x.ai)}</p>`).join('')}
       ${u && u.questions.length ? `<div class="chips">${u.questions.map(q => `<div role="button" tabindex="0" class="chip" data-smq="${esc(q)}">${esc(q)}</div>`).join('')}</div>` : ''}
-      ${S.ai.busy ? `<p class="small todo">${esc(S.ai.busy)}</p>` : ''}${S.ai.error ? `<p class="small warn">${esc(S.ai.error)}</p>${/free limit|very busy/i.test(S.ai.error) ? '<div class="row"><button id="aiLocal" class="small">Use the AI on this computer for now</button></div>' : ''}` : ''}
+      ${S.ai.busy ? `<div class="row tight"><span class="small todo grow" id="aiBusyLine">${esc(S.ai.busy)} ${S.ai.t0 ? Math.round((Date.now() - S.ai.t0) / 1000) + ' s' : ''}</span><button id="aiCancel" class="small">Stop</button></div>` : ''}
+      ${u && S.ai.restored && !S.ai.busy ? `<div class="row tight"><span class="small dim grow">The AI read this shot ${esc(ago(S.ai.restored))}; this is that reading, restored.</span><button id="aiFresh" class="small">Study it again</button></div>` : ''}${S.ai.error ? `<p class="small warn">${esc(S.ai.error)}</p>${/free limit|very busy/i.test(S.ai.error) ? '<div class="row"><button id="aiLocal" class="small">Use the AI on this computer for now</button></div>' : ''}` : ''}
       ${u && S.smart.answering ? `<div class="row tight answering"><span class="small grow">Answering: ${esc(S.smart.answering)}</span><button id="smDrop" class="small">Not this</button></div>` : ''}
       ${u ? `<textarea id="smMsg" rows="2" placeholder="${S.smart.answering ? 'Type just your answer' : 'Tell it more about this shot or scene, or correct it (e.g. “she has just lost her job; the lamp is the only warm thing left”)'}"></textarea>
       <div class="row wrap"><button id="aiTell">Tell the AI</button><button id="aiSuggest" class="primary">${S.sugg.length ? 'Suggest again' : 'Suggest colours and looks'}</button></div>` : ''}</div>`;
@@ -558,6 +594,7 @@ export async function startApp(host, root) {
   function suggHTML() {
     if (!S.sugg.length) return '';
     return `<div class="k sect" id="sugg">Colour suggestions (${S.sugg.length})</div><p class="small dim">Each one says what colour to give what, what that tells the audience, and why. Tap one to open it.</p>
+      ${S.suggStale ? '<p class="small warn">These were made before what you last told the AI. Press “Suggest again” to have them take it into account.</p>' : ''}
       ${S.sugg.map((g, i) => { const open = S.suggOpen === i, di = g.recipe ? S.smartDirs.findIndex(d => d.id === g.recipe) : -1;
         return `<div class="sg ${open ? 'on' : ''}"><div class="sghead" role="button" tabindex="0" data-sg="${i}"><div class="row tight"><b class="grow">${i + 1}. ${esc(g.title)}</b><span class="pal">${[g.ambience, ...g.items].map(c => sw(c.hex)).join('')}</span></div>
         <p class="small">${g.structure ? `<span class="badge">${esc(g.structure)}</span> ` : ''}${esc(g.idea || g.communicates)}</p><div class="more">${open ? 'Close ▴' : 'Open: colours item by item, why, references, try it ▾'}</div></div>
@@ -674,6 +711,8 @@ export async function startApp(host, root) {
     if ($('#aiSetup', body)) $('#aiSetup', body).onclick = () => { S.guide = { view: 'smart', step: 0, route: '' }; go('guide'); };
     if ($('#aiRetry', body)) $('#aiRetry', body).onclick = () => studyFrame('');
     if ($('#aiStudy', body)) $('#aiStudy', body).onclick = () => studyFrame('');
+    if ($('#aiCancel', body)) $('#aiCancel', body).onclick = () => { aiStop(); toast('Stopped. If the AI answers later, the answer is ignored.'); };
+    if ($('#aiFresh', body)) $('#aiFresh', body).onclick = () => { S.study = null; S.sugg = []; S.smartDirs = []; S.ai.chat = []; S.ai.restored = 0; studyFrame(''); };
     if ($('#aiTell', body)) $('#aiTell', body).onclick = () => { const m = $('#smMsg', body).value.trim(), q = S.smart.answering;
       if (!m && !q) return toast('Type something for the AI first');
       S.smart.answering = ''; studyFrame(q && m ? `${q} — ${m}` : q || m); };
@@ -688,8 +727,14 @@ export async function startApp(host, root) {
       g.picBusy = false; if (S.tab === 'shot') { S.focusSg = i; softRender(); } });
     body.querySelectorAll('[data-sgprev]').forEach(b => b.onclick = () => busy('Building this suggestion', async () => { const i = +b.dataset.sgprev, g = S.sugg[i], top = body.scrollTop;
       // the Lukuluku look for the overall grade (a clean pass-through when the AI named none), then one colour zone per item
-      const di = S.smartDirs.findIndex(d => d.id === g.recipe); if (di >= 0) choose(di); else { S.chosen = -1; S.look = NEUTRAL_LOOK(); S.extra = { ...XDEF }; }
-      const z = zonesFor(g, S.study, S.reading ? S.reading.swatches : [], S.frame ? downsample(S.frame, 160) : null); S.extra = { ...S.extra, ...zoneDefaults(), ...z.params, skinGuard: Math.max(S.extra.skinGuard || 0, 0.7) };
+      // This suggestion's own film look and its own tweaks. It used to borrow the Smart pick for the same recipe, which
+      // carried the tweaks of whichever suggestion named that recipe first — one bad exposure push spread to several.
+      const di = S.smartDirs.findIndex(d => d.id === g.recipe), own = g.recipe ? directionsFromPicks([{ recipe: g.recipe, tweaks: g.tweaks, why: g.idea }], S.intent, { reading: S.reading, skin: S.skin, input: S.input })[0] : null;
+      S.chosen = di; S.suggOn = -1; S.suggZ = null; S.matte = false;
+      if (own) { S.look = clone(own.look); S.extra = { ...XDEF, ...own.extra }; S.suggNotes = own.notes || []; } else { S.look = NEUTRAL_LOOK(); S.extra = { ...XDEF }; S.suggNotes = []; }
+      const z = zonesFor(g, S.study, S.reading ? S.reading.swatches : [], S.frame ? downsample(S.frame, 160) : null);
+      const lift = Math.max(S.extra.skinLift || 0, z.params.skinLift || 0);
+      S.extra = { ...S.extra, ...zoneDefaults(), ...z.params, skinLift: lift, skinGuard: Math.max(S.extra.skinGuard || 0, 0.7) };
       S.base = { look: clone(S.look), extra: { ...S.extra } }; S.strength = 1; S.fit = null;
       await fitToShot(di >= 0 ? (S.smartDirs[di] || {}).allows : null);
       S.recipe = { name: g.title, presetId: null }; S.suggOn = i; S.suggZ = z; S.view = 'split'; S.dockHidden = false; stageCache.key = ''; S.focusSg = i; render();
@@ -716,6 +761,7 @@ export async function startApp(host, root) {
     return `<div class="card ctx"><div class="k">On the timeline</div>${shown.map(l => `<p class="small">${l}</p>`).join('')}
       ${tips.map(([key, why, label]) => `<div class="row wrap"><span class="small grow">${esc(why)}</span><button data-suggest="${key}">${esc(label)}</button></div>`).join('')}</div>`;
   }
+  const saysOf = f => (f || []).slice(0, 2).map(x => x.say).join('; and ');
   const fmtT = sec => { const m = Math.floor(sec / 60), x = Math.floor(sec % 60); return `${m}:${String(x).padStart(2, '0')}`; };
   // Where Apply puts the look. Counts come from the timeline; options with nothing to apply to are greyed out.
   /** What Apply will really do, in the button's own words. */

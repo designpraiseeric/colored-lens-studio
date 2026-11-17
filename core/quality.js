@@ -261,6 +261,9 @@ export function scaleLook(look, extra, k, GRADE0, fullGrade) {
   for (const key of ['grainK', 'halK', 'diffK', 'vigK']) if (typeof B[key] === 'number') G[key] = B[key] * Math.min(1.35, k);
   X.ambAmt = Math.min(1, (extra.ambAmt || 0) * k);
   for (let n = 1; n <= 8; n++) { const a = extra[`z${n}Amt`] || 0; if (a > 0) X[`z${n}Amt`] = Math.min(1, a * k); }
+  // "Lift the face" is part of the direction like everything else, so Strength scales it too. It did not, which left
+  // the fitter unable to bring down the one move most likely to be asked of a dark face.
+  if (extra.skinLift) X.skinLift = extra.skinLift * Math.min(1, k);
   return { look: L, extra: X };
 }
 
@@ -277,15 +280,16 @@ export function fitStrength(src, build, opts = {}) {
   // a frame already sized for the job — the panel uses the 240px preview frame.
   const skin = opts.skin;
   const check = k => faults(gradeReport(src, renderWith(src, build(k)), { skin }), { allows: opts.allows });
-  if (!check(1).length) return { k: 1, fitted: false, suits: true, faults: [] };
+  const full = check(1);
+  if (!full.length) return { k: 1, fitted: false, suits: true, faults: [], full };
   const atFloor = check(floor);
   // Some looks simply do not suit some shots. Dialling one down to nothing to force it through would be a lie; the
   // editor is told instead, the same way the panel already warns when a look lands brighter than its neighbours.
-  if (atFloor.length) return { k: floor, fitted: true, suits: false, faults: atFloor };
+  if (atFloor.length) return { k: floor, fitted: true, suits: false, faults: atFloor, full };
   let lo = floor, hi = 1;
   for (let i = 0; i < tries; i++) { const mid = (lo + hi) / 2; if (!check(mid).length) lo = mid; else hi = mid; }
   const k = Math.round(lo * 100) / 100;
-  return { k, fitted: true, suits: true, faults: check(k) };
+  return { k, fitted: true, suits: true, faults: check(k), full };
 }
 
 /** Render a frame through a pixel function. Kept here so fitStrength has no host or test dependency. */

@@ -141,13 +141,34 @@ export function pickDirections(intent, ctx, n = 5) {
  */
 const TWEAK_NAMES = { exp: 'exposure', con: 'contrast', sat: 'saturation', vib: 'vibrance', temp: 'temperature', tint: 'tint', hi: 'highlights', sh: 'shadows', bk: 'blacks', wh: 'whites',
   lutMix: 'colour look strength', grainK: 'grain', halK: 'halation', diffK: 'diffusion glow', vigK: 'vignette', skinGuard: 'Skin Guard' };
+/**
+ * Exposure is the whole picture. Asked to fix "the face is underexposed", a model reaches for it — on 17 Nov it asked
+ * for +1.2 stops on a dark face in front of a bright wall, which blew 31% of the picture to white and lifted her
+ * highlights five times more than her shadows. No strength fixes that: the fitter could only refuse it.
+ * So beyond a small amount, a positive exposure push on a shot with a dark face is handed to skinLift, which lifts
+ * the face's shadows by skin weight and leaves the wall alone. The face gets about the brightening that was asked for
+ * (L scales with the cube root of linear light, so e stops is L·(2^(e/3) − 1)); the rest of the frame keeps its room.
+ */
+// None of it stays on the picture: measured on the founder's frame, even 0.15 stops blew 5% of a wall that was already
+// at the ceiling, while the same brightening through skinLift blew nothing.
+export const EXP_CAP_FACE = 0;
+export function routeExposure(tweaks, skin) {
+  const t = { ...(tweaks || {}) }, e = +t.exp || 0;
+  const f = skin && skin.found && skin.faces && skin.faces.length ? skin.faces[Math.max(0, Math.min(skin.lead || 0, skin.faces.length - 1))] : null;
+  if (!(e > EXP_CAP_FACE) || !f || !(f.L < 0.6)) return { tweaks: t, lift: 0, moved: 0 };
+  const lift = Math.min(0.25, f.L * (Math.pow(2, (e - EXP_CAP_FACE) / 3) - 1));
+  t.exp = EXP_CAP_FACE; return { tweaks: t, lift: +lift.toFixed(4), moved: +(e - EXP_CAP_FACE).toFixed(2) };
+}
 export function directionsFromPicks(picks, intent, ctx) {
   return picks.map(p => {
     const r = RECIPES.find(x => x.id === p.recipe); if (!r) return null;
     const sh = shape(r, intent, { ...ctx, skinFound: ctx.skin && ctx.skin.found }), G = { ...sh.G }, extra = { ...sh.extra };
-    for (const [k, v] of Object.entries(p.tweaks || {})) { if (k === 'skinGuard') Object.assign(extra, { skinGuard: v, skinHue: extra.skinHue ?? 0.8, skinDensity: extra.skinDensity ?? 0.7, skinLight: extra.skinLight ?? 0.5 }); else G[k] = v; }
+    const ex = routeExposure(p.tweaks, ctx.skin), notes = [];
+    if (ex.lift > 0) { extra.skinLift = Math.max(extra.skinLift || 0, ex.lift);
+      notes.push(`The AI asked for ${(+p.tweaks.exp).toFixed(2)} stops of exposure to brighten the face. That much on the whole picture blows what is already bright, so it went to “Lift the face” instead.`); }
+    for (const [k, v] of Object.entries(ex.tweaks)) { if (k === 'skinGuard') Object.assign(extra, { skinGuard: v, skinHue: extra.skinHue ?? 0.8, skinDensity: extra.skinDensity ?? 0.7, skinLight: extra.skinLight ?? 0.5 }); else G[k] = v; }
     return { id: r.id, name: r.name, line: p.why || r.line, kind: 'smart', pal: r.pal, hues: r.hues, feel: r.feel, smartWhy: p.why,
-      look: { L: 'L1', O: 'O1', H: 'H0', A: '2.39', ...r.look, G: fullGrade(G) }, extra, notes: Object.keys(p.tweaks || {}).length ? [`Adjusted for this frame: ${Object.entries(p.tweaks).map(([k, v]) => `${TWEAK_NAMES[k] || k} ${+v.toFixed(2)}`).join(', ')}.`] : [] };
+      look: { L: 'L1', O: 'O1', H: 'H0', A: '2.39', ...r.look, G: fullGrade(G) }, extra, notes: [...(Object.keys(ex.tweaks).length ? [`Adjusted for this frame: ${Object.entries(ex.tweaks).map(([k, v]) => `${TWEAK_NAMES[k] || k} ${+v.toFixed(2)}`).join(', ')}.`] : []), ...notes] };
   }).filter(Boolean);
 }
 

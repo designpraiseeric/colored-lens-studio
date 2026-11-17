@@ -79,3 +79,62 @@ test('no look gains a new fault against the recorded baseline', () => {
   if (fixed.length) console.log(`\n  ${fixed.length} fault(s) fixed since the baseline. Lower it: node scratch/quality_report.mjs --write\n  ` + fixed.join('\n  '));
   assert.equal(grew.length, 0, 'looks got worse:\n  ' + grew.join('\n  '));
 });
+
+// ---------------------------------------------------------------------------------------------------------------
+// 17 Nov 2026, evening, on 0.13.0 in the founder's Premiere: two AI suggestions with different palettes were both
+// refused by the fitter at every strength. Cause: asked to brighten an underexposed face, the model sent +1.2 stops
+// of whole-frame exposure. On a dark face in front of a bright wall that blew 31% of the picture and lifted her
+// highlights five times more than her shadows. These pin the four fixes. The founder's frame is not committed (it
+// is his footage of a real person); a public dark-skin frame with its background pushed to a bright wall stands in.
+import { directionsFromPicks, routeExposure } from '../core/directions.js';
+import { scaleLook, fitStrength } from '../core/quality.js';
+import { zonesFor } from '../core/smart.js';
+import { GRADE0, fullGrade } from '../core/look.js';
+
+/** A dark face against a near-white wall: the shot that exposure cannot fix. */
+function darkFaceBrightWall() {
+  const f = load('aut-barry-jenkins.jpg'), skin = checkSkin(f), lead = skin.faces[skin.lead || 0];
+  const [x0, y0, x1, y1] = lead.box, out = { w: f.w, h: f.h, data: new Uint8ClampedArray(f.data) };
+  for (let y = 0; y < f.h; y++) for (let x = 0; x < f.w; x++) { const inBox = x >= x0 * f.w && x < x1 * f.w && y >= y0 * f.h && y < y1 * f.h;
+    if (inBox) continue; const i = (y * f.w + x) * 4; const t = 0.85; // a warm off-white wall, most of the way to the ceiling
+    out.data[i] = Math.round(out.data[i] * (1 - t) + 240 * t); out.data[i + 1] = Math.round(out.data[i + 1] * (1 - t) + 236 * t); out.data[i + 2] = Math.round(out.data[i + 2] * (1 - t) + 228 * t); }
+  return out;
+}
+
+test('a request to brighten a dark face goes to the face, not to the whole picture', () => {
+  const frame = darkFaceBrightWall(), skin = checkSkin(frame);
+  assert.ok(skin.found, 'the stand-in needs its face');
+  const r = routeExposure({ exp: 1.2, con: 1.05 }, skin);
+  assert.equal(r.tweaks.exp, 0, 'no positive exposure is left on the picture');
+  assert.equal(r.tweaks.con, 1.05, 'other tweaks pass through untouched');
+  assert.ok(r.lift > 0.05 && r.lift <= 0.25, `the face gets the brightening instead (lift ${r.lift})`);
+  assert.equal(routeExposure({ exp: -0.4 }, skin).tweaks.exp, -0.4, 'darkening is not touched');
+  assert.equal(routeExposure({ exp: 0.8 }, { found: false }).tweaks.exp, 0.8, 'with no face there is nothing to route to');
+
+  const [d] = directionsFromPicks([{ recipe: 'gentle-film', tweaks: { exp: 1.2 } }], {}, { skin });
+  assert.equal(d.look.G.exp, 0); assert.ok(d.extra.skinLift > 0.05);
+  const build = k => { const s = scaleLook(d.look, { ...SKIN_GUARD, ...d.extra }, k, GRADE0, fullGrade); return makePixelFn(s.look, cat, luts, { keepExposure: true, extra: s.extra }); };
+  const fit = fitStrength(frame, build, { skin, allows: RECIPES.find(x => x.id === 'gentle-film').allows });
+  assert.ok(fit.suits, `it must suit the shot now: ${verdict(fit.faults)}`);
+  const rep = gradeReport(frame, render(frame, build(fit.k)), { skin });
+  assert.ok(rep.blownAdded <= BAR.blownAdded, `the wall keeps its room (blown +${rep.blownAdded.toFixed(3)})`);
+  assert.ok(rep.face.after.p50 - rep.face.before.p50 > 0.03, 'and the face does get brighter');
+
+  // the old path, for the record: the same request as exposure is refused at every strength
+  const [old] = directionsFromPicks([{ recipe: 'gentle-film', tweaks: { exp: 1.2 } }], {}, {});
+  const oldBuild = k => { const s = scaleLook(old.look, { ...SKIN_GUARD, ...old.extra }, k, GRADE0, fullGrade); return makePixelFn(s.look, cat, luts, { keepExposure: true, extra: s.extra }); };
+  assert.ok(old.look.G.exp > 1, 'without a face to route to, exposure is left as asked');
+  assert.ok(faults(gradeReport(frame, render(frame, oldBuild(1)), { skin })).length, 'and on this shot that damages it');
+});
+
+test('Strength scales the face lift, so the fitter can bring it down', () => {
+  const { extra } = scaleLook(lookOf(RECIPES[0]), { skinLift: 0.2, z7Amt: 0.8 }, 0.5, GRADE0, fullGrade);
+  assert.equal(extra.skinLift, 0.1); assert.equal(extra.z7Amt, 0.4);
+});
+
+test('a burned-in caption is not given a colour zone', () => {
+  const study = { items: [{ name: "Graphic text 'fact'", hex: '#f5c542' }, { name: 'Wall', hex: '#76655f' }] };
+  const z = zonesFor({ items: [{ item: "Graphic text 'fact'", colour: 'amber', hex: '#e89a3c' }, { item: 'Wall', colour: 'sienna', hex: '#a0522d' }] }, study);
+  assert.ok(z.skipped.some(s => /graphic text/i.test(s.item) && /own layer/.test(s.why)), 'the caption is skipped with a reason');
+  assert.ok(z.mapped.some(m => m.item === 'Wall'), 'the wall still gets its zone');
+});
