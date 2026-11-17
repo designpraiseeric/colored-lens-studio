@@ -34,7 +34,7 @@ export async function startApp(host, root) {
   const S = { tab: 'shot', back: 'shot', frame: null, meta: null, reading: null, skin: null, sample: null, shots: [],
     intent: normIntent(settings.get('intent', {})), seqId: '', ctx: null, lead: 0, neigh: [], scope: settings.get('scope', 'clip'), input: settings.get('input', 'rec709'),
     directions: [], chosen: -1, look: NEUTRAL_LOOK(), extra: { ...XDEF }, matte: false, recipe: { name: '', presetId: null }, view: 'split', wipe: 0.5,
-    guide: { view: 'home', step: 0, route: '' }, tour: null, simple: !!settings.get('simple', 1), layerOff: [], range: settings.get('range', 'shot'), study: null, sugg: [], suggOpen: -1, suggHow: -1, rangeInfo: null, ai: { busy: '', error: '', chat: [], none: false }, theme: settings.get('theme', 'bright'), moreQ: false, moreD: false, dockSize: settings.get('dockSize', 'M'), dockHidden: false, detached: false, smartDirs: [],
+    guide: { view: 'home', step: 0, route: '' }, tour: null, simple: !!settings.get('simple', 1), base: null, strength: 1, scanEvery: +settings.get('scanEvery', 5) || 5, selCount: 0, scanStop: false, scanning: false, scanAsk: null, scanPer: 0, layerOff: [], range: settings.get('range', 'shot'), study: null, sugg: [], suggOpen: -1, suggHow: -1, rangeInfo: null, ai: { busy: '', error: '', chat: [], none: false }, theme: settings.get('theme', 'bright'), moreQ: false, moreD: false, dockSize: settings.get('dockSize', 'M'), dockHidden: false, detached: false, smartDirs: [],
     smart: { cfg: (c => { if (c.geminiModel === 'gemini-2.5-flash') c.geminiModel = SMART0.geminiModel; return c; })({ ...SMART0, ...settings.get('smart', {}) }), turns: [], history: [], detect: null, using: '' }, refFrameStats: null, refName: '', adapt: settings.get('adapt', true), encQ: '', shownCode: '', confirmDel: '', busy: false, showSkin: false, showRefs: false };
   let PV = null, pvEl = null; // pvEl: the separate Preview panel's container, once it has been opened
   const up = new Updater(host, config.pagesBase);
@@ -119,6 +119,7 @@ export async function startApp(host, root) {
     // a clean read: our own look on this shot is switched off for the moment of the export
     // a new shot starts with every layer ticked; re-reading the same shot keeps the editor's ticks
     const key = S.ctx && S.ctx.subject ? `${S.ctx.subject.track}|${S.ctx.subject.name}|${S.ctx.subject.start}` : ''; if (key !== S.layerKey) { S.layerOff = []; S.layerKey = key; }
+    try { S.selCount = await (host.selectionCount ? host.selectionCount() : 0); } catch { S.selCount = 0; }
     const g = await host.grabFrame(undefined, { clean: true, hide: S.layerOff, onSlow: () => status('Premiere is still rendering this frame (heavy timelines take a while)…') }); S.frame = g.frame; S.meta = g; g.readWithout = S.layerOff.slice().sort(); S.sample = null; S.chosen = -1; S.lead = 0;
     S.study = null; S.sugg = []; S.suggOpen = S.suggHow = -1; S.rangeInfo = null; S.ai = { busy: '', error: '', chat: [], none: false };
     S.smartDirs = []; S.smart.turns = []; S.smart.history = [];
@@ -157,6 +158,22 @@ export async function startApp(host, root) {
   function choose(i) {
     const d = allDirs()[i]; if (!d) return; S.chosen = i; S.suggOn = -1; S.suggZ = null;
     S.look = clone(d.look); S.extra = { ...XDEF, ...d.extra }; S.matte = false; S.recipe = { name: d.name, presetId: null };
+    S.base = { look: clone(S.look), extra: { ...S.extra } }; S.strength = 1;
+  }
+  /**
+   * Scales a whole direction up or down in one move: how much of the film look is mixed in, how far the grade is
+   * pushed from neutral, and how strongly the colour zones move. 1 = as suggested.
+   */
+  function setStrength(k) {
+    const b = S.base; if (!b) return; S.strength = k;
+    const L = clone(b.look), X = { ...b.extra }, G = L.G, B = fullGrade(b.look.G);
+    G.lutMix = Math.min(1, (B.lutMix == null ? 1 : B.lutMix) * k);
+    for (const key of ['exp', 'con', 'sat', 'vib', 'temp', 'tint', 'hi', 'sh', 'bk', 'wh', 'bri', 'gam']) {
+      const d0 = GRADE0[key]; if (typeof B[key] !== 'number' || typeof d0 !== 'number') continue; G[key] = d0 + (B[key] - d0) * k; }
+    for (const key of ['grainK', 'halK', 'diffK', 'vigK']) if (typeof B[key] === 'number') G[key] = B[key] * Math.min(1.35, k);
+    X.ambAmt = Math.min(1, (b.extra.ambAmt || 0) * k);
+    for (let n = 1; n <= 4; n++) { const a = b.extra[`z${n}Amt`] || 0; if (a > 0) X[`z${n}Amt`] = Math.min(1, a * k); }
+    S.look = L; S.extra = X;
   }
 
   // ---------- the stage: a large before / after preview with a wipe ----------
@@ -180,8 +197,9 @@ export async function startApp(host, root) {
         <div class="grow"></div>${S.detached ? '' : `<div class="segs" title="Preview size">${['S', 'M', 'L'].map(z => seg(z, z, S.dockSize === z, 'data-dsize')).join('')}</div>`}</div>
       <div class="row tight">${host.openPreviewPanel ? `<button id="dockPop" class="small" title="${S.detached ? 'Put the preview back in the Colored Lens panel' : 'Open the preview as its own panel, to dock anywhere'}">${S.detached ? 'Back to panel' : 'Pop out'}</button>` : ''}${S.detached ? '' : '<button id="dockHide" class="small" title="Hide the preview">Hide</button>'}</div>`;
     const rest = `${S.view === 'split' ? sliderHTML({ id: 'wipe', label: 'Wipe', min: 0, max: 1, step: 0.01, value: S.wipe, def: 0.5 }) : ''}
+      ${d && S.base ? sliderHTML({ id: 'strength', label: 'Strength', min: 0, max: 1.5, step: 0.05, value: S.strength == null ? 1 : S.strength, def: 1 }) : ''}
       ${d ? `<div class="small">Previewing <b>${esc(S.suggOn >= 0 && S.sugg[S.suggOn] ? S.sugg[S.suggOn].title : d.name)}</b> <span class="dim">(colour, grain and vignette; halation and glow show on the clip)</span></div>
-        ${scopeRow()}<div class="row wrap"><button class="primary" data-dapply="${S.chosen}">${S.scope === 'clip' ? 'Apply to selected clips' : 'Apply'}</button><button data-dtweak="${S.chosen}">Tweak</button><button data-dsave="${S.chosen}">Save as preset</button><button id="dclear">Back to the original</button></div>`
+        ${scopeRow()}<div class="row wrap"><button class="primary" data-dapply="${S.chosen}">${esc(applyLabel())}</button><button data-dtweak="${S.chosen}">Tweak</button><button data-dsave="${S.chosen}">Save as preset</button><button id="dclear">Back to the original</button></div>`
         : `<div class="small dim">${shot ? 'Click a face in the picture to check its skin. Pick a direction below to preview it here.' : 'Live preview: colour, grain and vignette. Halation and diffusion glow show on the clip.'}</div>`}`;
     return side ? `<div class="dockrow">${stage}<div class="grow dockside">${controls}${rest}</div></div>` : stage + controls + rest;
   }
@@ -206,7 +224,7 @@ export async function startApp(host, root) {
       : busy('Opening the preview panel', async () => { await host.openPreviewPanel(); if (pvEl) { S.detached = true; render(); } else toast('Find it under Window › UXP Plugins › Colored Lens Preview'); });
     dock.querySelectorAll('[data-view]').forEach(b => b.onclick = () => { S.view = b.dataset.view; renderDock(); });
     dock.querySelectorAll('[data-dsize]').forEach(b => b.onclick = () => { S.dockSize = b.dataset.dsize; settings.set('dockSize', S.dockSize); renderDock(); });
-    wireSliders(dock, (id, v) => { if (id === 'wipe') { S.wipe = v; placeWipe(); } });
+    wireSliders(dock, (id, v) => { if (id === 'wipe') { S.wipe = v; placeWipe(); } else if (id === 'strength') { setStrength(v); drawStage(); } });
     wireActions(dock);
     // On the picture itself: drag to move the wipe; a plain click checks the skin at that point.
     const st = $('#stage', dock), canSample = S.tab === 'shot' || S.detached;
@@ -523,6 +541,7 @@ export async function startApp(host, root) {
       // the Lukuluku look for the overall grade (a clean pass-through when the AI named none), then one colour zone per item
       const di = S.smartDirs.findIndex(d => d.id === g.recipe); if (di >= 0) choose(di); else { S.chosen = -1; S.look = NEUTRAL_LOOK(); S.extra = { ...XDEF }; }
       const z = zonesFor(g, S.study, S.reading ? S.reading.swatches : [], S.frame ? downsample(S.frame, 160) : null); S.extra = { ...S.extra, ...zoneDefaults(), ...z.params, skinGuard: Math.max(S.extra.skinGuard || 0, 0.7) };
+      S.base = { look: clone(S.look), extra: { ...S.extra } }; S.strength = 1;
       S.recipe = { name: g.title, presetId: null }; S.suggOn = i; S.suggZ = z; S.view = 'split'; S.dockHidden = false; stageCache.key = ''; S.focusSg = i; render();
       toast(z.mapped.length || z.params.ambAmt ? `“${g.title}” is on your preview: drag across the picture to compare` : 'Only the overall look could be previewed for this one; see “What is left to do by hand”'); }));
   }
@@ -549,6 +568,10 @@ export async function startApp(host, root) {
   }
   const fmtT = sec => { const m = Math.floor(sec / 60), x = Math.floor(sec % 60); return `${m}:${String(x).padStart(2, '0')}`; };
   // Where Apply puts the look. Counts come from the timeline; options with nothing to apply to are greyed out.
+  /** What Apply will really do, in the button's own words. */
+  function applyLabel() { const n = S.selCount || 0;
+    if (S.scope !== 'clip') return 'Apply';
+    return n > 1 ? `Apply to ${n} selected clips` : n === 1 ? 'Apply to the selected clip' : 'Apply to the shot under the playhead'; }
   function scopeRow() {
     const c = S.ctx && S.ctx.counts; if (!c) return '';
     const opts = [['clip', 'This clip', 1], ['source', `Same source${c.source > 1 ? ` (${c.source})` : ''}`, c.source], ['scene', `Whole scene${c.scene ? ` (${c.scene})` : ''}`, c.scene], ['adjust', 'Adjustment layer', c.adjust]];
@@ -596,7 +619,7 @@ export async function startApp(host, root) {
           <p class="small">${esc(S.simple && d.kind !== 'smart' && d.why.lines[0].includes(': ') ? d.why.lines[0].slice(d.why.lines[0].indexOf(': ') + 2).replace(/^./, c => c.toUpperCase()) : d.why.lines[0])}</p>${S.simple ? (d.cont ? `<p class="small cont">${esc(d.cont)}</p>` : '') : `${d.why.lines[1] ? `<p class="small dim">${esc(d.why.lines[1])}</p>` : ''}
           <p class="small">${esc([...d.effect, ...d.notes].join(' '))}</p>${d.cont ? `<p class="small cont">${esc(d.cont)}</p>` : ''}
           <div class="small dim mono">${esc(lookCode(d.look, false))}</div>`}
-          ${S.chosen === i ? `<div class="row wrap"><button class="primary" data-dapply="${i}">Apply to selected clips</button><button data-dtweak="${i}">Tweak</button><button data-dsave="${i}">Save as preset</button>${d.why.hue ? `<button data-more="${esc(d.why.hue.name.split(' / ')[0])}">About ${esc(d.why.hue.name.split(' / ')[0])}</button>` : ''}</div>` : ''}
+          ${S.chosen === i ? `<div class="row wrap"><button class="primary" data-dapply="${i}">${esc(applyLabel())}</button><button data-dtweak="${i}">Tweak</button><button data-dsave="${i}">Save as preset</button>${d.why.hue ? `<button data-more="${esc(d.why.hue.name.split(' / ')[0])}">About ${esc(d.why.hue.name.split(' / ')[0])}</button>` : ''}</div>` : ''}
         </div></div>`).join('')}
       ${S.simple && !S.moreD && allDirs().length > Math.max(3, S.smartDirs.length + 2) ? `<div class="more" id="moreD">Show ${allDirs().length - Math.max(3, S.smartDirs.length + 2)} more directions ›</div>` : ''}`;
   }
@@ -616,14 +639,21 @@ export async function startApp(host, root) {
   function renderScene(body) {
     const sh = S.shots;
     body.innerHTML = `
+      ${sh.length ? '' : `<div class="card"><div class="k">A colour script of your edit</div><p class="small">See how colour moves across the whole sequence, and whether it matches the feeling you chose.</p>
+        <p class="small dim">Two ways in: <b>Scan the sequence</b> reads a frame every few seconds by itself; or park on a shot, tag it and press <b>Add this shot</b> to build the script by hand as you edit (those are saved as markers, so they travel with the project).</p></div>`}
       <div class="row"><input id="tags" placeholder="Tags for this shot: character, place, act…"><button id="add" class="primary">Add this shot</button></div>
-      <div class="row wrap"><button id="load">Load tagged shots from markers</button><button id="scan">Scan the sequence</button><span class="row tight"><span class="small dim">every</span><input id="every" type="number" min="1" value="5" style="width:44px"><span class="small dim">s</span></span></div>
+      ${S.scanAsk ? `<div class="card"><div class="k">That will take a while</div><p class="small">This sequence needs <b>${S.scanAsk.n}</b> frames at one every ${S.scanAsk.every} s, and this timeline takes about ${S.scanAsk.per} s a frame — roughly <b>${S.scanAsk.mins} minutes</b>.</p>
+        <p class="small dim">Raise the seconds between frames for a quicker, coarser script. ${Math.max(5, Math.ceil(S.scanAsk.every * S.scanAsk.mins / 4 / 5) * 5)} s would take about a quarter of the time.</p>
+        <div class="row wrap"><button id="scanGo" class="primary">Go on anyway</button><button id="scanCancel">Keep just this one frame</button></div></div>` : ''}
+      ${S.scanning ? `<div class="row"><button id="scanStop">Stop scanning</button></div>` : ''}
+      <div class="row wrap"><button id="load">Load tagged shots from markers</button><button id="scan">${S.shots.length ? 'Scan again' : 'Scan the sequence'}</button><span class="row tight"><span class="small dim">every</span><input id="every" type="number" min="1" value="${S.scanEvery}" style="width:44px"><span class="small dim">s</span></span></div>
       ${sh.length ? `<img class="strip" src="${pngDataUrl(renderStrip(sh))}"><div class="row wrap"><button id="png">Save strip (PNG)</button><button id="csv">Save as CSV</button><button id="clear">Clear</button></div>
-        <div class="card"><div class="k">What the sequence says</div>${readSequence(sh, enc(), S.intent).map(o => `<p><b>${esc(o.n)}.</b> ${esc(o.why)}</p>${o.entry ? `<p class="small dim">${esc(o.entry.t)}</p>` : ''}`).join('')}
+        <div class="card"><div class="k">What the sequence says</div><p class="small dim">From ${sh.length} frame${sh.length === 1 ? '' : 's'} across the sequence${sh.length < 8 ? ' — too few for a confident reading; scan with a shorter gap for a fuller picture' : ''}.</p>${readSequence(sh, enc(), S.intent).map(o => `<p><b>${esc(o.n)}.</b> ${esc(o.why)}</p>${o.entry ? `<p class="small dim">${esc(o.entry.t)}</p>` : ''}`).join('')}
           ${!answers(S.intent.genre).length ? '<p class="small dim">Set what the project is in Shot to get story-level readings (motifs, leitmotifs) for narrative work.</p>' : ''}</div>
-        <div class="shots">${sh.map((s, i) => `<div class="shot"><span class="tc">${esc(s.tc)}</span>${swatchBar(s.sw)}<span class="small">${esc(cap(s.hue))} · ${esc((enc().PALS.find(p => p.id === s.pal) || {}).n || '')}${s.tags.length ? ' · ' + esc(s.tags.join(', ')) : ''}</span><button data-del="${i}">✕</button></div>`).join('')}</div>`
+        <div class="shots">${sh.map((s, i) => `<div class="shot">${s.thumb ? `<img class="sthumb" src="${s.thumb}">` : ''}<span class="tc">${esc(s.tc)}</span>${swatchBar(s.sw)}<span class="small">${esc(cap(s.hue))} · ${esc((enc().PALS.find(p => p.id === s.pal) || {}).n || '')}${s.tags.length ? ' · ' + esc(s.tags.join(', ')) : ''}</span><button data-del="${i}">✕</button></div>`).join('')}</div>`
         : '<p class="dim">Build a colour script as you edit: add shots (saved as markers in your sequence, so they travel with the project) or scan the whole sequence, then see how colour moves across it and whether it matches the feeling you set.</p>'}`;
     const addShot = async (g, tags) => { const rd = readFrame(g.frame, enc(), null); const rec = shotRecord(rd, { seconds: g.seconds, timecode: g.timecode, name: g.clipName, tags });
+      try { rec.thumb = pngDataUrl(downsample(g.frame, 72)); } catch { /* a thumbnail is a nicety */ }
       S.shots.push(rec); S.shots.sort((a, b) => a.t - b.t); return rec; };
     $('#add', body).onclick = () => busy('Adding shot', async () => {
       const g = await host.grabFrame(), tags = $('#tags', body).value.split(',').map(t => t.trim()).filter(Boolean), rec = await addShot(g, tags);
@@ -631,15 +661,38 @@ export async function startApp(host, root) {
       render(); });
     $('#load', body).onclick = () => busy('Reading markers', async () => { const ms = await host.listMarkers(); const got = ms.map(m => decodeShot(m.note)).filter(Boolean);
       S.shots = got.sort((a, b) => a.t - b.t); toast(`${got.length} tagged shots loaded`); render(); });
-    $('#scan', body).onclick = () => busy('Scanning', async () => {
-      const every = Math.max(1, +$('#every', body).value || 5), dur = await host.sequenceDuration(); S.shots = [];
-      for (let t = 0; t < dur; t += every) { status(`Scanning ${Math.round(t)} / ${Math.round(dur)} s`); const g = await host.grabFrame(t); await addShot(g, []); }
-      render(); });
+    $('#every', body).onchange = e => { S.scanEvery = Math.max(1, +e.target.value || 5); settings.set('scanEvery', S.scanEvery); render(); };
+    $('#scan', body).onclick = () => startScan(0);
+    if ($('#scanGo', body)) $('#scanGo', body).onclick = () => startScan(1);
+    if ($('#scanCancel', body)) $('#scanCancel', body).onclick = () => { S.scanAsk = null; render(); };
+    if ($('#scanStop', body)) $('#scanStop', body).onclick = () => { S.scanStop = true; toast('Stopping after this frame'); };
     if (!sh.length) return;
     $('#png', body).onclick = () => host.saveFile('color_script.png', encodePNG(renderStrip(sh, { colW: 24, height: 200 })), { title: 'Save the color script' }).then(p => p && toast('Saved ' + p));
     $('#csv', body).onclick = () => host.saveFile('color_script.csv', scriptCSV(sh), { title: 'Save the color script' }).then(p => p && toast('Saved ' + p));
     $('#clear', body).onclick = () => { S.shots = []; render(); };
     body.querySelectorAll('[data-del]').forEach(b => b.onclick = () => { S.shots.splice(+b.dataset.del, 1); render(); });
+  }
+
+  /**
+   * Scans the sequence into a colour script. The first frame is read on its own to learn how slow this timeline
+   * is: a heavy sequence can take 45 s a frame, so an unwarned scan could run for an hour.
+   */
+  function startScan(from) {
+    busy('Scanning', async () => {
+      const every = S.scanEvery, dur = await host.sequenceDuration(), n = Math.max(1, Math.ceil(dur / every));
+      S.scanStop = false; S.scanAsk = null;
+      if (!from) { S.shots = []; const t0 = Date.now(); status('Reading the first frame, to see how fast this timeline is…');
+        await addShot(await host.grabFrame(0), []); S.scanPer = Math.max(1, (Date.now() - t0) / 1000);
+        const mins = Math.round((S.scanPer * (n - 1)) / 60);
+        if (n > 4 && mins >= 2) { S.scanAsk = { n, mins, per: Math.round(S.scanPer), every }; status(); return render(); }
+      }
+      const per = S.scanPer || 2; S.scanning = true;
+      for (let i = Math.max(1, S.shots.length); i < n && !S.scanStop; i++) {
+        status(`Frame ${i + 1} of ${n} · about ${Math.max(1, Math.round((per * (n - i)) / 60))} min left · press Stop to keep what you have`);
+        await addShot(await host.grabFrame(i * every), []); if (i % 3 === 0) render();
+      }
+      S.scanning = false; S.scanStop = false; status(); render();
+    });
   }
 
   // TWEAK -----------------------------------------------------------------
@@ -668,7 +721,7 @@ export async function startApp(host, root) {
       ${S.frame ? `<div class="card"><div class="row tight"><div class="k grow">${from ? `Tweaking ${from}` : 'Your own look'}</div><div class="more" id="tglAll">${simple ? 'All controls ›' : S.simple ? '‹ Just the useful ones' : ''}</div></div>
         <div class="row"><input id="rname" placeholder="Name this look" value="${esc(S.recipe.name)}"></div>
         ${editing ? `<p class="small dim">Editing preset “${esc(editing.name)}”.</p>` : ''}
-        ${scopeRow()}<div class="row wrap"><button id="apply" class="primary">${S.scope === 'clip' ? 'Apply to selected clips' : 'Apply'}</button>${editing ? '<button id="update">Update preset</button>' : ''}<button id="saveNew">${editing ? 'Save as new preset' : 'Save as preset'}</button><button id="reset">Start from neutral</button></div></div>` : ''}
+        ${scopeRow()}<div class="row wrap"><button id="apply" class="primary">${esc(applyLabel())}</button>${editing ? '<button id="update">Update preset</button>' : ''}<button id="saveNew">${editing ? 'Save as new preset' : 'Save as preset'}</button><button id="reset">Start from neutral</button></div></div>` : ''}
 
       ${simple ? `<div class="card"><div class="row tight"><div class="k grow">The film look</div><div class="more" id="tglAll2">Change it ›</div></div>
           <p class="small">${esc([(C.color[L.C] || {}).name, (C.medium[L.M] || {}).name, (C.lens[L.K] || {}).short, (C.diffusion[L.D] || {}).short].filter(x => x && !/^(No |Modern|Clean digital)/.test(x)).join(' · ') || 'Neutral, no film character')}</p>
@@ -732,17 +785,21 @@ export async function startApp(host, root) {
   function renderPresets(body) {
     const list = listPresets();
     body.innerHTML = `
-      <div class="row wrap"><div role="button" tabindex="0" class="chip ${S.adapt ? 'on' : ''}" id="adapt">${S.adapt ? '✓ ' : ''}Adapt to each shot: ${S.adapt ? 'on' : 'off'}</div></div>
-      <p class="small dim">${S.adapt ? 'Applying a preset first matches the shot under the playhead to the shot the preset was made on (exposure, contrast, balance), so the look lands the same way. Read the frame in Shot first.' : 'Presets are applied exactly as saved.'}</p>
+      ${list.length ? '' : `<div class="card"><div class="k">Your saved looks live here</div><p class="small">A preset keeps the whole look — the film character, the grade, the colour zones and Skin Guard — together with what the shot was for, so you can put it on other shots and other projects.</p>
+        <p class="small dim">To make one: read a frame in <b>Shot</b>, pick a direction or build a look in <b>Tweak</b>, then press <b>Save as preset</b>.</p>
+        <div class="row"><button id="pshot" class="primary">Go to Shot</button></div></div>`}
+      ${list.length ? `<div class="row wrap"><div role="button" tabindex="0" class="chip ${S.adapt ? 'on' : ''}" id="adapt">${S.adapt ? '✓ ' : ''}Adapt to each shot: ${S.adapt ? 'on' : 'off'}</div></div>
+      <p class="small dim">${S.adapt ? 'A preset is matched to the shot under the playhead first (exposure, contrast, balance), so the look lands the same way it did on the shot it was made on. Read the frame in Shot first.' : 'Presets are applied exactly as saved.'}</p>` : ''}
       ${S.shownCode ? `<div class="card"><div class="k">Preset code</div><p class="small dim">Copy this and paste it into Colored Lens on another machine.</p><textarea id="codeOut" rows="3" readonly>${esc(S.shownCode)}</textarea><div class="row"><button id="hideCode">Done</button></div></div>` : ''}
       ${list.length ? list.map(p => `<div class="preset">${p.thumb ? `<img src="${p.thumb}">` : '<div class="nothumb"></div>'}<div class="dtext">
           <b>${esc(p.name)}</b><div class="small dim">${esc(intentText(p.intent || {}) || 'No intent recorded')}${p.from ? ' · made on ' + esc(p.from) : ''}</div>
           <div class="small dim mono">${esc(lookCode(p.look, p.matte))}${p.input === 'logc3' ? ' · log footage' : ''}${p.extra && p.extra.skinGuard ? ' · Skin Guard ' + p.extra.skinGuard : ''}</div>
           ${p.intent && p.intent.note ? `<p class="small">${esc(p.intent.note)}</p>` : ''}
-          <div class="row wrap"><button class="primary" data-papply="${p.id}">Apply to selected clips</button><button data-popen="${p.id}">Open in Tweak</button><button data-pcode="${p.id}">Share code</button><button data-pdup="${p.id}">Duplicate</button><button data-pdel="${p.id}">${S.confirmDel === p.id ? 'Confirm delete' : 'Delete'}</button></div>
+          <div class="row wrap"><button class="primary" data-papply="${p.id}">${esc(applyLabel())}</button><button data-popen="${p.id}">Open in Tweak</button><button data-pcode="${p.id}">Share code</button><button data-pdup="${p.id}">Duplicate</button><button data-pdel="${p.id}">${S.confirmDel === p.id ? 'Confirm delete' : 'Delete'}</button></div>
         </div></div>`).join('') : '<p class="dim">No presets yet. Pick a direction in Shot or build a look in Tweak, then save it. Presets keep the look, the colour configuration, Skin Guard and what the shot was for, so you can reuse them on other scenes.</p>'}
       <div class="card"><div class="k">Add a preset from a code</div><div class="row"><input id="pcode" placeholder="Paste a preset code (CLP1:…)"><button id="pimport">Add</button></div></div>`;
-    $('#adapt', body).onclick = () => { S.adapt = !S.adapt; settings.set('adapt', S.adapt); render(); };
+    if ($('#pshot', body)) $('#pshot', body).onclick = () => go('shot');
+    if ($('#adapt', body)) $('#adapt', body).onclick = () => { S.adapt = !S.adapt; settings.set('adapt', S.adapt); render(); };
     if ($('#hideCode', body)) $('#hideCode', body).onclick = () => { S.shownCode = ''; render(); };
     const byId = id => listPresets().find(p => p.id === id);
     body.querySelectorAll('[data-papply]').forEach(b => b.onclick = () => busy('Applying', async () => { const p = byId(b.dataset.papply);

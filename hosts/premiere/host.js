@@ -282,6 +282,9 @@ const host = {
     const r = await fetch(url, { method: 'POST', headers, body }); return { status: r.status, text: await r.text() }; },
   async get(url, headers = {}) { if (host.bridge && /^http:\/\/(localhost|127\.0\.0\.1)/.test(url)) { const r = await host.bridge({ type: 'http', method: 'GET', url, headers }, 6000); return { status: r.status || 0, text: r.text || '' }; }
     const r = await fetch(url, { headers }); return { status: r.status, text: await r.text() }; },
+  /** How many clips the editor has selected, so the Apply button can say what it will really do. */
+  async selectionCount() { try { const seq = await (await project()).getActiveSequence(); if (!seq) return 0;
+    const sel = await seq.getSelection(); const items = sel && sel.getTrackItems ? await sel.getTrackItems() : null; return items ? items.length : 0; } catch { return 0; } },
   /** API keys for Smart mode live in UXP's secure storage (the OS keychain), not in plain settings. */
   secret: {
     // Secure storage hands back bytes (or, on some builds, text). Decoded by hand: TextDecoder is not in every UXP.

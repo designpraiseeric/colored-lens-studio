@@ -1,6 +1,15 @@
 # Release notes
 Each `## <version>` block becomes the text of the in-app update banner and the GitHub Release.
 
+## 0.9.1
+From a second stress test in Premiere Pro.
+- **Strength.** Every direction now has a Strength slider next to the wipe: push a look harder or pull it back without opening Tweak. Many looks are deliberately gentle and looked like nothing on a bright shot.
+- **Apply now says what it will really do.** It reads "Apply to the shot under the playhead" when nothing is selected, "Apply to the selected clip", or "Apply to 3 selected clips". Before it always said "Apply to selected clips", even when it was about to use the clip under the playhead.
+- **Scanning a sequence no longer runs for an hour without warning.** Colored Lens reads one frame first to see how slow your timeline is, then tells you how long the whole scan will take and lets you go on, stop, or widen the gap. There is a Stop button while it runs, and the seconds you set are remembered.
+- The colour script says how many frames it is based on, and warns when that is too few for a confident reading. Each shot in the list now has a thumbnail.
+- The Scene and Presets tabs open with how to get started, instead of a setting and a wall of explanation.
+- Encyclopedia pictures no longer come out squashed in Premiere Pro.
+
 ## 0.9.0
 The Tweak tab, rebuilt — and a bug that was throwing away the AI's suggestions.
 - **Fixed: "The AI did not return usable suggestions."** Colored Lens was discarding whole suggestions when the AI named an item slightly differently from its own list of the frame ("her skin" against "Woman's skin"). It now matches them properly.
