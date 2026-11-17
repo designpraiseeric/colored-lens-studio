@@ -1,6 +1,12 @@
 # Release notes
 Each `## <version>` block becomes the text of the in-app update banner and the GitHub Release.
 
+## 0.8.2
+More fixes from testing in Premiere Pro.
+- The preview now sits beside its controls and takes about a third of the panel at most, so there is room to read underneath (it was taking half the panel).
+- The AI no longer lists things that are not in your frame because of other moments in a nested sequence: for "This shot" it studies the frame alone, and a small local AI is never sent the extra moments.
+- When Google's free limit runs out, the message offers "Use the AI on this computer for now". The AI card always names the AI that is set now.
+
 ## 0.8.1
 Fixes from a full test in Premiere Pro.
 - The page no longer jumps or closes a suggestion when you press a button inside it; a suggestion opens and closes from its title only.

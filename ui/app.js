@@ -168,20 +168,22 @@ export async function startApp(host, root) {
     const seg = (id, n, on, attr) => `<div role="button" tabindex="0" class="seg ${on ? 'on' : ''}" ${attr}="${id}">${n}</div>`;
     if (S.dockHidden) return `<div class="row tight"><span class="small dim grow">Preview hidden</span><button id="dockShow" class="small">Show preview</button></div>`;
     const pvBox = S.detached && pvEl ? pvSize() : null;
-    const a = S.frame.w / S.frame.h, avail = Math.max(80, (pvBox ? pvBox.w : (root.clientWidth || 360)) - 26);
-    let h = pvBox ? Math.max(60, pvBox.h - (shot && S.chosen >= 0 ? 200 : 100)) : Math.min(DOCK_H[S.dockSize] || 220, Math.round((window.innerHeight || 800) * 0.42));
+    const a = S.frame.w / S.frame.h, panelW = pvBox ? pvBox.w : (root.clientWidth || 360), panelH = root.clientHeight || window.innerHeight || 800;
+    // In the main panel the picture sits beside its controls when there is room, and never takes more than about a
+    // third of the panel's height, so there is always space to read below it.
+    const side = !pvBox && panelW >= 430, avail = Math.max(80, (side ? Math.round(panelW * 0.5) : panelW) - 26);
+    let h = pvBox ? Math.max(60, pvBox.h - (shot && S.chosen >= 0 ? 200 : 100)) : Math.min(DOCK_H[S.dockSize] || 220, Math.round(panelH * (S.dockSize === 'L' ? 0.5 : S.dockSize === 'S' ? 0.2 : 0.32)));
     let w = Math.round(h * a); if (w > avail) { w = avail; h = Math.round(w / a); }
-    // Two stacked pictures: "before" underneath, "after" on top, clipped at the wipe. Dragging only moves the clip
-    // edge, so it is instant (re-encoding a picture on every mouse move made the wipe feel stuck).
-    return `<div id="stage" class="stage2 ${shot ? 'click' : ''}" data-w="${w}" style="width:${w}px;height:${h}px;">
-        <img id="stB" src="" style="width:${w}px;height:${h}px;"><div id="stClip" style="height:${h}px;"><img id="stA" src="" style="width:${w}px;height:${h}px;"></div><div id="stLine" style="height:${h}px;"><div id="stGrip"></div></div></div>
-      <div class="row tight"><div class="segs">${['before:Before', 'split:Split', 'after:After'].map(v => { const [id, n] = v.split(':'); return seg(id, n, S.view === id, 'data-view'); }).join('')}</div>
-        <div class="grow"></div>${S.detached ? '' : `<div class="segs" title="Preview size">${['S', 'M', 'L'].map(z => seg(z, z, S.dockSize === z, 'data-dsize')).join('')}</div>`}
-        ${host.openPreviewPanel ? `<button id="dockPop" class="small" title="${S.detached ? 'Put the preview back in the Colored Lens panel' : 'Open the preview as its own panel, to dock anywhere'}">${S.detached ? 'Back to panel' : 'Pop out'}</button>` : ''}${S.detached ? '' : '<button id="dockHide" class="small" title="Hide the preview">✕</button>'}</div>
-      ${S.view === 'split' ? sliderHTML({ id: 'wipe', label: 'Wipe', min: 0, max: 1, step: 0.01, value: S.wipe, def: 0.5 }) : ''}
+    const stage = `<div id="stage" class="stage2 ${shot ? 'click' : ''}" data-w="${w}" style="width:${w}px;height:${h}px;${side ? 'margin:0 12px 4px 0;flex:none;' : ''}">
+        <img id="stB" src="" style="width:${w}px;height:${h}px;"><div id="stClip" style="height:${h}px;"><img id="stA" src="" style="width:${w}px;height:${h}px;"></div><div id="stLine" style="height:${h}px;"><div id="stGrip"></div></div></div>`;
+    const controls = `<div class="row tight"><div class="segs">${['before:Before', 'split:Split', 'after:After'].map(v => { const [id, n] = v.split(':'); return seg(id, n, S.view === id, 'data-view'); }).join('')}</div>
+        <div class="grow"></div>${S.detached ? '' : `<div class="segs" title="Preview size">${['S', 'M', 'L'].map(z => seg(z, z, S.dockSize === z, 'data-dsize')).join('')}</div>`}</div>
+      <div class="row tight">${host.openPreviewPanel ? `<button id="dockPop" class="small" title="${S.detached ? 'Put the preview back in the Colored Lens panel' : 'Open the preview as its own panel, to dock anywhere'}">${S.detached ? 'Back to panel' : 'Pop out'}</button>` : ''}${S.detached ? '' : '<button id="dockHide" class="small" title="Hide the preview">Hide</button>'}</div>`;
+    const rest = `${S.view === 'split' ? sliderHTML({ id: 'wipe', label: 'Wipe', min: 0, max: 1, step: 0.01, value: S.wipe, def: 0.5 }) : ''}
       ${d ? `<div class="small">Previewing <b>${esc(S.suggOn >= 0 && S.sugg[S.suggOn] ? S.sugg[S.suggOn].title : d.name)}</b> <span class="dim">(colour, grain and vignette; halation and glow show on the clip)</span></div>
         ${scopeRow()}<div class="row wrap"><button class="primary" data-dapply="${S.chosen}">${S.scope === 'clip' ? 'Apply to selected clips' : 'Apply'}</button><button data-dtweak="${S.chosen}">Tweak</button><button data-dsave="${S.chosen}">Save as preset</button><button id="dclear">Back to the original</button></div>`
         : `<div class="small dim">${shot ? 'Click a face in the picture to check its skin. Pick a direction below to preview it here.' : 'Live preview: colour, grain and vignette. Halation and diffusion glow show on the clip.'}</div>`}`;
+    return side ? `<div class="dockrow">${stage}<div class="grow dockside">${controls}${rest}</div></div>` : stage + controls + rest;
   }
   // the Preview panel's real size (its own root node), re-checked while it is open so the picture follows a resize
   const pvSize = () => { const n = pvEl.parentNode || pvEl, r = n.getBoundingClientRect ? n.getBoundingClientRect() : {}; return { w: Math.round(r.width || n.clientWidth || 320), h: Math.round(r.height || n.clientHeight || 240) }; };
@@ -396,7 +398,7 @@ export async function startApp(host, root) {
   /** A few moments across the chosen range, as one contact-sheet picture plus a note per moment. */
   async function sampleRange() {
     const r = curRange(); if (!r || !host.clipContext) return null; if (S.rangeInfo && S.rangeInfo.id === r.id) return S.rangeInfo;
-    const info = { id: r.id, label: r.n, samples: [], sheet: null }; if (r.id === 'shot' && r.b - r.a < 4) return (S.rangeInfo = info);
+    const info = { id: r.id, label: r.n, samples: [], sheet: null }; if (r.id === 'shot') return (S.rangeInfo = info); // the frame itself stands for the shot
     const n = 4, frames = [], here = S.meta.seconds;
     for (let i = 0; i < n; i++) { const t = r.a + (r.b - r.a) * (i + 0.5) / n; if (here != null && Math.abs(t - here) < 0.4) continue;
       try { status(`Looking across ${r.n.toLowerCase()} (${i + 1} of ${n})…`); const f = downsample((await host.grabFrame(t)).frame, 256), st = frameStats(labPixels(f));
@@ -421,7 +423,7 @@ export async function startApp(host, root) {
     const a = { reading: S.reading, skin: S.skin, intent: S.intent, ctx: S.ctx, neigh: S.neigh, summary: frameSummary(S.reading, enc()), layers: scopeLayers(), range, vision, message, enc: enc(), lite, understanding: S.study, count: lite || S.ai.small || real.provider === 'ollama' || real.provider === 'openai' ? (S.ai.small ? 3 : 5) : 10 };
     status(kind === 'study' ? 'The AI is studying the frame…' : 'The AI is working out colour suggestions…');
     const text = await ask(real, { prompt: kind === 'study' ? buildStudy(a) : buildSuggest(a), system: kind === 'study' ? SYSTEM_STUDY : SYSTEM_SUGGEST, imageB64: toBase64(encodeJPEG(downsample(S.frame, 768), 84)), mime: 'image/jpeg',
-      images: range && range.sheet ? [toBase64(encodeJPEG(range.sheet, 80))] : [], history: S.smart.history }, httpPost, host.bridge);
+      images: range && range.sheet && !['ollama', 'openai'].includes(real.provider) ? [toBase64(encodeJPEG(range.sheet, 80))] : [], history: S.smart.history }, httpPost, host.bridge);
     return parseReply(text);
   }
   async function studyFrame(message) {
@@ -453,8 +455,8 @@ export async function startApp(host, root) {
     if (c.provider === 'off') return `<div class="card smart"><div class="row tight"><div class="k grow">The AI is switched off</div><button id="smSetup" class="small">Switch it on</button></div><p class="small dim">Colored Lens is working from its own rules only.</p></div>`;
     if (S.ai.none) return `<div class="card smart" id="aicard"><div class="k">Give Colored Lens its eyes</div><p class="small">Colored Lens is built around an AI that looks at your frame, names what is in it and suggests colours item by item. It is free, but this computer needs one to be set up first (about three minutes, once).</p>
       <div class="row wrap"><button id="aiSetup" class="primary">Set it up now</button><button id="aiRetry">Try again</button></div><p class="small dim">Until then you still get the quick looks below.</p></div>`;
-    return `<div class="card smart" id="aicard"><div class="row tight"><div class="k grow">What the AI sees <span class="dim">· ${esc(S.smart.using || provName(c.provider))}</span></div><button id="smSetup" class="small">AI settings</button></div>
-      ${u && /ollama|local/i.test(S.smart.using || '') ? '<p class="small dim">A small AI on this computer is doing this. It is private, but its colour suggestions are simpler and it can make mistakes; Gemini gives fuller ones.</p>' : ''}
+    return `<div class="card smart" id="aicard"><div class="row tight"><div class="k grow">What the AI sees <span class="dim">· ${esc(c.provider === 'auto' ? (S.smart.using || 'Automatic') : provName(c.provider))}</span></div><button id="smSetup" class="small">AI settings</button></div>
+      ${u && ['ollama', 'openai'].includes(c.provider) ? '<p class="small dim">A small AI on this computer is doing this. It is private, but its colour suggestions are simpler and it can make mistakes; Gemini gives fuller ones.</p>' : ''}
       ${u ? `${S.ai.vision === false ? '<p class="small warn">This AI cannot look at the picture yet, so this is built from measurements. For item-by-item detail, set up Gemini or Ollama in AI settings.</p>' : ''}
         ${u.caveat ? `<p class="small dim">${esc(u.caveat)}</p>` : ''}
         ${u.items.length ? `<div class="items">${u.items.map(i => `<div class="it">${sw(i.hex)}<span><b>${esc(i.name)}</b> <span class="dim">${esc([i.colour, i.where].filter(Boolean).join(' · '))}</span></span></div>`).join('')}</div>` : ''}
@@ -464,7 +466,7 @@ export async function startApp(host, root) {
         : (S.ai.busy ? '' : `<p class="small dim">The AI has not studied this frame yet.</p><div class="row"><button id="aiStudy" class="primary">Study this frame</button></div>`)}
       ${S.ai.chat.map(x => `<p class="small you"><b>You:</b> ${esc(x.you)}</p><p class="small"><b>AI:</b> ${esc(x.ai)}</p>`).join('')}
       ${u && u.questions.length ? `<div class="chips">${u.questions.map(q => `<div role="button" tabindex="0" class="chip" data-smq="${esc(q)}">${esc(q)}</div>`).join('')}</div>` : ''}
-      ${S.ai.busy ? `<p class="small todo">${esc(S.ai.busy)}</p>` : ''}${S.ai.error ? `<p class="small warn">${esc(S.ai.error)}</p>` : ''}
+      ${S.ai.busy ? `<p class="small todo">${esc(S.ai.busy)}</p>` : ''}${S.ai.error ? `<p class="small warn">${esc(S.ai.error)}</p>${/free limit|very busy/i.test(S.ai.error) ? '<div class="row"><button id="aiLocal" class="small">Use the AI on this computer for now</button></div>' : ''}` : ''}
       ${u ? `<textarea id="smMsg" rows="2" placeholder="Tell it more about this shot or scene, or correct it (e.g. “she has just lost her job; the lamp is the only warm thing left”)"></textarea>
       <div class="row wrap"><button id="aiTell">Tell the AI</button><button id="aiSuggest" class="primary">${S.sugg.length ? 'Suggest again' : 'Suggest colours and looks'}</button></div>` : ''}</div>`;
   }
@@ -499,6 +501,11 @@ export async function startApp(host, root) {
     body.querySelectorAll('[data-lay]').forEach(b => b.onclick = () => { const t = +b.dataset.lay; S.layerOff = S.layerOff.includes(t) ? S.layerOff.filter(x => x !== t) : [...S.layerOff, t]; render(); });
     body.querySelectorAll('[data-range]').forEach(b => b.onclick = () => { S.range = b.dataset.range; settings.set('range', S.range); S.rangeInfo = null; render(); });
     if ($('#reread', body)) $('#reread', body).onclick = () => $('#grab', body).onclick();
+    if ($('#aiLocal', body)) $('#aiLocal', body).onclick = () => busy('Looking for an AI on this computer', async () => {
+      const cfg = S.smart.cfg, a = host.bridge ? await detectApple(host.bridge) : { ok: false }, o = await detectOllama(cfg.ollamaUrl || SMART0.ollamaUrl, httpGet);
+      if (o.ok && o.vision.length) { cfg.provider = 'ollama'; cfg.ollamaModel = o.vision.includes(cfg.ollamaModel) ? cfg.ollamaModel : o.vision[0]; }
+      else if (a.ok) cfg.provider = 'apple'; else { toast('No AI was found on this computer. Open Ollama, or wait for Google\'s limit to reset.'); return; }
+      saveSmart(); S.ai.error = ''; toast(`Switched to ${provName(cfg.provider)}. Switch back under “AI” any time.`); render(); });
     if ($('#aiSetup', body)) $('#aiSetup', body).onclick = () => { S.guide = { view: 'smart', step: 0, route: '' }; go('guide'); };
     if ($('#aiRetry', body)) $('#aiRetry', body).onclick = () => studyFrame('');
     if ($('#aiStudy', body)) $('#aiStudy', body).onclick = () => studyFrame('');

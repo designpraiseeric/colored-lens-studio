@@ -252,3 +252,6 @@ input, select, textarea { background: var(--p1); color: var(--ink); border: 1px 
 .sghead { cursor: pointer; }
 /* text boxes: one plain dark field (UXP draws its own frame; fighting it gave a two-tone box) */
 input, select, textarea { background: #17161A; color: #FFFFFF; border: none; border-radius: 6px; }
+/* 0.8.2: preview beside its controls */
+.dockrow { display: flex; flex-direction: row; align-items: flex-start; }
+.dockside { min-width: 0; }
