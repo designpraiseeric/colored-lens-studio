@@ -13,7 +13,10 @@ import { srgbToOklab } from './color.js';
 import { downsample } from './image.js';
 import { checkSkin, SKIN } from './skin.js';
 
-const BLOWN = 0.88, CRUSHED = 0.06;
+// "Blown" and "crushed" mean what an editor means by them: a channel that has run out of 8-bit room, so two tones
+// that were different in the source are the same number now. Merely bright is not blown — a high-key frame is
+// allowed to be bright — which an earlier lightness threshold got wrong on pastel footage.
+const CLIP_HI = 250, CLIP_LO = 5;
 
 const lchAt = (d, i) => { const lab = srgbToOklab(d[i] / 255, d[i + 1] / 255, d[i + 2] / 255);
   let h = Math.atan2(lab[2], lab[1]) * 57.29578; if (h < 0) h += 360; return [lab[0], Math.hypot(lab[1], lab[2]), h]; };
@@ -22,16 +25,18 @@ const hueGap = (a, b) => { if (a == null || b == null || Number.isNaN(a) || Numb
 
 /** Lightness percentiles, what is blown or crushed, and the mean colour of whatever is actually coloured. */
 function stats(f, pick) {
-  const L = [], C = []; let hx = 0, hy = 0;
+  const L = [], C = []; let hx = 0, hy = 0, hi = 0, lo = 0;
   for (let p = 0; p < f.w * f.h; p++) { if (pick && !pick(p)) continue;
-    const [l, c, h] = lchAt(f.data, p * 4); L.push(l); C.push(c);
+    const i = p * 4, mx = Math.max(f.data[i], f.data[i + 1], f.data[i + 2]);
+    if (mx >= CLIP_HI) hi++; else if (mx <= CLIP_LO) lo++;
+    const [l, c, h] = lchAt(f.data, i); L.push(l); C.push(c);
     if (c > 0.02) { const r = h * 0.01745329; hx += Math.cos(r) * c; hy += Math.sin(r) * c; } }
   if (!L.length) return null;
   L.sort((a, b) => a - b);
   const at = q => L[Math.min(L.length - 1, Math.floor(L.length * q))];
   let hue = (hx || hy) ? Math.atan2(hy, hx) * 57.29578 : null; if (hue !== null && hue < 0) hue += 360;
   return { n: L.length, p1: at(0.01), p10: at(0.1), p50: at(0.5), p90: at(0.9), p99: at(0.99),
-    blown: L.filter(x => x > BLOWN).length / L.length, crushed: L.filter(x => x < CRUSHED).length / L.length,
+    blown: hi / L.length, crushed: lo / L.length,
     chroma: C.reduce((a, b) => a + b, 0) / C.length, hue };
 }
 
@@ -238,3 +243,58 @@ export const summarise = r => ({
     flatNoise: +r.flatNoiseRatio.toFixed(2), grain: +r.grainAdded.toFixed(2), levels: +r.levelsAfter.toFixed(2),
     range: +r.rangeAfter.toFixed(2), neutralCast: +r.neutralCast.toFixed(3) },
 });
+
+// ---------------------------------------------------------------------------------------------------------------
+// Fitting a look to the shot in front of it.
+//
+// Every look in the catalogue is built at one strength and applied at that strength to whatever arrives, which is
+// why a contrast look clips a bright face and crushes a dark one. A colourist does not do that: they bring a look
+// down until the picture can carry it. This does the same thing, by measuring.
+
+/** Scale a look's distance from neutral. Mirrors setStrength in ui/app.js, which drives the Strength slider. */
+export function scaleLook(look, extra, k, GRADE0, fullGrade) {
+  const L = JSON.parse(JSON.stringify(look)), X = { ...extra }, G = L.G, B = fullGrade(look.G);
+  G.lutMix = Math.min(1, (B.lutMix == null ? 1 : B.lutMix) * k);
+  for (const key of ['exp', 'con', 'sat', 'vib', 'temp', 'tint', 'hi', 'sh', 'bk', 'wh', 'bri', 'gam']) {
+    const d0 = GRADE0[key]; if (typeof B[key] !== 'number' || typeof d0 !== 'number') continue;
+    G[key] = d0 + (B[key] - d0) * k; }
+  for (const key of ['grainK', 'halK', 'diffK', 'vigK']) if (typeof B[key] === 'number') G[key] = B[key] * Math.min(1.35, k);
+  X.ambAmt = Math.min(1, (extra.ambAmt || 0) * k);
+  for (let n = 1; n <= 8; n++) { const a = extra[`z${n}Amt`] || 0; if (a > 0) X[`z${n}Amt`] = Math.min(1, a * k); }
+  return { look: L, extra: X };
+}
+
+/**
+ * The strongest this look can be put on this frame without damaging it.
+ * `build(k)` returns a pixel function for the look at strength k. Returns 1 when the look is already clean, and
+ * never goes below `floor` — a look too strong for the shot at any usable strength is a judgement for the editor,
+ * not something to silently dial to nothing.
+ */
+export function fitStrength(src, build, opts = {}) {
+  const floor = opts.floor != null ? opts.floor : 0.35, tries = opts.tries || 4;
+  // judged at the same size the verdict is given at, or a look can pass the fit and fail the report
+  const small = src.w > 240 ? downsample(src, 240) : src;
+  const skin = opts.skin;
+  const check = k => faults(gradeReport(small, renderWith(small, build(k)), { skin }), { allows: opts.allows });
+  if (!check(1).length) return { k: 1, fitted: false, suits: true, faults: [] };
+  const atFloor = check(floor);
+  // Some looks simply do not suit some shots. Dialling one down to nothing to force it through would be a lie; the
+  // editor is told instead, the same way the panel already warns when a look lands brighter than its neighbours.
+  if (atFloor.length) return { k: floor, fitted: true, suits: false, faults: atFloor };
+  let lo = floor, hi = 1;
+  for (let i = 0; i < tries; i++) { const mid = (lo + hi) / 2; if (!check(mid).length) lo = mid; else hi = mid; }
+  const k = Math.round(lo * 100) / 100;
+  return { k, fitted: true, suits: true, faults: check(k) };
+}
+
+/** Render a frame through a pixel function. Kept here so fitStrength has no host or test dependency. */
+export function renderWith(frame, fn) {
+  const out = { w: frame.w, h: frame.h, data: new Uint8ClampedArray(frame.w * frame.h * 4) };
+  for (let p = 0; p < frame.w * frame.h; p++) { const i = p * 4;
+    const c = fn([frame.data[i] / 255, frame.data[i + 1] / 255, frame.data[i + 2] / 255]);
+    out.data[i] = Math.round(Math.max(0, Math.min(1, c[0])) * 255);
+    out.data[i + 1] = Math.round(Math.max(0, Math.min(1, c[1])) * 255);
+    out.data[i + 2] = Math.round(Math.max(0, Math.min(1, c[2])) * 255);
+    out.data[i + 3] = 255; }
+  return out;
+}

@@ -174,8 +174,23 @@ export function skinWeight(lch, cMin = 0.025) {
 export function applySkinGuard(src, out, p) {
   if (!p.skinGuard) return out; const so = toLCh(srgbToOklab(...src)), w = skinWeight(so) * p.skinGuard; if (w <= 0.001) return out;
   const go = toLCh(srgbToOklab(...out)); let [L, C, h] = go;
+  // Hue: a few degrees of drift is grading; twenty is skin that has stopped being skin. A proportional pull always
+  // lets a strong enough look through — at guard 0.7 it gave back only 56% of the shift, which is how looks were
+  // landing 13° to 22° off the line — so the drift is capped instead.
   let dh = so[2] - h; while (dh > 180) dh -= 360; while (dh < -180) dh += 360; h += dh * w * p.skinHue;
-  C += Math.max(0, so[1] - C) * w * p.skinDensity; L += Math.max(0, so[0] - L) * w * p.skinLight;
+  { let d2 = so[2] - h; while (d2 > 180) d2 -= 360; while (d2 < -180) d2 += 360;
+    const cap = 3 + (1 - w) * 27; if (Math.abs(d2) > cap) h = so[2] - (d2 < 0 ? -cap : cap); }
+  // Colourfulness: put back what the look drained, and hold back what it piled on. Skin that reads as a cartoon is
+  // the same failure as skin that reads as grey, and only the first half of it was ever guarded.
+  C += Math.max(0, so[1] - C) * w * p.skinDensity;
+  { const ceil = Math.max(so[1] * 1.35, 0.11); if (C > ceil) C -= (C - ceil) * w; }
+  // Lightness: the look may still open up a dark face or settle a bright one — that is the whole point of a grade.
+  // What it may not do is push skin into either end of the scale, where there is no detail left to grade.
+  L += Math.max(0, so[0] - L) * w * p.skinLight;
+  // These two are limits rather than preferences, so they bite harder than the guard's other pulls: skin at either
+  // end of an 8-bit range is skin with no detail in it, whatever the look was going for.
+  { const hi = Math.max(so[0], 0.93), lo = Math.min(so[0], 0.14);
+    L += (Math.min(Math.max(L, lo), hi) - L) * Math.sqrt(w); }
   const r = h * Math.PI / 180, lin = oklabToLin(L, C * Math.cos(r), C * Math.sin(r));
   return lin.map(v => Math.min(1, Math.max(0, lin2srgb(v))));
 }

@@ -9,6 +9,7 @@ import { checkSkin, vectorscope } from '../core/skin.js';
 import { pngDataUrl, encodePNG, downsample, toBase64 } from '../core/image.js';
 import { PROVIDERS, CLAUDE_MODELS, DEFAULTS as SMART0, buildPrompt, parseReply, validate, ask, buildStudy, buildSuggest, validateStudy, validateSuggest, howTo, zonesFor, picture, SYSTEM_STUDY, SYSTEM_SUGGEST, detectOllama, detectOpenAI, detectApple, appleReason, resolveProvider, nearestHue } from '../core/smart.js';
 import { shotRecord, encodeShot, decodeShot, renderStrip, readSequence, scriptCSV } from '../core/script.js';
+import { fitStrength, scaleLook } from '../core/quality.js';
 import { ZONES, ZONE_KEYS, ZONE_DEF, zoneList, zoneDefaults, zoneCoverage, hasZones, lchHex, hueHistogram, parseLookInput, formatCode, fullGrade, makePixelFn, bakeCube, lookToEngineParams, shareLink, computeMatch, matchStats, hasCurves, GRADE0 } from '../core/look.js';
 import { GENRES, FEELINGS, ROLES, KIND_LABEL, pickDirections, describeEffect, whyFor, frameSummary, answers, isDark, continuity, pictureOf, directionsFromPicks } from '../core/directions.js';
 import { previewer, wipe } from '../core/preview.js';
@@ -35,7 +36,7 @@ export async function startApp(host, root) {
   const S = { tab: 'shot', back: 'shot', frame: null, meta: null, reading: null, skin: null, sample: null, shots: [],
     intent: normIntent(settings.get('intent', {})), seqId: '', ctx: null, lead: 0, neigh: [], scope: settings.get('scope', 'clip'), input: settings.get('input', 'rec709'),
     directions: [], chosen: -1, look: NEUTRAL_LOOK(), extra: { ...XDEF }, matte: false, recipe: { name: '', presetId: null }, view: 'split', wipe: 0.5,
-    guide: { view: 'home', step: 0, route: '' }, tour: null, simple: !!settings.get('simple', 1), base: null, strength: 1, pickZone: 0, zoneOpen: 0, zoneName: {}, readErr: null, errOpen: false, hueHist: null, hueHistKey: '', scanEvery: +settings.get('scanEvery', 5) || 5, selCount: 0, scanStop: false, scanning: false, scanAsk: null, scanPer: 0, layerOff: [], range: settings.get('range', 'shot'), study: null, sugg: [], suggOpen: -1, suggHow: -1, rangeInfo: null, ai: { busy: '', error: '', chat: [], none: false }, theme: settings.get('theme', 'bright'), moreQ: false, moreD: false, dockSize: settings.get('dockSize', 'M'), dockHidden: false, detached: false, smartDirs: [],
+    guide: { view: 'home', step: 0, route: '' }, tour: null, simple: !!settings.get('simple', 1), base: null, strength: 1, fit: null, pickZone: 0, zoneOpen: 0, zoneName: {}, readErr: null, errOpen: false, hueHist: null, hueHistKey: '', scanEvery: +settings.get('scanEvery', 5) || 5, selCount: 0, scanStop: false, scanning: false, scanAsk: null, scanPer: 0, layerOff: [], range: settings.get('range', 'shot'), study: null, sugg: [], suggOpen: -1, suggHow: -1, rangeInfo: null, ai: { busy: '', error: '', chat: [], none: false }, theme: settings.get('theme', 'bright'), moreQ: false, moreD: false, dockSize: settings.get('dockSize', 'M'), dockHidden: false, detached: false, smartDirs: [],
     smart: { cfg: (c => { if (c.geminiModel === 'gemini-2.5-flash') c.geminiModel = SMART0.geminiModel; return c; })({ ...SMART0, ...settings.get('smart', {}) }), turns: [], history: [], detect: null, using: '' }, refFrameStats: null, refName: '', adapt: settings.get('adapt', true), encQ: '', shownCode: '', confirmDel: '', busy: false, showSkin: false, showRefs: false };
   let PV = null, pvEl = null; // pvEl: the separate Preview panel's container, once it has been opened
   const up = new Updater(host, config.pagesBase);
@@ -160,7 +161,25 @@ export async function startApp(host, root) {
   function choose(i) {
     const d = allDirs()[i]; if (!d) return; S.chosen = i; S.suggOn = -1; S.suggZ = null;
     S.look = clone(d.look); S.extra = { ...XDEF, ...d.extra }; S.matte = false; S.recipe = { name: d.name, presetId: null };
-    S.base = { look: clone(S.look), extra: { ...S.extra } }; S.strength = 1;
+    S.base = { look: clone(S.look), extra: { ...S.extra } }; S.strength = 1; S.fit = null;
+    fitToShot(d.allows).then(() => { stageCache.key = ''; softRender(); });
+  }
+  /**
+   * Bring the direction down until the picture can carry it.
+   * A look is built at one strength and, until now, landed at that strength on whatever arrived — which is how a
+   * contrast look clipped a bright face and crushed a dark one. This measures the result and backs off, the way a
+   * colourist would, and says so when a look does not suit the shot at any strength worth using.
+   */
+  async function fitToShot(allows) {
+    if (!S.frame || !S.base) return;
+    try {
+      const b = S.base, L = await lutsFor(b.look);
+      const build = k => { const { look, extra } = scaleLook(b.look, b.extra, k, GRADE0, fullGrade);
+        return makePixelFn(look, cat(), L, { input: S.input, keepExposure: true, extra }); };
+      const fit = fitStrength(downsample(S.frame, 240), build, { skin: S.skin, allows });
+      S.fit = fit;
+      if (fit.k < 1) setStrength(fit.k);
+    } catch (e) { console.warn('fit', e); S.fit = null; }
   }
   /**
    * Scales a whole direction up or down in one move: how much of the film look is mixed in, how far the grade is
@@ -202,6 +221,9 @@ export async function startApp(host, root) {
       <div class="row tight">${host.openPreviewPanel ? `<button id="dockPop" class="small" title="${S.detached ? 'Put the preview back in the Colored Lens panel' : 'Open the preview as its own panel, to dock anywhere'}">${S.detached ? 'Back to panel' : 'Pop out'}</button>` : ''}${S.detached ? '' : '<button id="dockHide" class="small" title="Hide the preview">Hide</button>'}</div>`;
     const rest = `${S.view === 'split' ? sliderHTML({ id: 'wipe', label: 'Wipe', min: 0, max: 1, step: 0.01, value: S.wipe, def: 0.5 }) : ''}
       ${d && S.base ? sliderHTML({ id: 'strength', label: 'Strength', min: 0, max: 1.5, step: 0.05, value: S.strength == null ? 1 : S.strength, def: 1 }) : ''}
+      ${d && S.fit && S.fit.fitted ? `<div class="small ${S.fit.suits ? 'dim' : 'warn'}">${S.fit.suits
+        ? `Brought down to ${Math.round(S.fit.k * 100)}% to fit this shot — at full strength it ${esc(S.fit.faults.length ? S.fit.faults[0].say : 'damaged the picture')}. Drag Strength back up if you want it anyway.`
+        : `<b>This look does not suit this shot.</b> Even at ${Math.round(S.fit.k * 100)}% it ${esc((S.fit.faults[0] || {}).say || 'damages the picture')}. Shown so you can judge it yourself.`}</div>` : ''}
       ${d ? `<div class="small">Previewing <b>${esc(S.suggOn >= 0 && S.sugg[S.suggOn] ? S.sugg[S.suggOn].title : d.name)}</b> <span class="dim">(colour, grain and vignette; halation and glow show on the clip)</span></div>
         ${scopeRow()}<div class="row wrap"><button class="primary" data-dapply="${S.chosen}">${esc(applyLabel())}</button><button data-dtweak="${S.chosen}">Tweak</button><button data-dsave="${S.chosen}">Save as preset</button><button id="dclear">Back to the original</button></div>`
         : `<div class="small ${S.pickZone ? 'todo' : 'dim'}">${S.pickZone ? 'Click the colour you want to change.' : shot ? 'Click a face in the picture to check its skin. Pick a direction below to preview it here.' : 'Live preview: colour, grain and vignette. Halation and diffusion glow show on the clip.'}${!pvBox && w < 170 && host.openPreviewPanel ? ' <b>Small here — Pop out for a preview you can dock as large as you like.</b>' : ''}</div>`}`;
@@ -581,7 +603,8 @@ export async function startApp(host, root) {
       // the Lukuluku look for the overall grade (a clean pass-through when the AI named none), then one colour zone per item
       const di = S.smartDirs.findIndex(d => d.id === g.recipe); if (di >= 0) choose(di); else { S.chosen = -1; S.look = NEUTRAL_LOOK(); S.extra = { ...XDEF }; }
       const z = zonesFor(g, S.study, S.reading ? S.reading.swatches : [], S.frame ? downsample(S.frame, 160) : null); S.extra = { ...S.extra, ...zoneDefaults(), ...z.params, skinGuard: Math.max(S.extra.skinGuard || 0, 0.7) };
-      S.base = { look: clone(S.look), extra: { ...S.extra } }; S.strength = 1;
+      S.base = { look: clone(S.look), extra: { ...S.extra } }; S.strength = 1; S.fit = null;
+      await fitToShot(di >= 0 ? (S.smartDirs[di] || {}).allows : null);
       S.recipe = { name: g.title, presetId: null }; S.suggOn = i; S.suggZ = z; S.view = 'split'; S.dockHidden = false; stageCache.key = ''; S.focusSg = i; render();
       toast(z.mapped.length || z.params.ambAmt ? `“${g.title}” is on your preview: drag across the picture to compare` : 'Only the overall look could be previewed for this one; see “What is left to do by hand”'); }));
   }

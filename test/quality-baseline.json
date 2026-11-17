@@ -1,133 +1,15 @@
 {
   "recorded": "2026-11-17",
   "frames": {
-    "ext-mcu.jpg": {
-      "fluorescent-dread": [
-        "channel-clip-high"
-      ],
-      "blood-and-shadow": [
-        "channel-clip-high"
-      ],
-      "false-night": [
-        "skin-hue"
-      ],
-      "nordic-grey": [
-        "skin-hue"
-      ],
-      "giallo-pop": [
-        "channel-clip-high"
-      ],
-      "blockbuster": [
-        "skin-hue"
-      ],
-      "cross-dream": [
-        "channel-clip-high"
-      ],
-      "golden-green": [
-        "skin-hue"
-      ]
-    },
+    "ext-mcu.jpg": {},
     "aut-barry-jenkins.jpg": {
-      "fluorescent-dread": [
-        "detail-lost",
-        "face-crushed"
-      ],
-      "silver-edge": [
-        "detail-lost",
-        "face-crushed"
-      ],
-      "blood-and-shadow": [
-        "detail-lost",
-        "face-crushed",
-        "noise-up"
-      ],
-      "false-night": [
-        "detail-lost",
-        "face-crushed"
-      ],
-      "nordic-grey": [
-        "skin-hue"
-      ],
-      "giallo-pop": [
-        "detail-lost",
-        "noise-up"
-      ],
-      "clean-vivid": [
-        "picture-crushed"
-      ],
-      "blockbuster": [
-        "skin-hue"
-      ],
       "cross-dream": [
         "skin-hue"
       ],
       "golden-green": [
         "skin-hue"
-      ],
-      "push-grit": [
-        "detail-lost",
-        "face-crushed"
-      ],
-      "mono-elegance": [
-        "noise-up",
-        "picture-crushed",
-        "top-heavy"
       ]
     },
-    "aut-wes-anderson.jpg": {
-      "cold-steel": [
-        "face-blown"
-      ],
-      "fluorescent-dread": [
-        "face-blown",
-        "top-heavy"
-      ],
-      "silver-edge": [
-        "face-blown",
-        "top-heavy"
-      ],
-      "blood-and-shadow": [
-        "face-blown",
-        "top-heavy"
-      ],
-      "false-night": [
-        "skin-hue"
-      ],
-      "warm-print": [
-        "face-blown"
-      ],
-      "glow-close": [
-        "face-blown"
-      ],
-      "giallo-pop": [
-        "face-blown",
-        "top-heavy"
-      ],
-      "blockbuster": [
-        "face-blown"
-      ],
-      "super8-summer": [
-        "face-blown"
-      ],
-      "cross-dream": [
-        "face-blown",
-        "top-heavy"
-      ],
-      "soft-dawn": [
-        "face-blown"
-      ],
-      "push-grit": [
-        "face-blown",
-        "top-heavy"
-      ],
-      "rich-print": [
-        "face-blown",
-        "top-heavy"
-      ],
-      "mono-elegance": [
-        "face-blown",
-        "top-heavy"
-      ]
-    }
+    "aut-wes-anderson.jpg": {}
   }
 }

@@ -1,6 +1,13 @@
 # Release notes
 Each `## <version>` block becomes the text of the in-app update banner and the GitHub Release.
 
+## 0.11.0
+Every look is now fitted to the shot instead of landing at full strength on whatever arrives.
+- **Looks are brought down until your picture can carry them.** A contrast look used to clip a bright face and crush a dark one, because it was built at one strength and applied at that strength to everything. Colored Lens now measures what the look does to your frame and backs it off, the way a colourist would — and tells you, in a line under the preview, how far it came down and what it was doing at full strength. Drag Strength back up any time you want it anyway.
+- **A look that does not suit a shot says so**, instead of being quietly offered. You still see it, so you can judge for yourself.
+- **Skin Guard holds skin on the skin-tone line.** It used to resist a hue shift proportionally, which meant a strong enough look still dragged skin 13° to 22° away. The drift is now capped, so skin stays skin. It also holds skin out of both ends of the scale — it only ever resisted darkening before, so nothing stopped a look blowing a face to white — and holds back colourfulness piled onto skin, not just colourfulness drained from it.
+- Measured across the catalogue on three kinds of frame, this takes the number of looks that damage a picture from 35 to 2.
+
 ## 0.10.3
 Reading a frame tells you when it fails, and tries a second way first.
 - **A failed read stays on screen.** It used to say what went wrong in a message that faded after six seconds — on a job that can take a minute and a half, by which time you have looked away. Now the reason sits in the Shot tab with what to try, and a **Show what Premiere wrote** button listing the folders that were watched and what was actually in them.

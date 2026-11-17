@@ -236,7 +236,17 @@ V3 applySkinGuard(V3 src, V3 out, const Setup& s) {
   V3 go = srgbToOklab(out);
   float sC = std::hypot(so.g, so.b), sh = std::atan2(so.b, so.g), gC = std::hypot(go.g, go.b), gh = std::atan2(go.b, go.g);
   float dh = sh - gh; while (dh > 3.14159265f) dh -= 6.2831853f; while (dh < -3.14159265f) dh += 6.2831853f;
-  float h = gh + dh * w * s.skinHue, Cc = gC + std::max(0.f, sC - gC) * w * s.skinDensity, L = go.r + std::max(0.f, so.r - go.r) * w * s.skinLight;
+  float h = gh + dh * w * s.skinHue;
+  // The drift is capped, not merely resisted: a proportional pull always lets a strong enough look through.
+  { float d2 = sh - h; while (d2 > 3.14159265f) d2 -= 6.2831853f; while (d2 < -3.14159265f) d2 += 6.2831853f;
+    const float cap = (3.f + (1 - w) * 27.f) * 0.01745329f;
+    if (std::fabs(d2) > cap) h = sh - (d2 < 0 ? -cap : cap); }
+  float Cc = gC + std::max(0.f, sC - gC) * w * s.skinDensity;
+  { float ceil = std::max(sC * 1.35f, 0.11f); if (Cc > ceil) Cc -= (Cc - ceil) * w; }
+  float L = go.r + std::max(0.f, so.r - go.r) * w * s.skinLight;
+  // limits rather than preferences, so they bite harder than the guard's other pulls
+  { float hi = std::max(so.r, 0.93f), lo = std::min(so.r, 0.14f);
+    L += (std::min(std::max(L, lo), hi) - L) * std::sqrt(w); }
   return oklabToSrgb({L, Cc * std::cos(h), Cc * std::sin(h)});
 }
 
