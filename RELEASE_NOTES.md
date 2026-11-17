@@ -1,6 +1,14 @@
 # Release notes
 Each `## <version>` block becomes the text of the in-app update banner and the GitHub Release.
 
+## 0.13.0
+The encyclopedia's palette structures are now something you use, not just something you read.
+- **Pick a structure, point at a thing, point at a colour.** Every colour zone you have set up — picked from the picture, or built by a suggestion — is listed with how much of the frame it covers. Tap one, tap a swatch from the structure, and it takes that colour. The rest of the shot is left alone.
+- **Or deal the whole structure across everything at once**, and keep re-dealing until you like one. Each deal is numbered, so a deal you liked can be asked for again.
+- A deal is not a lottery. The most colourful swatch in a structure is its accent, and an accent on the biggest surface in the frame is how a palette reads as a mistake — so it is dealt to the smallest. Structures that have no accent, like Monochromatic, get no such rule.
+- **Every deal is measured before you see it.** If it would blow the highlights or damage a face, it is thrown away and another is tried; if nothing clean can be found, you are told what is wrong with the best of them rather than being handed it quietly.
+- Pressing "Try another" never hands you back the deal already on screen. If there genuinely is no other way to deal that structure across those items, it says so.
+
 ## 0.12.2
 "Lift the face" was lifting the room with it.
 - A lift by skin weight reaches anything skin-coloured, and this shot has a warm wall and a wooden door. Lifting the face was therefore lifting those too, and blowing them. A lift is for **shadows** now: a bright skin-coloured surface gets almost none of it, and what is left can never push a pixel past white.

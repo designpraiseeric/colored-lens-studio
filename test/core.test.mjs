@@ -12,6 +12,7 @@ import { cmpVersion, Updater } from '../core/updates.js';
 import { hexToRgb, srgbToOklab, toLCh } from '../core/color.js';
 import { pickDirections, answers, whyFor, continuity, pictureOf } from '../core/directions.js';
 import { validate as smartValidate, parseReply, ask as smartAsk, resolveProvider, buildPrompt, zonesFor, buildStudy, buildTell, validateStudy } from '../core/smart.js';
+import { dealPalette, assign, bestDeal, lchOf, structures, zoneItems } from '../core/palette.js';
 import { directionsFromPicks } from '../core/directions.js';
 import { savePreset, presetCode, importPresetCode, listPresets } from '../core/presets.js';
 
@@ -247,4 +248,81 @@ test('a reply that changes nothing leaves the reading alone', () => {
   assert.equal(merged.purpose, 'a beat of rest');
   assert.match(merged.reply, /carries the warmth/);
   assert.deepEqual(merged.questions, ['Is the lamp practical?']);
+});
+
+test('a palette structure can be dealt across items, and the accent avoids the biggest surface', () => {
+  const pal = ['#0b1020', '#20304a', '#6d7f99', '#c9d3df', '#ff2d55'];   // last one is far the most colourful
+  const items = [{ zone: 1, area: 0.55 }, { zone: 2, area: 0.20 }, { zone: 3, area: 0.04 }];
+  const accent = '#ff2d55';
+  for (let seed = 1; seed <= 40; seed++) {
+    const deal = dealPalette(items, pal, seed);
+    assert.equal(deal.length, 3);
+    assert.equal(new Set(deal.map(d => d.zone)).size, 3, 'every item gets exactly one swatch');
+    const onBiggest = deal.find(d => d.zone === 1);
+    assert.notEqual(onBiggest.hex, accent, `seed ${seed} put the accent on the largest surface`);
+  }
+  // the same seed must give the same deal, or "go back to the one I liked" is a lie
+  assert.deepEqual(dealPalette(items, pal, 7), dealPalette(items, pal, 7));
+  assert.notDeepEqual(dealPalette(items, pal, 7), dealPalette(items, pal, 8));
+});
+
+test('assigning a colour retargets only that zone', () => {
+  const extra = { z1Amt: 0.8, z1ToHue: 10, z1ToC: 0.1, z2Amt: 0.8, z2ToHue: 200, z2ToC: 0.05, skinGuard: 0.7 };
+  const out = assign(extra, 2, '#2fb39a');
+  assert.equal(out.z1ToHue, 10, 'the other zone is untouched');
+  assert.equal(out.z1ToC, 0.1);
+  assert.equal(out.skinGuard, 0.7, 'nothing else in the look is touched');
+  const want = lchOf('#2fb39a');
+  assert.ok(Math.abs(out.z2ToHue - want.h) < 0.02, `${out.z2ToHue} vs ${want.h}`);
+  assert.ok(Math.abs(out.z2ToC - want.C) < 0.001);
+});
+
+test('a deal that damages the picture is not the one offered', () => {
+  const pal = ['#0b1020', '#20304a', '#6d7f99', '#c9d3df'];
+  const items = [{ zone: 1, area: 0.5 }, { zone: 2, area: 0.1 }];
+  // Call every deal faulty except the one that puts the lightest swatch on the big surface.
+  const score = deal => deal.find(d => d.zone === 1).hex === '#c9d3df'
+    ? { faults: [], suits: true } : { faults: ['blown'], suits: true };
+  const best = bestDeal(items, pal, score, { tries: 24, seed: 1 });
+  assert.equal(best.clean, true, 'it keeps looking until a deal scores clean');
+  assert.equal(best.deal.find(d => d.zone === 1).hex, '#c9d3df');
+});
+
+test('a structure with no accent gets no accent rule, so rerolling still varies', () => {
+  // Greys differ by fractions of a billionth in chroma. Treating the top one as an accent made every
+  // deal identical and the reroll button a lie.
+  const pal = ['#111111', '#888888', '#eeeeee'];
+  const items = [{ zone: 1, area: 0.5 }, { zone: 2, area: 0.1 }];
+  const seen = new Set();
+  for (let s = 1; s <= 20; s++) seen.add(dealPalette(items, pal, s).map(d => d.hex).join('|'));
+  assert.ok(seen.size > 1, 'a greyscale structure should still deal more than one way');
+  for (const d of dealPalette(items, pal, 3)) assert.notEqual(d.role, 'accent');
+});
+
+test('a reroll does not hand back the deal already on screen', () => {
+  const pal = ['#0b1020', '#c9d3df'];
+  const items = [{ zone: 1, area: 0.5 }, { zone: 2, area: 0.1 }];
+  const first = dealPalette(items, pal, 1);
+  const next = bestDeal(items, pal, () => ({ faults: [], suits: true }), { tries: 8, seed: 1, avoid: first });
+  if (next.exhausted) assert.deepEqual(next.deal, first, 'when there is genuinely nothing else it says so');
+  else assert.notDeepEqual(next.deal.map(d => d.hex), first.map(d => d.hex));
+});
+
+test('when no deal is clean the least bad one still comes back, flagged', () => {
+  const pal = ['#111111', '#eeeeee'];
+  const items = [{ zone: 1, area: 0.5 }, { zone: 2, area: 0.1 }];
+  const best = bestDeal(items, pal, () => ({ faults: ['blown'], suits: true }), { tries: 3 });
+  assert.equal(best.clean, false);
+  assert.equal(best.deal.length, 2, 'showing nothing would be worse than showing a caveat');
+  assert.ok(best.faults.length);
+});
+
+test('every swatch of a structure can reach every item', () => {
+  // With two items and five swatches, taking the swatches in order and truncating meant three of the
+  // five could never appear at all.
+  const pal = ['#5c1a00', '#a0430a', '#e09b18', '#e8c547', '#f6e9c1'];
+  const items = [{ zone: 1, area: 0.5 }, { zone: 2, area: 0.1 }];
+  const used = new Set();
+  for (let s = 1; s <= 60; s++) for (const d of dealPalette(items, pal, s)) used.add(d.hex);
+  for (const hex of pal) assert.ok(used.has(hex), `${hex} was never dealt to anything`);
 });

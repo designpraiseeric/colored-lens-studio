@@ -130,7 +130,34 @@ test('Premiere panel: grab, mark, read markers, apply the effect, update', { ski
     await page.click('[data-tab=presets]'); await page.waitForSelector('.preset');
     await page.click('[data-tab=scene]'); await page.fill('#tags', 'Ada'); await page.click('#add'); await page.waitForSelector('.shot');
     await page.click('#clear'); await page.click('#load'); await page.waitForSelector('.shot');
-    await page.click('[data-tab=tweak]'); await page.click('[data-scope="scene"]'); await page.click('#apply'); await page.waitForSelector('#toast:not([hidden])');
+    // Palette structures: the encyclopedia's structures used as a working surface over the live zones.
+    await page.click('[data-tab=tweak]'); await page.waitForSelector('#palCard');
+    // give it something to work on: pick two colours out of the picture as zones
+    for (const [fx, fy] of [[0.3, 0.35], [0.7, 0.7]]) {
+      await page.click('#zadd'); await page.waitForSelector('.todo');
+      const bx = await page.locator('#stage').boundingBox();
+      await page.mouse.click(bx.x + bx.width * fx, bx.y + bx.height * fy); await page.waitForTimeout(400);
+    }
+    await page.click('#palCard [data-pal="pal-comp"]'); await page.waitForSelector('#palCard [data-palsw]');
+    assert.ok(await page.locator('#palCard [data-palitem]').count() >= 1, 'picked colours show up as items to colour');
+    { const items = await page.locator('#palCard [data-palitem]').count(); assert.ok(items >= 1, 'the live zones are listed as items: ' + items); }
+    // one item, one swatch: that item's own swatch takes the colour, and the card says whose turn it is
+    const itemSwatch = () => page.locator('#palCard [data-palitem] .sw').first().getAttribute('style');
+    const was = await itemSwatch();
+    await page.click('#palCard [data-palitem]');
+    assert.match(await page.innerText('#palCard'), /Tap a colour to give it to/, 'the selected item is named');
+    await page.locator('#palCard [data-palsw]').nth(1).click();
+    await page.waitForFunction(prev => (document.querySelector('#palCard [data-palitem] .sw') || {}).getAttribute('style') !== prev, was, { timeout: 10000 });
+    // deal across everything, then re-deal and get something different (or be told there is nothing else)
+    await page.click('#palDeal'); await page.waitForSelector('#palAgain', { timeout: 25000 });
+    const dealA = (await page.innerText('#palCard')).match(/Deal (\d+)/);
+    assert.ok(dealA, 'the card says which deal this is, so a good one can be returned to');
+    await page.click('#palAgain');
+    await page.waitForFunction(a => /Deal \d+|only one way/.test(document.querySelector('#palCard').innerText)
+      && !document.querySelector('#palCard').innerText.includes('Deal ' + a), dealA[1], { timeout: 25000 }).catch(() => {});
+    const note = await page.innerText('#palCard');
+    assert.ok(!note.includes('Deal ' + dealA[1]) || /only one way/.test(note), 'a re-deal gives something new, or says it cannot');
+    await page.click('[data-scope="scene"]'); await page.click('#apply'); await page.waitForSelector('#toast:not([hidden])');
     assert.match(await page.innerText('#toast'), /scene “Scene 2 — kitchen”/); await page.click('[data-scope="clip"]');
     await page.click('[data-tab=tweak]'); await page.selectOption('[data-axis=C]', 'C2'); await page.click('#apply'); await page.waitForTimeout(800);
     const pp = await page.evaluate(() => window.__pp);

@@ -7,9 +7,10 @@ import { readFrame, frameStats, labPixels } from '../core/analysis.js';
 import { srgbToOklab, oklabToSrgb, hueDist, rgbToHex } from '../core/color.js';
 import { checkSkin, vectorscope } from '../core/skin.js';
 import { pngDataUrl, encodePNG, downsample, toBase64 } from '../core/image.js';
+import { structures, zoneItems, dealPalette, applyDeal, assign as palAssign, bestDeal } from '../core/palette.js';
 import { PROVIDERS, CLAUDE_MODELS, DEFAULTS as SMART0, buildPrompt, parseReply, validate, ask, buildStudy, buildTell, buildSuggest, validateStudy, validateSuggest, howTo, zonesFor, picture, SYSTEM_STUDY, SYSTEM_TELL, SYSTEM_SUGGEST, detectOllama, detectOpenAI, detectApple, appleReason, resolveProvider, nearestHue } from '../core/smart.js';
 import { shotRecord, encodeShot, decodeShot, renderStrip, readSequence, scriptCSV } from '../core/script.js';
-import { fitStrength, scaleLook } from '../core/quality.js';
+import { fitStrength, scaleLook, gradeReport, faults, verdict, renderWith } from '../core/quality.js';
 import { ZONES, ZONE_KEYS, ZONE_DEF, zoneList, zoneDefaults, zoneCoverage, hasZones, lchHex, hueHistogram, parseLookInput, formatCode, fullGrade, makePixelFn, bakeCube, lookToEngineParams, shareLink, computeMatch, matchStats, hasCurves, GRADE0 } from '../core/look.js';
 import { GENRES, FEELINGS, ROLES, KIND_LABEL, pickDirections, describeEffect, whyFor, frameSummary, answers, isDark, continuity, pictureOf, directionsFromPicks } from '../core/directions.js';
 import { previewer, wipe } from '../core/preview.js';
@@ -36,7 +37,7 @@ export async function startApp(host, root) {
   const S = { tab: 'shot', back: 'shot', frame: null, meta: null, reading: null, skin: null, sample: null, shots: [],
     intent: normIntent(settings.get('intent', {})), seqId: '', ctx: null, lead: 0, neigh: [], scope: settings.get('scope', 'clip'), input: settings.get('input', 'rec709'),
     directions: [], chosen: -1, look: NEUTRAL_LOOK(), extra: { ...XDEF }, matte: false, recipe: { name: '', presetId: null }, view: 'split', wipe: 0.5,
-    guide: { view: 'home', step: 0, route: '' }, tour: null, simple: !!settings.get('simple', 1), base: null, strength: 1, fit: null, pickZone: 0, zoneOpen: 0, zoneName: {}, readErr: null, errOpen: false, hueHist: null, hueHistKey: '', scanEvery: +settings.get('scanEvery', 5) || 5, selCount: 0, scanStop: false, scanning: false, scanAsk: null, scanPer: 0, layerOff: [], range: settings.get('range', 'shot'), study: null, sugg: [], suggOpen: -1, suggHow: -1, rangeInfo: null, ai: { busy: '', error: '', chat: [], none: false }, theme: settings.get('theme', 'bright'), moreQ: false, moreD: false, dockSize: settings.get('dockSize', 'M'), dockHidden: false, detached: false, smartDirs: [],
+    guide: { view: 'home', step: 0, route: '' }, tour: null, simple: !!settings.get('simple', 1), base: null, strength: 1, fit: null, pickZone: 0, zoneOpen: 0, zoneName: {}, pal: { id: '', sel: 0, deal: null, seed: 1, note: '' }, readErr: null, errOpen: false, hueHist: null, hueHistKey: '', scanEvery: +settings.get('scanEvery', 5) || 5, selCount: 0, scanStop: false, scanning: false, scanAsk: null, scanPer: 0, layerOff: [], range: settings.get('range', 'shot'), study: null, sugg: [], suggOpen: -1, suggHow: -1, rangeInfo: null, ai: { busy: '', error: '', chat: [], none: false }, theme: settings.get('theme', 'bright'), moreQ: false, moreD: false, dockSize: settings.get('dockSize', 'M'), dockHidden: false, detached: false, smartDirs: [],
     smart: { cfg: (c => { if (c.geminiModel === 'gemini-2.5-flash') c.geminiModel = SMART0.geminiModel; return c; })({ ...SMART0, ...settings.get('smart', {}) }), turns: [], history: [], detect: null, using: '', answering: '' }, refFrameStats: null, refName: '', adapt: settings.get('adapt', true), encQ: '', shownCode: '', confirmDel: '', busy: false, showSkin: false, showRefs: false };
   let PV = null, pvEl = null; // pvEl: the separate Preview panel's container, once it has been opened
   const up = new Updater(host, config.pagesBase);
@@ -572,6 +573,86 @@ export async function startApp(host, root) {
   }
   /** What the colour zones on the preview reach right now (follows every tweak). */
   function liveCoverage() { return S.frame && hasZones(S.extra) ? zoneCoverage(downsample(S.frame, 160), S.extra) : []; }
+
+  // ---- Palette structures as a working surface -------------------------------------------------
+  // The encyclopedia's ten structures were something to read. Here they are something to use: point at
+  // an item, point at a swatch; or hand the whole structure to every item at once and re-deal it.
+  function palStructures() { const e = up.content.encyclopedia; return e ? structures(e) : []; }
+  function palCurrent() { const all = palStructures(); return all.find(p => p.id === S.pal.id) || null; }
+  function palItems() {
+    const names = { ...S.zoneName };
+    if (S.suggZ) for (const m of S.suggZ.mapped) if (m.zone > 0) names[m.zone] = m.item;
+    return zoneItems(S.extra, liveCoverage(), names);
+  }
+  /** Score a candidate deal the same way everything else in the panel is scored. */
+  async function palScore(deal) {
+    if (!S.frame) return { faults: [], suits: true };
+    const L = await lutsFor(S.look), small = downsample(S.frame, 200);
+    const extra = applyDeal(S.extra, deal);
+    const fn = makePixelFn(S.look, cat(), L, { input: S.input, keepExposure: true, extra });
+    const rep = gradeReport(small, renderWith(small, fn), { skin: S.skin });
+    return { faults: faults(rep), suits: true };
+  }
+  function palSet(extra, note, deal, seed) {
+    S.extra = extra; S.pal.deal = deal || null; if (seed) S.pal.seed = seed; S.pal.note = note || '';
+    S.strength = 1; S.fit = null; render();
+  }
+  async function palDeal(reroll) {
+    const p = palCurrent(), items = palItems();
+    if (!p || !items.length) return;
+    busy(reroll ? 'Dealing again' : 'Dealing the palette', async () => {
+      // Scoring renders the frame, so this is deliberately a handful of tries, not a search.
+      const scored = [];
+      const seedFrom = reroll ? S.pal.seed + 1 : 1;
+      let picked = null;
+      for (let i = 0; i < 6 && !picked; i++) {
+        const seed = seedFrom + i, deal = dealPalette(items, p.pal, seed);
+        if (!deal.length) break;
+        if (reroll && S.pal.deal && deal.map(d => d.zone + d.hex).join() === S.pal.deal.map(d => d.zone + d.hex).join()) continue;
+        const r = await palScore(deal);
+        scored.push({ deal, seed, faults: r.faults });
+        if (!r.faults.length) picked = { deal, seed, faults: [] };
+      }
+      if (!picked && !scored.length) { S.pal.note = 'There is only one way to deal this structure across these items.'; return render(); }
+      const best = picked || scored.sort((a, b) => a.faults.length - b.faults.length)[0];
+      palSet(applyDeal(S.extra, best.deal),
+        best.faults.length ? `Deal ${best.seed}. Nothing cleaner was found: ${verdict(best.faults).replace(/^Not fit to show: /, '')}` : `Deal ${best.seed}, and it does the picture no harm.`,
+        best.deal, best.seed);
+    });
+  }
+  function paletteHTML() {
+    const all = palStructures(); if (!all.length || !S.frame) return '';
+    const items = palItems(), p = palCurrent();
+    const chips = all.map(x => `<div role="button" tabindex="0" class="chip ${x.id === S.pal.id ? 'on' : ''}" data-pal="${esc(x.id)}">${esc(x.name)}</div>`).join('');
+    if (!items.length) return `<div class="card" id="palCard"><div class="k">Palette structures</div>
+      <p class="small dim">Set up a colour zone first — pick a colour from the picture in Colour zones below, or try one of the AI's suggestions. Then a whole palette structure can be dealt across what you picked.</p>
+      <div class="chips">${chips}</div>${p ? `<div class="pal">${p.pal.map(h => `<span class="sw big" style="background:${h}"></span>`).join('')}</div><p class="small dim">${esc(p.about)}</p>` : ''}</div>`;
+    const sel = S.pal.sel;
+    const rows = items.map(it => { const d = S.pal.deal && S.pal.deal.find(x => x.zone === it.zone);
+      return `<div role="button" tabindex="0" class="it pick ${sel === it.zone ? 'on' : ''}" data-palitem="${it.zone}">
+        <span class="sw" style="background:${lchHex(it.toHue, it.toC, 0.6)}"></span>
+        <span><b>${esc(it.name)}</b> <span class="dim">${Math.max(1, Math.round(it.area * 100))}% of the picture${d && d.role === 'accent' ? ' · holding the accent' : ''}</span></span></div>`; }).join('');
+    return `<div class="card" id="palCard"><div class="row tight"><div class="k grow">Palette structures</div>${S.pal.deal ? '<button id="palClear" class="small">Forget the deal</button>' : ''}</div>
+      <p class="small dim">Tap a structure, then tap one of your items and one of its colours — or deal the whole structure across every item at once and keep re-dealing until you like it. Every deal is measured before you see it.</p>
+      <div class="chips">${chips}</div>
+      ${p ? `<p class="small dim">${esc(p.about)}</p>
+        <div class="items">${rows}</div>
+        <div class="pal">${p.pal.map(h => `<span role="button" tabindex="0" class="sw big ${sel ? 'live' : ''}" data-palsw="${esc(h)}" style="background:${h}"></span>`).join('')}</div>
+        <p class="small dim">${sel ? `Tap a colour to give it to <b>${esc((items.find(i => i.zone === sel) || {}).name || '')}</b>.` : 'Tap one of your items above to give it one of these colours.'}</p>
+        <div class="row wrap"><button id="palDeal" class="primary">${S.pal.deal ? 'Deal again' : 'Deal this across my items'}</button>${S.pal.deal ? '<button id="palAgain" class="small">Try another</button>' : ''}</div>
+        ${S.pal.note ? `<p class="small ${/no harm/.test(S.pal.note) ? 'dim' : 'warn'}">${esc(S.pal.note)}</p>` : ''}` : ''}</div>`;
+  }
+  function wirePalette(body) {
+    body.querySelectorAll('[data-pal]').forEach(b => b.onclick = () => { S.pal.id = b.dataset.pal === S.pal.id ? '' : b.dataset.pal; S.pal.deal = null; S.pal.note = ''; render(); });
+    body.querySelectorAll('[data-palitem]').forEach(b => b.onclick = () => { const z = +b.dataset.palitem; S.pal.sel = S.pal.sel === z ? 0 : z; render(); });
+    body.querySelectorAll('[data-palsw]').forEach(b => b.onclick = () => {
+      if (!S.pal.sel) return toast('Tap one of your items first');
+      palSet(palAssign(S.extra, S.pal.sel, b.dataset.palsw), '', S.pal.deal, 0);
+    });
+    if ($('#palDeal', body)) $('#palDeal', body).onclick = () => palDeal(!!S.pal.deal);
+    if ($('#palAgain', body)) $('#palAgain', body).onclick = () => palDeal(true);
+    if ($('#palClear', body)) $('#palClear', body).onclick = () => { S.pal.deal = null; S.pal.note = ''; render(); };
+  }
   function suggStatus(g) {
     const z = S.suggZ, cov = liveCoverage(), rows = [];
     if ((S.extra.ambAmt || 0) > 0 && g.ambience.colour) rows.push(`<div class="it">${sw(g.ambience.hex)}<span><b>Ambience</b> → ${esc(g.ambience.colour)}: on, at ${Math.round(S.extra.ambAmt * 100)}%</span></div>`);
@@ -861,6 +942,8 @@ export async function startApp(host, root) {
           <label>Aspect matte<select id="matte"><option value="none" ${!S.matte ? 'selected' : ''}>No matte</option>${Object.keys(C.aspect).sort((a, b) => a - b).map(a => `<option value="${a}" ${S.matte && L.A === a ? 'selected' : ''}>${esc(C.aspect[a].name)}</option>`).join('')}</select></label></div>
         <p class="small dim">${esc((C.color[L.C] || {}).recipe || '')} ${esc((C.medium[L.M] || {}).recipe || '')}</p>`}
 
+      ${paletteHTML()}
+
       ${S.frame ? card('zonesCard', 'Colour zones', 'Pick any colour in your shot and move it somewhere else — a wall, a shirt, the sky — without drawing a mask. Up to ' + ZONES + ' at a time. Watch the preview as you drag.', zonesHTML(!simple), zoneKeys) : ''}
 
       ${card('gradeCard', simple ? 'The main controls' : 'Grade', simple ? 'The four that change a shot most. Double-click a slider to put it back.' : '',
@@ -909,6 +992,7 @@ export async function startApp(host, root) {
       const h = z[2] === 'Hue' ? v : +X[`z${n}Hue`], w = z[2] === 'Wid' ? v : +X[`z${n}Wid`];
       repaint(`X:z${n}Wid`, sliceBand(h, w)); if (z[2] === 'Hue') { repaint(`X:z${n}Hue`, null, lchHex(h, 0.22));
         ['Cmin', 'Cmax'].forEach(k => repaint(`X:z${n}${k}`, satBand(h))); ['Lmin', 'Lmax'].forEach(k => repaint(`X:z${n}${k}`, lightBand(h))); } };
+    wirePalette(body);
     wireSliders(body, (id, v) => { const [obj, key] = id.split(':'); (obj === 'G' ? S.look.G : S.extra)[key] = v; bands(key, v); drawStage(); });
     if ($('#apply', body)) $('#apply', body).onclick = () => busy('Applying', () => applyLookToClips(S.look, S.extra, S.input, S.matte));
     if ($('#update', body)) $('#update', body).onclick = () => busy('Saving', () => saveCurrentAsPreset($('#rname', body).value, false));

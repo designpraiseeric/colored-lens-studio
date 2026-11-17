@@ -285,3 +285,11 @@ select option { background: #17161A; color: #FFFFFF; }
 /* The question a tapped chip is answering, shown above the box so the box holds only the user's own words. */
 .answering { background: var(--p2); border-left: 2px solid var(--acc); border-radius: 3px; padding: 3px 6px; }
 .answering .small { color: var(--ink); }
+
+/* Palette structures: the swatch strip and the item picker. */
+.pal { display: flex; flex-wrap: wrap; margin: 6px 0 2px; }
+.sw.big { width: 34px; height: 26px; border-radius: 4px; margin: 0 5px 5px 0; border: 1px solid var(--line); display: inline-block; }
+.sw.big.live { cursor: pointer; }
+.sw.big.live:hover { border-color: var(--acc); }
+.it.pick { cursor: pointer; border-radius: 4px; padding: 2px 4px; }
+.it.pick.on { background: var(--p2); box-shadow: inset 0 0 0 1px var(--acc); }
