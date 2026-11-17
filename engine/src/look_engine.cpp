@@ -236,8 +236,13 @@ V3 applySkinGuard(V3 src, V3 out, const Setup& s) {
   V3 so = srgbToOklab(src); float sw = skinWeight(so), w = sw * s.skinGuard;
   if (w <= 0.001f && std::fabs(lift) * sw <= 0.0005f) return out;
   V3 go = srgbToOklab(out);
-  // a dark face's shadows carry the least colour, so a zone grabs them least; this lifts by skin weight instead
-  go.r += lift * sw;
+  // a dark face's shadows carry the least colour, so a zone grabs them least; this lifts by skin weight instead.
+  // A lift is for shadows, so a bright skin-coloured surface (a warm wall, wood) gets almost none of it, and
+  // what is left can never push a pixel past the top: otherwise "lift the face" lifts the room and blows it.
+  if (lift > 0) { float shadowy = 1 - smoothstepf(0.45f, 0.85f, so.r);
+    go.r += lift * sw * shadowy;
+    float ceil0 = so.r > 0.93f ? so.r : 0.93f; if (go.r > ceil0) go.r = ceil0;
+  } else go.r += lift * sw;
   float sC = std::hypot(so.g, so.b), sh = std::atan2(so.b, so.g), gC = std::hypot(go.g, go.b), gh = std::atan2(go.b, go.g);
   float dh = sh - gh; while (dh > 3.14159265f) dh -= 6.2831853f; while (dh < -3.14159265f) dh += 6.2831853f;
   float h = gh + dh * w * s.skinHue;
@@ -259,9 +264,12 @@ V3 applySkinGuard(V3 src, V3 out, const Setup& s) {
 V3 applyZones(V3 src, V3 out, const Setup& s) {
   if (!s.zones) return out;
   V3 so = srgbToOklab(src), go = srgbToOklab(out);
+  const float oL = go.r;   // what the look left, before any zone moves it: the zones' headroom is measured from here
+  const float room = 1 - smoothstepf(0.82f, 0.97f, oL);   // how much room the picture still has at this pixel
   float sC = std::hypot(so.g, so.b), sh = std::atan2(so.b, so.g) * 57.29578f; if (sh < 0) sh += 360;
   auto soft = [](float x, float lo, float hi, float e) { return smoothstepf(lo - e, lo + e, x) * (1 - smoothstepf(hi - e, hi + e, x)); };
-  if (s.ambAmt > 0) { float w = s.ambAmt * smoothstepf(0.12f, 0.55f, go.r), h = s.ambHue * 0.01745329f; go.g += 0.07f * w * std::cos(h); go.b += 0.07f * w * std::sin(h); }
+  // Ambience is the colour of the air; on a pixel with no room left it is a pinned channel, so it rolls off too.
+  if (s.ambAmt > 0) { float w = s.ambAmt * smoothstepf(0.12f, 0.55f, go.r) * room, h = s.ambHue * 0.01745329f; go.g += 0.07f * w * std::cos(h); go.b += 0.07f * w * std::sin(h); }
   // Skin Guard holds faces back from the zones too; the guard afterwards cannot, since it only ever puts colour back.
   float keep = s.skinGuard > 0 ? 1 - skinWeight(so, 0.017f) * s.skinGuard : 1.f;
   for (int i = 0; i < 8; i++) { const float* z = s.z[i]; if (z[0] <= 0) continue;
@@ -272,7 +280,14 @@ V3 applyZones(V3 src, V3 out, const Setup& s) {
     // Skin Guard holds a zone off a face's COLOUR, not off its exposure: lifting an underexposed face is ordinary
     // grading, and refusing it left the plugin able to diagnose a dark face with no way to act on it.
     float wl = w / std::max(1e-6f, keep);
-    go.g += (tc * std::cos(th) - go.g) * w; go.b += (tc * std::sin(th) - go.b) * w; go.r += z[9] * wl; }
+    // Piling colour onto a near-white pixel pins a channel and twists the hues there, so a zone that would
+    // ADD colour rolls off with the headroom. Taking colour away is always safe.
+    float tgA = tc * std::cos(th), tgB = tc * std::sin(th);
+    float wc = std::hypot(tgA, tgB) > std::hypot(go.g, go.b) ? w * room : w;
+    go.g += (tgA - go.g) * wc; go.b += (tgB - go.b) * wc; go.r += z[9] * wl; }
+  // A zone must not spend headroom the picture does not have: free up to 0.93, beyond that only as far as the
+  // look or the source already reached — the same hold Skin Guard puts on a face.
+  { float ceil1 = std::max(oL, so.r); if (ceil1 < 0.93f) ceil1 = 0.93f; if (go.r > ceil1) go.r = ceil1; }
   return oklabToSrgb(go);
 }
 

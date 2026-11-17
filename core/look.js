@@ -179,7 +179,13 @@ export function applySkinGuard(src, out, p) {
   const go = toLCh(srgbToOklab(...out)); let [L, C, h] = go;
   // Lift (or settle) the face itself. A colour-qualified zone grabs a dark face's shadows least, because that is
   // where the colour is — so the one thing the reading most often asks for could not be done with a zone.
-  L += lift * sw;
+  // Two holds, both learned the hard way on 17 Nov: a lift is for SHADOWS, so a bright skin-coloured surface
+  // (a warm wall, a wooden door — this frame has both) gets almost none of it, and whatever is left can never
+  // push a pixel past the top. Without these, "lift the face" lifted the room with it and blew the highlights.
+  if (lift > 0) { const shadowy = 1 - smooth(0.45, 0.85, so[0]);
+    L += lift * sw * shadowy;
+    const ceil = Math.max(so[0], 0.93); if (L > ceil) L = ceil;
+  } else L += lift * sw;
   // Hue: a few degrees of drift is grading; twenty is skin that has stopped being skin. A proportional pull always
   // lets a strong enough look through — at guard 0.7 it gave back only 56% of the shift, which is how looks were
   // landing 13° to 22° off the line — so the drift is capped instead.
@@ -224,8 +230,12 @@ export const hasZones = p => !!p && ((p.ambAmt || 0) > 0 || zoneList().some(i =>
 export function applyZones(src, out, p) {
   if (!hasZones(p)) return out;
   const so = srgbToOklab(...src), go = srgbToOklab(...out), sC = Math.hypot(so[1], so[2]); let sh = Math.atan2(so[2], so[1]) * 57.29578; if (sh < 0) sh += 360;
+  const oL = go[0];   // what the look left, before any zone moves it: the zones' own headroom is measured from here
+  const room = 1 - smooth(0.82, 0.97, oL);   // how much room the picture still has at this pixel
   const soft = (x, lo, hi, e) => smooth(lo - e, lo + e, x) * (1 - smooth(hi - e, hi + e, x));
-  if (p.ambAmt > 0) { const w = p.ambAmt * smooth(0.12, 0.55, go[0]), h = p.ambHue * 0.01745329; go[1] += 0.07 * w * Math.cos(h); go[2] += 0.07 * w * Math.sin(h); }
+  // Ambience is the colour of the air. On a pixel with no room left it is not air, it is a pinned channel,
+  // so it rolls off with the headroom exactly as a zone's colour does.
+  if (p.ambAmt > 0) { const w = p.ambAmt * smooth(0.12, 0.55, go[0]) * room, h = p.ambHue * 0.01745329; go[1] += 0.07 * w * Math.cos(h); go[2] += 0.07 * w * Math.sin(h); }
   // Skin Guard holds faces back from the zones too. Without this a zone aimed at a wall paints the shadows on a face,
   // and the guard afterwards cannot see it: the guard only ever puts colour back, never takes away colour something added.
   const keep = p.skinGuard > 0 ? 1 - skinWeight([so[0], sC, sh], 0.017) * p.skinGuard : 1;
@@ -237,7 +247,14 @@ export function applyZones(src, out, p) {
     // underexposed face is the most ordinary thing a colourist does, and refusing it was why the plugin could
     // diagnose "the face is underexposed" and then have no way to act on it.
     const wl = w / Math.max(1e-6, keep);   // the same weight with the skin suppression taken back out
-    go[1] += (tc * Math.cos(th) - go[1]) * w; go[2] += (tc * Math.sin(th) - go[2]) * w; go[0] += z[9] * wl; }
+    // Piling colour onto a near-white pixel is what pins a channel at the top and twists the hues there, so a
+    // zone that would ADD colour is rolled off as the picture runs out of room. Taking colour away is always safe.
+    const tgA = tc * Math.cos(th), tgB = tc * Math.sin(th);
+    const wc = Math.hypot(tgA, tgB) > Math.hypot(go[1], go[2]) ? w * room : w;
+    go[1] += (tgA - go[1]) * wc; go[2] += (tgB - go[2]) * wc; go[0] += z[9] * wl; }
+  // A zone must not spend headroom the picture does not have. It can brighten freely up to 0.93, and beyond
+  // that only as far as the look or the source already reached — the same hold Skin Guard puts on a face.
+  { const ceil = Math.max(oL, so[0], 0.93); if (go[0] > ceil) go[0] = ceil; }
   return oklabToLin(go[0], go[1], go[2]).map(v => Math.min(1, Math.max(0, lin2srgb(v))));
 }
 

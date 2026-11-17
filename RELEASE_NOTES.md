@@ -1,6 +1,12 @@
 # Release notes
 Each `## <version>` block becomes the text of the in-app update banner and the GitHub Release.
 
+## 0.12.2
+"Lift the face" was lifting the room with it.
+- A lift by skin weight reaches anything skin-coloured, and this shot has a warm wall and a wooden door. Lifting the face was therefore lifting those too, and blowing them. A lift is for **shadows** now: a bright skin-coloured surface gets almost none of it, and what is left can never push a pixel past white.
+- **A colour zone can no longer spend room the picture does not have.** It brightens freely until the picture runs short, and beyond that only as far as the shot already reached. Colour piled onto a near-white area — a zone's colour, and the ambience — rolls off the same way, because that is what pins a channel and twists the hues at the top. Taking colour away is untouched: it was never the problem.
+- Measured on the shot all of this was found on, building a grade item by item now adds **no clipping at all** over the plain overall look, where yesterday it added six per cent of the picture. Two looks still cannot be worn by this shot at any strength, and the panel still says so rather than offering them quietly.
+
 ## 0.12.1
 Talking to the AI is no longer as slow as asking it to start over.
 - **Answering one of its questions took as long as a fresh study** — a minute or two — because telling it anything re-ran the whole inventory of the frame. It now replies to what you said, keeping the reading it already has, and only changes the parts your answer actually changes. The contact sheet is not sent again either.
