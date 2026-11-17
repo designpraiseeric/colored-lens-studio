@@ -71,7 +71,11 @@
   X(z7Amt, F, "Zone 7 amount", 0, 1, 0, "Colour zones") X(z7Hue, F, "Zone 7 pick hue", 0, 360, 0, "Colour zones") X(z7Wid, F, "Zone 7 hue width", 5, 120, 25, "Colour zones") X(z7Cmin, F, "Zone 7 min colourfulness", 0, 0.4, 0.03, "Colour zones") X(z7Cmax, F, "Zone 7 max colourfulness", 0, 0.5, 0.4, "Colour zones") \
   X(z7Lmin, F, "Zone 7 darkest", 0, 1, 0, "Colour zones") X(z7Lmax, F, "Zone 7 brightest", 0, 1, 1, "Colour zones") X(z7ToHue, F, "Zone 7 new hue", 0, 360, 0, "Colour zones") X(z7ToC, F, "Zone 7 new colourfulness", 0, 0.4, 0.1, "Colour zones") X(z7dL, F, "Zone 7 lighter / darker", -0.3, 0.3, 0, "Colour zones") \
   X(z8Amt, F, "Zone 8 amount", 0, 1, 0, "Colour zones") X(z8Hue, F, "Zone 8 pick hue", 0, 360, 0, "Colour zones") X(z8Wid, F, "Zone 8 hue width", 5, 120, 25, "Colour zones") X(z8Cmin, F, "Zone 8 min colourfulness", 0, 0.4, 0.03, "Colour zones") X(z8Cmax, F, "Zone 8 max colourfulness", 0, 0.5, 0.4, "Colour zones") \
-  X(z8Lmin, F, "Zone 8 darkest", 0, 1, 0, "Colour zones") X(z8Lmax, F, "Zone 8 brightest", 0, 1, 1, "Colour zones") X(z8ToHue, F, "Zone 8 new hue", 0, 360, 0, "Colour zones") X(z8ToC, F, "Zone 8 new colourfulness", 0, 0.4, 0.1, "Colour zones") X(z8dL, F, "Zone 8 lighter / darker", -0.3, 0.3, 0, "Colour zones")
+  X(z8Lmin, F, "Zone 8 darkest", 0, 1, 0, "Colour zones") X(z8Lmax, F, "Zone 8 brightest", 0, 1, 1, "Colour zones") X(z8ToHue, F, "Zone 8 new hue", 0, 360, 0, "Colour zones") X(z8ToC, F, "Zone 8 new colourfulness", 0, 0.4, 0.1, "Colour zones") X(z8dL, F, "Zone 8 lighter / darker", -0.3, 0.3, 0, "Colour zones") \
+  /* Appended 17 Nov 2026. A dark face's shadows carry the least colour, so a colour-qualified zone grabs them
+     least — exactly the pixels that need lifting when the reading says "the face is underexposed". This lifts by
+     skin weight instead of by hue and colourfulness, so it reaches them. */ \
+  X(skinLift, F, "Lift the face", -0.3, 0.3, 0, "Skin Guard")
 
 namespace lukuluku {
 enum ParamId {

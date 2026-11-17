@@ -2,14 +2,11 @@
   "recorded": "2026-11-17",
   "frames": {
     "ext-mcu.jpg": {},
-    "aut-barry-jenkins.jpg": {
-      "cross-dream": [
-        "skin-hue"
-      ],
-      "golden-green": [
-        "skin-hue"
+    "aut-barry-jenkins.jpg": {},
+    "aut-wes-anderson.jpg": {
+      "technicolor": [
+        "face-blown"
       ]
-    },
-    "aut-wes-anderson.jpg": {}
+    }
   }
 }

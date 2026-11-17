@@ -170,7 +170,7 @@ struct Setup {
   float uSat, vib, cs, sn; bool hueOn = false;
   V3 wLift, wGamE, wGainM, wOff, satR, LS, LM, LH, LSat; float lowR, highR, pivot, ucon; bool wpost;
   float hi, sh, wh, bk, bri, gam, lutMix, sharpU;
-  float matchAmt, mLg, mLo, mA, mB, mCg; float skinGuard, skinHue, skinDensity, skinLight;
+  float matchAmt, mLg, mLo, mA, mB, mCg; float skinGuard, skinHue, skinDensity, skinLight, skinLift;
   float z[8][10]; bool zones; float ambHue, ambAmt;
 };
 inline V3 puck(float x, float y) { return {1.14f * y, -0.395f * x - 0.581f * y, 2.032f * x}; }
@@ -203,7 +203,7 @@ Setup makeSetup(const Params& p) {
   for (int i = 0; i < 8; i++) { const int base = i < 4 ? P_z1Amt + i * 10 : P_z5Amt + (i - 4) * 10;
     for (int k = 0; k < 10; k++) s.z[i][k] = float(p.v[base + k]); if (s.z[i][0] > 0) s.zones = true; }
   s.ambHue = float(p[P_ambHue]); s.ambAmt = float(p[P_ambAmt]); if (s.ambAmt > 0) s.zones = true;
-  s.skinGuard = float(p[P_skinGuard]); s.skinHue = float(p[P_skinHue]); s.skinDensity = float(p[P_skinDensity]); s.skinLight = float(p[P_skinLight]);
+  s.skinGuard = float(p[P_skinGuard]); s.skinHue = float(p[P_skinHue]); s.skinDensity = float(p[P_skinDensity]); s.skinLight = float(p[P_skinLight]); s.skinLift = float(p[P_skinLift]);
   return s;
 }
 
@@ -225,15 +225,19 @@ V3 applyMatch(V3 rgb, const Setup& s) {
 }
 /** `cMin` is the colourfulness a pixel needs before it can read as skin. Zones pass a lower floor: skin in shadow is
     barely colourful, and a neutral zone aims straight at it. Mirrors skinWeight in core/look.js. */
-float skinWeight(V3 lab, float cMin = 0.025f) {
+float skinWeight(V3 lab, float cMin = 0.012f) {
   float L = lab.r, Cc = std::hypot(lab.g, lab.b), h = std::atan2(lab.b, lab.g) * 57.29578f; if (h < 0) h += 360;
   auto soft = [](float x, float lo, float hi, float e) { return smoothstepf(lo - e, lo + e, x) * (1 - smoothstepf(hi - e, hi + e, x)); };
-  return soft(h, 30, 86, 7) * soft(Cc, cMin, 0.17f, 0.012f) * soft(L, 0.17f, 0.93f, 0.05f);
+  return soft(h, 18, 92, 7) * soft(Cc, cMin, 0.17f, 0.006f) * soft(L, 0.15f, 0.94f, 0.05f);
 }
 V3 applySkinGuard(V3 src, V3 out, const Setup& s) {
-  if (s.skinGuard <= 0) return out;
-  V3 so = srgbToOklab(src); float w = skinWeight(so) * s.skinGuard; if (w <= 0.001f) return out;
+  const float lift = s.skinLift;
+  if (s.skinGuard <= 0 && lift == 0) return out;
+  V3 so = srgbToOklab(src); float sw = skinWeight(so), w = sw * s.skinGuard;
+  if (w <= 0.001f && std::fabs(lift) * sw <= 0.0005f) return out;
   V3 go = srgbToOklab(out);
+  // a dark face's shadows carry the least colour, so a zone grabs them least; this lifts by skin weight instead
+  go.r += lift * sw;
   float sC = std::hypot(so.g, so.b), sh = std::atan2(so.b, so.g), gC = std::hypot(go.g, go.b), gh = std::atan2(go.b, go.g);
   float dh = sh - gh; while (dh > 3.14159265f) dh -= 6.2831853f; while (dh < -3.14159265f) dh += 6.2831853f;
   float h = gh + dh * w * s.skinHue;

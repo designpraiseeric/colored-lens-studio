@@ -27,7 +27,7 @@ const strip = s => String(s ?? '').replace(/<[^>]+>/g, '');
 const cap = s => s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
 const pct = v => Math.round(v * 100) + '%';
 const clone = o => JSON.parse(JSON.stringify(o));
-const XDEF = { skinGuard: 0, skinHue: 0.8, skinDensity: 0.7, skinLight: 0.5, matchAmt: 0, mLg: 1, mLo: 0, mA: 0, mB: 0, mCg: 1, ...zoneDefaults() };
+const XDEF = { skinGuard: 0, skinLift: 0, skinHue: 0.8, skinDensity: 0.7, skinLight: 0.5, matchAmt: 0, mLg: 1, mLo: 0, mA: 0, mB: 0, mCg: 1, ...zoneDefaults() };
 const NEUTRAL_LOOK = () => ({ L: 'L1', O: 'O1', H: 'H0', K: 'K0', D: 'D0', C: 'C0', M: 'M0', A: '2.39', G: fullGrade({}) });
 const normIntent = i => ({ genre: answers(i.genre), feeling: answers(i.feeling), role: answers(i.role), note: i.note || '' });
 const lookCode = (l, matte) => { const c = formatCode(l); return matte ? c : c.replace(/·[\d.]+$/, ''); };
@@ -867,8 +867,9 @@ export async function startApp(host, root) {
         + (hasGrain || hasHal || hasDiff || hasVig ? '' : '<p class="small dim">This look has no grain, halation, glow or vignette to scale. Choose a film medium above to add them.</p>'),
         [['G', 'lutMix'], ['G', 'grainK'], ['G', 'halK'], ['G', 'diffK'], ['G', 'vigK']])}
 
-      ${card('skinCard2', 'Skin Guard', 'Holds faces back from the look. Raise it if skin went odd.',
-        slider('X', 'skinGuard', 'Skin Guard', 0, 1, 0.01) + (simple ? '' : slider('X', 'skinHue', 'Protect hue', 0, 1, 0.01) + slider('X', 'skinDensity', 'Protect density', 0, 1, 0.01) + slider('X', 'skinLight', 'Protect light', 0, 1, 0.01)),
+      ${card('skinCard2', 'Skin Guard', 'Holds faces back from the look, and carries the face\u2019s own exposure. Raise the guard if skin went odd; use Lift the face when the face is darker than the rest of the shot.',
+        slider('X', 'skinGuard', 'Skin Guard', 0, 1, 0.01) + slider('X', 'skinLift', 'Lift the face', -0.3, 0.3, 0.005)
+        + (simple ? '' : slider('X', 'skinHue', 'Protect hue', 0, 1, 0.01) + slider('X', 'skinDensity', 'Protect density', 0, 1, 0.01) + slider('X', 'skinLight', 'Protect light', 0, 1, 0.01)),
         [['X', 'skinGuard'], ['X', 'skinHue'], ['X', 'skinDensity'], ['X', 'skinLight']])}
 
       ${simple ? '' : `<div class="card"><div class="k">Match to reference</div>${X.matchAmt > 0 ? `<p class="small">Matching ${esc(S.refName || 'a reference')}.</p>${slider('X', 'matchAmt', 'Match amount', 0, 1, 0.01)}` : '<p class="small dim">Set a frame from your timeline as the reference, then park on the shot to match. Or use “Match my shot to this” on a similar frame in Shot.</p>'}

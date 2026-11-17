@@ -5,7 +5,15 @@ import { srgbToOklab, toLCh, hueDist, srgb2lin, luma, oklabToSrgb, rgbToHex } fr
 import { downsample, makeFrame } from './image.js';
 import { activeArea } from './analysis.js';
 
+// Two gamuts, because finding a face and protecting one want opposite things.
+// SKIN is for DETECTION: narrow, so the warm wall and the wooden door are not mistaken for a person. Widening it
+// made the detector worse, not better — the mask swallowed half the frame and the face-sized region was lost.
 export const SKIN = { hueLo: 28, hueHi: 88, cLo: 0.022, cHi: 0.145, lLo: 0.16, lHi: 0.94, hueCentre: 56 };
+// SKIN_WIDE is for PROTECTION and MEASUREMENT: every pixel that could be part of a person, including the deep and
+// the barely-coloured. The old single gamut excluded dark skin outright — the founder's own subject measures hue
+// 24.1° at colourfulness 0.0158, so skinWeight scored her face 0.001 and Skin Guard, the zone suppression and the
+// face report were all looking straight through her. Do not narrow this again without testing on dark skin.
+export const SKIN_WIDE = { hueLo: 18, hueHi: 92, cLo: 0.012, cHi: 0.165, lLo: 0.14, lHi: 0.95 };
 const expectedChroma = L => 0.015 + 0.05 * L; // below this, skin reads grey / ashy / "muddy"
 
 function pixelInfo(f) {

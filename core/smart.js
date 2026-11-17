@@ -361,7 +361,11 @@ export function zonesFor(sg, study, swatches = [], frame = null) {
     if (!to || !from) { skipped.push({ item: it.item, why: 'the AI did not give a usable colour for it' }); continue; }
     if (isSkin) { const dL = to.L - from.L;
       if (Math.abs(dL) < 0.03) { skipped.push({ item: it.item, why: 'it is already about this bright, and its colour is left to Skin Guard' }); continue; }
-      cands.push({ it, from, to: { ...from, L: to.L }, change: Math.abs(dL), skin: true, dL }); continue; }
+      // Not a zone: a zone is qualified by colour, and a dark face's shadows are where the colour runs out, so the
+      // pixels most in need of the lift would get the least of it. Skin Guard lifts by skin weight instead.
+      params.skinLift = +Math.max(-0.25, Math.min(0.25, dL)).toFixed(4);
+      mapped.push({ item: it.item, to: it.colour, zone: 0, lift: params.skinLift });
+      continue; }
     // the AI's idea of the current colour is approximate: use the nearest colour actually measured in the frame
     let best = null, bd = 0.12; for (const c of sw) { const d = Math.hypot(c.lab[0] - from.lab[0], (c.lab[1] - from.lab[1]) * 2, (c.lab[2] - from.lab[2]) * 2); if (d < bd) { bd = d; best = c; } } if (best) from = best;
     let dh = Math.abs(from.h - to.h); if (dh > 180) dh = 360 - dh; const change = Math.hypot(to.lab[1] - from.lab[1], to.lab[2] - from.lab[2]) + Math.abs(to.L - from.L) * 0.5;
@@ -392,7 +396,9 @@ export function zonesFor(sg, study, swatches = [], frame = null) {
     P('Amt', 0.85); P('Hue', c.from.h); P('Wid', c.from.C < 0.035 ? 34 : 24);
     P('Cmin', n ? 0 : Math.max(0.010, c.from.C * 0.45)); P('Cmax', n ? 0.015 : 0.5);
     P('Lmin', Math.max(0, c.from.L - (n ? 0.14 : 0.32))); P('Lmax', Math.min(1, c.from.L + (n ? 0.14 : 0.32)));
-    P('ToHue', c.to.h); P('ToC', Math.min(0.4, c.to.C)); P('dL', Math.max(-0.15, Math.min(0.15, (c.to.L - c.from.L) * 0.5)));
+    P('ToHue', c.to.h); P('ToC', Math.min(0.4, c.to.C));
+    // A skin zone exists to answer "the face is underexposed", so it carries the whole move rather than half of it.
+    P('dL', Math.max(-0.18, Math.min(0.18, (c.to.L - c.from.L) * (c.skin ? 1 : 0.5))));
     mapped.push({ item: c.it.item, to: c.it.colour, zone: i });
   }
   return { params, mapped, skipped };

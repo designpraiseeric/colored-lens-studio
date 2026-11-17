@@ -7,9 +7,9 @@ import { decodeImage, encodePNG, downsample, makeFrame } from '../core/image.js'
 import { readFrame, classifyHue } from '../core/analysis.js';
 import { checkSkin } from '../core/skin.js';
 import { shotRecord, encodeShot, decodeShot, readSequence, scriptCSV } from '../core/script.js';
-import { parseCode, parseLookInput, formatCode, shareLink, bakeCube, lutFromBin, computeMatch, matchStats, makePixelFn } from '../core/look.js';
+import { parseCode, parseLookInput, formatCode, shareLink, bakeCube, lutFromBin, computeMatch, matchStats, makePixelFn, skinWeight } from '../core/look.js';
 import { cmpVersion, Updater } from '../core/updates.js';
-import { hexToRgb } from '../core/color.js';
+import { hexToRgb, srgbToOklab, toLCh } from '../core/color.js';
 import { pickDirections, answers, whyFor, continuity, pictureOf } from '../core/directions.js';
 import { validate as smartValidate, parseReply, ask as smartAsk, resolveProvider, buildPrompt, zonesFor } from '../core/smart.js';
 import { directionsFromPicks } from '../core/directions.js';
@@ -187,17 +187,38 @@ test('Automatic picks Ollama when it has a vision model, else a Gemini key, else
   assert.equal(await resolveProvider({ provider: 'auto', ollamaUrl: 'x' }, async () => { throw new Error('down'); }), null);
 });
 
-test('a suggestion that wants a brighter face gets a zone for it', () => {
+test('a suggestion that wants a brighter face gets one', () => {
   // "The face is underexposed" is the most common thing wrong with a shot, and for a long time the one thing the
   // mapper refused to act on: skin was skipped outright, so the only tool that could answer it was never built.
+  // It is not a colour zone — a zone is qualified by colour, and a dark face's shadows are where the colour runs
+  // out — so it becomes a skin lift, which goes by skin weight and reaches them.
   const study = { items: [{ name: 'Woman\'s face', hex: '#4a3a33' }, { name: 'shirt', hex: '#d7e7dd' }] };
   const sg = { items: [{ item: 'Woman\'s face', hex: '#6f574c', colour: 'luminous warm brown' },
                        { item: 'shirt', hex: '#7fd6a8', colour: 'saturated mint' }] };
   const z = zonesFor(sg, study, [], null);
   const face = z.mapped.find(m => /face/i.test(m.item));
-  assert.ok(face, 'the face should map to a zone: ' + JSON.stringify(z.skipped));
-  const i = face.zone;
-  assert.ok(z.params[`z${i}dL`] > 0.01, 'and that zone should lift it: ' + z.params[`z${i}dL`]);
-  assert.ok(Math.abs(z.params[`z${i}ToC`] - z.params[`z${i}Cmin`]) < 0.5, 'without repainting it');
+  assert.ok(face, 'the face should be acted on: ' + JSON.stringify(z.skipped));
+  assert.ok(z.params.skinLift > 0.05, 'and it should be lifted: ' + z.params.skinLift);
+  assert.equal(face.zone, 0, 'through the skin lift, not a colour zone');
   assert.ok(z.mapped.find(m => /shirt/i.test(m.item)), 'a pale mint shirt is a colour, not a grey: ' + JSON.stringify(z.skipped));
+});
+
+test('the face lift reaches a dark face where a colour zone cannot', () => {
+  // A dark face's shadows carry the least colour, so a zone qualified by hue and colourfulness grabs them least —
+  // exactly the pixels that need lifting when the reading says the face is underexposed. The lift goes by skin
+  // weight instead. Deep skin also has to be recognised as skin at all: the old gamut started at hue 28° and
+  // colourfulness 0.022 and scored this colour 0.001.
+  const deep = hexToRgb('#423736');
+  const lch = toLCh(srgbToOklab(...deep));
+  assert.ok(skinWeight(lch) > 0.6, `deep skin must read as skin, got ${skinWeight(lch).toFixed(3)}`);
+  const base = makePixelFn(parseCode('C0', cat), cat, luts, { extra: {} })(deep);
+  const lifted = makePixelFn(parseCode('C0', cat), cat, luts, { extra: { skinLift: 0.12 } })(deep);
+  const dL = toLCh(srgbToOklab(...lifted))[0] - toLCh(srgbToOklab(...base))[0];
+  assert.ok(dL > 0.08, `the lift should reach it, got ${dL.toFixed(3)}`);
+  // and it must not reach a wall that merely happens to be warm and grey
+  const wall = hexToRgb('#b7bbc7');
+  const w0 = makePixelFn(parseCode('C0', cat), cat, luts, { extra: {} })(wall);
+  const w1 = makePixelFn(parseCode('C0', cat), cat, luts, { extra: { skinLift: 0.12 } })(wall);
+  const dW = toLCh(srgbToOklab(...w1))[0] - toLCh(srgbToOklab(...w0))[0];
+  assert.ok(Math.abs(dW) < 0.02, `a cool grey wall is not a face, moved ${dW.toFixed(3)}`);
 });

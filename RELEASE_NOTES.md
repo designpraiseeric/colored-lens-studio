@@ -1,6 +1,13 @@
 # Release notes
 Each `## <version>` block becomes the text of the in-app update banner and the GitHub Release.
 
+## 0.12.0
+Dark skin is recognised as skin, and a face that is too dark can finally be lifted.
+- **The skin model excluded deep skin.** It started at hue 28° and colourfulness 0.022; a real subject in this project measures 24.1° at 0.0158, so every protection built on it — Skin Guard, the hold that keeps colour zones off faces, the checks that say whether a grade damaged a face — scored her face at 0.001 and looked straight through her. The gamut used for protection is now wide enough for the skin that actually turns up in front of this plugin. Finding a face and protecting one now use separate gamuts, because they want opposite things.
+- **"Lift the face" is a new control**, in the Skin Guard card. A colour zone is picked by colour, and a dark face's shadows are exactly where the colour runs out, so the pixels that most need lifting got the least of it. This lifts by how much a pixel reads as skin instead, so it reaches them — and it is what a suggestion asking for a brighter face now uses.
+- On the shot this was all found on: the face comes up 0.093 in the shadows with a tenth of a per cent of clipping, where the best suggestion this morning lifted it by blowing a tenth of her face to white. She now separates from the wall behind her instead of sinking into it.
+- Across the catalogue, looks that damage a picture: **1**, down from 35 this morning.
+
 ## 0.11.1
 The per-item half of a suggestion finally fires on real footage.
 - **A suggestion that wants a brighter face now gets one.** "The face is underexposed" is the commonest thing wrong with a shot, and a colour zone is the only tool that can answer it — but skin was refused outright, so the plugin could spot the problem and had no way to act on it. Skin now gets a zone that moves its exposure while its colour stays with Skin Guard. A suggestion that wants to repaint a face still does not get one.

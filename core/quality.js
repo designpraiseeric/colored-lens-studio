@@ -11,7 +11,7 @@
 // source sets a ceiling on what is obtainable, and the plugin's job is to reach that ceiling, never to go below it.
 import { srgbToOklab } from './color.js';
 import { downsample } from './image.js';
-import { checkSkin, SKIN } from './skin.js';
+import { checkSkin, SKIN_WIDE as SKIN } from './skin.js';
 
 // "Blown" and "crushed" mean what an editor means by them: a channel that has run out of 8-bit room, so two tones
 // that were different in the source are the same number now. Merely bright is not blown — a high-key frame is
@@ -272,10 +272,11 @@ export function scaleLook(look, extra, k, GRADE0, fullGrade) {
  */
 export function fitStrength(src, build, opts = {}) {
   const floor = opts.floor != null ? opts.floor : 0.35, tries = opts.tries || 4;
-  // judged at the same size the verdict is given at, or a look can pass the fit and fail the report
-  const small = src.w > 240 ? downsample(src, 240) : src;
+  // Rendered at the size it is handed, never pre-shrunk: downsampling before the render averages clipped pixels
+  // away, so a look could pass the fit and then fail the very report the fit was supposed to satisfy. Callers pass
+  // a frame already sized for the job — the panel uses the 240px preview frame.
   const skin = opts.skin;
-  const check = k => faults(gradeReport(small, renderWith(small, build(k)), { skin }), { allows: opts.allows });
+  const check = k => faults(gradeReport(src, renderWith(src, build(k)), { skin }), { allows: opts.allows });
   if (!check(1).length) return { k: 1, fitted: false, suits: true, faults: [] };
   const atFloor = check(floor);
   // Some looks simply do not suit some shots. Dialling one down to nothing to force it through would be a lie; the

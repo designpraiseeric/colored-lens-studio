@@ -166,14 +166,20 @@ export function applyMatch(rgb, p) { // display sRGB in/out
  * `cMin` is the colourfulness a pixel needs before it can read as skin at all. Skin Guard uses the default; colour
  * zones pass a lower floor, because skin in shadow is barely colourful and a neutral zone aims straight at it.
  */
-export function skinWeight(lch, cMin = 0.025) {
+export function skinWeight(lch, cMin = 0.012) {
   const [L, C, h] = lch; const soft = (x, lo, hi, e) => smooth(lo - e, lo + e, x) * (1 - smooth(hi - e, hi + e, x));
-  return soft(h, 30, 86, 7) * soft(C, cMin, 0.17, 0.012) * soft(L, 0.17, 0.93, 0.05);
+  return soft(h, 18, 92, 7) * soft(C, cMin, 0.17, 0.006) * soft(L, 0.15, 0.94, 0.05);
 }
 /** The look may add to skin, but cannot take away its hue, density or light beyond what you allow. */
 export function applySkinGuard(src, out, p) {
-  if (!p.skinGuard) return out; const so = toLCh(srgbToOklab(...src)), w = skinWeight(so) * p.skinGuard; if (w <= 0.001) return out;
+  const lift = p.skinLift || 0;
+  if (!p.skinGuard && !lift) return out;
+  const so = toLCh(srgbToOklab(...src)), sw = skinWeight(so), w = sw * p.skinGuard;
+  if (w <= 0.001 && Math.abs(lift) * sw <= 0.0005) return out;
   const go = toLCh(srgbToOklab(...out)); let [L, C, h] = go;
+  // Lift (or settle) the face itself. A colour-qualified zone grabs a dark face's shadows least, because that is
+  // where the colour is — so the one thing the reading most often asks for could not be done with a zone.
+  L += lift * sw;
   // Hue: a few degrees of drift is grading; twenty is skin that has stopped being skin. A proportional pull always
   // lets a strong enough look through — at guard 0.7 it gave back only 56% of the shift, which is how looks were
   // landing 13° to 22° off the line — so the drift is capped instead.
@@ -284,7 +290,7 @@ export function makePixelFn(look, cat, luts, opts = {}) {
     if (W.post) col = wheels(col, W, G.con).map(v => Math.min(1, Math.max(0, v)));
     col = col.map((v, i) => tex1D(CT.rgb[i], v * 0.996 + 0.002));
     if (in709 && hasZones(x)) col = applyZones(src, col, x);
-    if (in709 && x.skinGuard) col = applySkinGuard(src, col, x);
+    if (in709 && (x.skinGuard || x.skinLift)) col = applySkinGuard(src, col, x);
     return col;
   };
 }
@@ -315,7 +321,7 @@ export function lookToEngineParams(look, cat, extra = {}) {
     liftX: W.lift[0], liftY: W.lift[1], liftL: W.lift[2], liftS: W.lift[3], gammaX: W.gamma[0], gammaY: W.gamma[1], gammaL: W.gamma[2], gammaS: W.gamma[3],
     gainX: W.gain[0], gainY: W.gain[1], gainL: W.gain[2], gainS: W.gain[3], offX: W.offset[0], offY: W.offset[1], offL: W.offset[2], offS: W.offset[3],
     shX: LW.sh[0], shY: LW.sh[1], shL: LW.sh[2], shS: LW.sh[3], midX: LW.mid[0], midY: LW.mid[1], midL: LW.mid[2], midS: LW.mid[3], hiX: LW.hi[0], hiY: LW.hi[1], hiL: LW.hi[2], hiS: LW.hi[3],
-    skinGuard: 0, skinHue: 0.8, skinDensity: 0.7, skinLight: 0.5, matchAmt: 0, mLg: 1, mLo: 0, mA: 0, mB: 0, mCg: 1, grainAnim: 1, bypass: 0, ...zoneDefaults(),
+    skinGuard: 0, skinLift: 0, skinHue: 0.8, skinDensity: 0.7, skinLight: 0.5, matchAmt: 0, mLg: 1, mLo: 0, mA: 0, mB: 0, mCg: 1, grainAnim: 1, bypass: 0, ...zoneDefaults(),
     ...extra.params,
   };
 }
