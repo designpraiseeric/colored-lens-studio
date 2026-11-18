@@ -1,6 +1,6 @@
 # Colored Lens Studio — developer handoff
 
-**Purpose of this doc:** everything a new Claude session (or a new account) needs to take over this project with no other context. Keep it updated at every release. Last updated: 18 Nov 2026, 13:10 WAT, at v0.15.0 + the CEP After Effects panel (§11c).
+**Purpose of this doc:** everything a new Claude session (or a new account) needs to take over this project with no other context. Keep it updated at every release. Last updated: 18 Nov 2026, 13:50 WAT, at v0.16.0 (§11c: AE CEP panel, Gemini key ring).
 
 **This file now lives in the repo at `docs/HANDOFF.md`** (and `docs/after-effects-scope.md`), as well as in the claude.ai Project. Before 0.14.0 they existed only as Project uploads; the repo copy is the one to edit.
 
@@ -318,6 +318,7 @@ Claude-Session: https://claude.ai/code/session_...
 | 0.12.0 | **the skin model excluded deep skin** — hue 28°/chroma 0.022 against a real subject at 24.1°/0.0158, so every face protection scored her 0.001 and saw nothing. Gamut widened to 18–92°/0.012 and **split in two** (`SKIN` to find a face, `SKIN_WIDE` to protect and measure one); **`skinLift` ("Lift the face")** lifts by skin weight where a colour-qualified zone cannot reach; `fitStrength` stops pre-shrinking the frame. Debt: 2 → 1 |
 | 0.12.1 | **a reply is not a restudy**: `SYSTEM_TELL`/`buildTell` answer the editor from the reading the AI already has, with no fresh inventory and no contact sheet; the AI's own question sits above the message box instead of being pasted into it. The host test's chat leg was passing vacuously and now drives the real path |
 | 0.12.2 | **a lift is for shadows, and nothing spends room the picture has not got.** `skinLift` was lifting the warm wall and the wooden door as hard as the face; it is now shadow-weighted and hard-capped. Colour zones and the ambience gained a lightness ceiling and a headroom rolloff on any move that ADDS colour. On the founder's frame, per-item building went from adding 6.1 points of blown picture to adding **none** |
+| 0.16.0 | **Gemini key ring** (next saved key on a limit, tired key rests); **After Effects ships as a signed CEP panel** in the Mac installer (.zxp also released); AE timecode follows the comp start |
 | 0.15.0 | **After Effects panel (preview)**; share code works in UXP; plain zone names; cache keeps notes |
 | 0.14.1 | scan fixed; guarded render + crash card; Apple prompt fits 4,096 tokens; Skin Guard group renamed |
 | 0.14.0 | **a dark face is lifted, not the whole picture** (AI exposure tweaks routed to skinLift; per-suggestion tweaks; Strength = scaleLook incl. skinLift + zones 5–8; dock shows worst two faults; captions are not items) and **speed** (prefetch, per-shot cache, seconds + Stop). `tools/frame_bench.mjs` |
