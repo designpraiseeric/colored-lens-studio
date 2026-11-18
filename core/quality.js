@@ -299,6 +299,26 @@ export function fitStrength(src, build, opts = {}) {
   return { k, fitted: true, suits: true, faults: check(k), full };
 }
 
+/**
+ * Before any look is dialled down for milky blacks, set its black point back the way a colourist would: the smallest
+ * move of the grade's Blacks (build(d) = the look with Blacks moved by d, d <= 0) that clears the milky veil without
+ * crushing anything that was not crushed before. Shrinking the whole look instead took the accent colours with it.
+ * Returns { d } (0 when there was nothing to do or nothing safe to do) and the faults at that setting.
+ */
+export function holdBlacks(src, build, opts = {}) {
+  const skin = opts.skin, check = d => faults(gradeReport(src, renderWith(src, build(d)), { skin }), { allows: opts.allows });
+  const milky = fs => fs.some(f => f.id === 'milky'), crushes = fs => fs.filter(f => /crushed/.test(f.id)).length;
+  const at0 = check(0); if (!milky(at0)) return { d: 0, faults: at0 };
+  const lowest = opts.lowest ?? -1, atLow = check(lowest);
+  if (milky(atLow) || crushes(atLow) > crushes(at0)) {
+    // all the way down still milky, or it crushes: take the deepest setting that crushes nothing new
+    let lo = 0, hi = lowest; for (let i = 0; i < 6; i++) { const mid = (lo + hi) / 2; if (crushes(check(mid)) > crushes(at0)) hi = mid; else lo = mid; }
+    const d = Math.round(lo * 100) / 100; return { d, faults: check(d) };
+  }
+  let lo = 0, hi = lowest; for (let i = 0; i < 6; i++) { const mid = (lo + hi) / 2; if (milky(check(mid))) lo = mid; else hi = mid; }
+  const d = Math.floor(hi * 100) / 100; return { d, faults: check(d) };
+}
+
 /** Render a frame through a pixel function. Kept here so fitStrength has no host or test dependency. */
 export function renderWith(frame, fn) {
   const out = { w: frame.w, h: frame.h, data: new Uint8ClampedArray(frame.w * frame.h * 4) };

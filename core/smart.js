@@ -172,17 +172,29 @@ export async function ask(cfg, { prompt, imageB64, images = [], history = [], sy
     // over (cfg.onKeyLimit lets the panel rest the tired one until its limit resets).
     const first = cfg.geminiModel || DEFAULTS.geminiModel, order = [first, ...GEMINI_FALLBACKS.filter(m => m !== first)];
     const wait = ms => new Promise(r => setTimeout(r, ms)); let j = null, lastErr = null, limited = 0;
-    for (const key of keys) {
-      let keyLimited = false;
-      for (let i = 0; i < order.length && !j && !keyLimited; i++) {
-        for (let attempt = 0; attempt < (i === 0 ? 2 : 1) && !j; attempt++) {
-          try { j = await call(order[i], key); } catch (e) { lastErr = e; const m = String(e.message);
-            if (isLimit(m)) { keyLimited = true; limited++; try { cfg.onKeyLimit && cfg.onKeyLimit(key, m); } catch {} break; } // this key is spent: next key
-            if (/answered (503|500|502|504)/.test(m) || /took too long/.test(m)) { if (i === 0 && attempt === 0) await wait(4000); continue; } // busy: retry, then next model
-            if (/answered 404/.test(m)) break; // this name is gone: next model
-            throw geminiError(e); } } }
-      if (j) { if (limited) try { cfg.onKeySwitch && cfg.onKeySwitch(key, limited); } catch {} break; }
-      if (!keyLimited) break; // the failure was not about this key's limit, so another key would not help
+    // When Google is busy (503), one quick pass down the models is often not enough: it tends to clear within a minute
+    // or two. So the pass is repeated in rounds with growing pauses, up to about three minutes in all, and the panel
+    // is told what is happening (cfg.onBusy). Giving up after ten seconds left the editor with stale suggestions.
+    const started = Date.now(), BUDGET = cfg.busyBudgetMs ?? 180000, pauses = cfg.busyPauses || [10000, 20000, 40000, 60000];
+    for (let round = 0; !j; round++) {
+      let busy = false;
+      for (const key of keys) {
+        let keyLimited = false;
+        for (let i = 0; i < order.length && !j && !keyLimited; i++) {
+          for (let attempt = 0; attempt < (i === 0 && round === 0 ? 2 : 1) && !j; attempt++) {
+            try { j = await call(order[i], key); } catch (e) { lastErr = e; const m = String(e.message);
+              if (isLimit(m)) { keyLimited = true; limited++; try { cfg.onKeyLimit && cfg.onKeyLimit(key, m); } catch {} break; } // this key is spent: next key
+              if (/answered (503|500|502|504)/.test(m) || /took too long/.test(m)) { busy = true; if (i === 0 && attempt === 0 && round === 0) await wait(cfg.busyFirstWaitMs ?? 4000); continue; } // busy: retry, then next model
+              if (/answered 404/.test(m)) break; // this name is gone: next model
+              throw geminiError(e); } } }
+        if (j) { if (limited) try { cfg.onKeySwitch && cfg.onKeySwitch(key, limited); } catch {} break; }
+        if (!keyLimited) break; // the failure was not about this key's limit, so another key would not help
+      }
+      if (j || !busy) break;
+      const pause = pauses[Math.min(round, pauses.length - 1)];
+      if (Date.now() - started + pause > BUDGET) break;
+      try { cfg.onBusy && cfg.onBusy({ round: round + 1, waitMs: pause }); } catch {}
+      await wait(pause);
     }
     if (!j) { if (limited && limited === keys.length && keys.length > 1) throw new Error(`Google says all ${keys.length} of your Gemini keys have reached their free limit for now. Per-minute limits clear within a minute; daily limits reset at midnight Pacific time. You can add another key under “AI”.`);
       throw geminiError(lastErr); }
@@ -208,7 +220,7 @@ function geminiError(e) { const m = String(e.message || e);
   if (/API key not valid|API_KEY_INVALID|answered 400.*key/i.test(m)) return new Error('Google says this API key is not valid. Copy the key again from aistudio.google.com/apikey and save it under “AI”.');
   if (isLimit(m)) return new Error('Google says the free limit for this key has been reached for now. Wait a minute and try again (the daily limit resets at midnight Pacific time), or add another key under “AI”: Colored Lens moves on to the next saved key by itself.');
   if (/answered 403|location is not supported|FAILED_PRECONDITION/i.test(m)) return new Error('Google does not allow this key to be used from here (the free Gemini API is not offered in every country, or the key is restricted). Details: ' + m.slice(0, 160));
-  if (/answered (503|500|502|504)/.test(m)) return new Error('Google\'s AI is very busy right now and turned the request away, on every model Colored Lens tried. This is on Google\'s side and usually passes within a few minutes: press the button again shortly.');
+  if (/answered (503|500|502|504)/.test(m)) return new Error('Google\'s AI is very busy right now and turned the request away, on every model Colored Lens tried. This is on Google\'s side and usually passes within a few minutes: Colored Lens kept trying for about three minutes; press the button again shortly.');
   if (/took too long/.test(m)) return new Error('Google did not answer in time. Check your internet connection and try again.');
   return e; }
 
@@ -461,9 +473,9 @@ export function zonesFor(sg, study, swatches = [], frame = null) {
     const apart = (a, b) => a && b && (a.x1 <= b.x0 || b.x1 <= a.x0 || a.y1 <= b.y0 || b.y1 <= a.y0);
     const same = u => (u.from.C < 0.035) === (c.from.C < 0.035) && (c.from.C < 0.035 ? Math.abs(u.from.L - c.from.L) < 0.12 : Math.min(Math.abs(u.from.h - c.from.h), 360 - Math.abs(u.from.h - c.from.h)) < 18 && Math.abs(u.from.L - c.from.L) < 0.25);
     const clashes = used.filter(u => !apart(u.box, c.place) && same(u));
-    // ...or the newcomer is the background and the one item it shares a colour with has a place: then the
-    // background acts everywhere EXCEPT that place (the forest goes slate, the vest in it goes mustard).
-    if (clashes.length === 1 && c.broad && clashes[0].box) { c.hole = clashes[0].box; c.holeOf = clashes[0].it.item; }
+    // ...or the newcomer is the background and every item it shares a colour with has a place: then the background
+    // acts everywhere EXCEPT those places (the forest goes slate, the vest in it mustard, the jacket rust).
+    if (clashes.length && c.broad && clashes.every(u => u.box)) c.avoid = clashes;
     else if (clashes.length) { skipped.push({ item: c.it.item, why: `it is the same colour as the ${clashes.map(u => u.it.item).join(' and the ')} now, so it needs a mask` }); continue; }
     if (used.length >= 8) { skipped.push({ item: c.it.item, why: 'all eight colour zones are already in use' }); continue; }
     // A mint shirt sits at about 0.02 colourfulness: pale, but with a hue anyone can name. Treating anything under
@@ -494,18 +506,20 @@ export function zonesFor(sg, study, swatches = [], frame = null) {
       }
       if (share < 0.002) { skipped.push({ item: c.it.item, why: 'that colour could not be found in the frame' }); continue; } }
     used.push(c); const i = used.length, P = (k, v) => { params[`z${i}${k}`] = +(+v).toFixed(4); };
-    P('Amt', 0.85); P('Hue', c.from.h); P('Wid', c.from.C < 0.035 ? 34 : 24);
+    // An item keeps a little of itself (0.85) so its edges sit in the picture. The background is the field everything
+    // sits on, and toward a quiet target (slate) even 15% of the old olive pulls the hue about 35° back toward it.
+    P('Amt', c.broad ? 1 : 0.85); P('Hue', c.from.h); P('Wid', c.from.C < 0.035 ? 34 : 24);
     P('Cmin', n ? 0 : Math.max(0.010, c.from.C * 0.45)); P('Cmax', n ? 0.015 : 0.5);
     P('Lmin', Math.max(0, c.from.L - (n ? 0.14 : 0.32))); P('Lmax', Math.min(1, c.from.L + (n ? 0.14 : 0.32)));
     P('ToHue', c.to.h); P('ToC', Math.min(0.4, c.to.C));
     // A skin zone exists to answer "the face is underexposed", so it carries the whole move rather than half of it.
     P('dL', Math.max(-0.18, Math.min(0.18, (c.to.L - c.from.L) * (c.skin ? 1 : 0.5))));
     // its place: centre and half-size of the box (the zone fades to nothing at the box's edge)
-    const bx = c.box || c.hole;
-    if (bx) { P('X', (bx.x0 + bx.x1) / 2); P('Y', (bx.y0 + bx.y1) / 2); P('BW', (bx.x1 - bx.x0) / 2); P('BH', (bx.y1 - bx.y0) / 2); }
-    // a hole: the box is the item's, and this zone keeps out of it
-    if (c.hole) P('Out', 1);
-    mapped.push({ item: c.it.item, to: c.it.colour, zone: i, ...(c.box ? { placed: c.place.rough ? 'rough' : 'box', wholeShare: c.wholeShare } : {}), ...(c.hole ? { except: c.holeOf } : {}) });
+    c.zone = i;
+    if (c.box) { P('X', (c.box.x0 + c.box.x1) / 2); P('Y', (c.box.y0 + c.box.y1) / 2); P('BW', (c.box.x1 - c.box.x0) / 2); P('BH', (c.box.y1 - c.box.y0) / 2); }
+    // the places this zone keeps out of: the items of its colour that have their own zone (bit j-1 = zone j)
+    if (c.avoid) P('Avoid', c.avoid.reduce((m, u) => m | (1 << (u.zone - 1)), 0));
+    mapped.push({ item: c.it.item, to: c.it.colour, zone: i, ...(c.box ? { placed: c.place.rough ? 'rough' : 'box', wholeShare: c.wholeShare } : {}), ...(c.avoid ? { except: c.avoid.map(u => u.it.item) } : {}) });
   }
   return { params, mapped, skipped };
 }

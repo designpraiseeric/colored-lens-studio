@@ -10,7 +10,7 @@ import { pngDataUrl, encodePNG, downsample, toBase64 } from '../core/image.js';
 import { structures, zoneItems, dealPalette, applyDeal, assign as palAssign, bestDeal } from '../core/palette.js';
 import { PROVIDERS, CLAUDE_MODELS, DEFAULTS as SMART0, buildPrompt, parseReply, validate, ask, buildStudy, buildTell, buildSuggest, validateStudy, validateSuggest, howTo, zonesFor, picture, SYSTEM_STUDY, SYSTEM_TELL, SYSTEM_SUGGEST, detectOllama, detectOpenAI, detectApple, appleReason, resolveProvider, nearestHue } from '../core/smart.js';
 import { shotRecord, encodeShot, decodeShot, renderStrip, readSequence, scriptCSV } from '../core/script.js';
-import { fitStrength, scaleLook, gradeReport, faults, verdict, renderWith } from '../core/quality.js';
+import { fitStrength, holdBlacks, scaleLook, gradeReport, faults, verdict, renderWith } from '../core/quality.js';
 import { ZONES, ZONE_KEYS, ZONE_DEF, zoneList, zoneDefaults, zoneCoverage, hasZones, lchHex, hueHistogram, parseLookInput, formatCode, fullGrade, makePixelFn, bakeCube, lookToEngineParams, shareLink, computeMatch, matchStats, hasCurves, GRADE0 } from '../core/look.js';
 import { GENRES, FEELINGS, ROLES, KIND_LABEL, pickDirections, describeEffect, whyFor, frameSummary, answers, isDark, continuity, pictureOf, directionsFromPicks } from '../core/directions.js';
 import { previewer, wipe } from '../core/preview.js';
@@ -171,7 +171,7 @@ export async function startApp(host, root) {
   function choose(i) {
     const d = allDirs()[i]; if (!d) return; S.chosen = i; S.suggOn = -1; S.suggZ = null;
     S.look = clone(d.look); S.extra = { ...XDEF, ...d.extra }; S.matte = false; S.recipe = { name: d.name, presetId: null };
-    S.base = { look: clone(S.look), extra: { ...S.extra } }; S.strength = 1; S.fit = null;
+    S.base = { look: clone(S.look), extra: { ...S.extra } }; S.strength = 1; S.fit = null; S.blackHold = 0;
     fitToShot(d.allows).then(() => { stageCache.key = ''; softRender(); });
   }
   /**
@@ -186,8 +186,16 @@ export async function startApp(host, root) {
       const b = S.base, L = await lutsFor(b.look);
       const build = k => { const { look, extra } = scaleLook(b.look, b.extra, k, GRADE0, fullGrade);
         return makePixelFn(look, cat(), L, { input: S.input, keepExposure: true, extra }); };
-      const fit = fitStrength(downsample(S.frame, 240), build, { skin: S.skin, allows });
+      const small = downsample(S.frame, 240);
+      // Milky blacks are answered by setting the black point back first; only what is still wrong dials the look down.
+      // Lift (the master of the Lift wheel) is the colourist's black point: it moves the bottom and leaves white alone.
+      const withLift = d => { const G = fullGrade(b.look.G), lift = [...G.pw.lift]; lift[2] = +(lift[2] + d).toFixed(3); return { ...b.look, G: { ...G, pw: { ...G.pw, lift } } }; };
+      const hold = holdBlacks(small, d => makePixelFn(withLift(d), cat(), L, { input: S.input, keepExposure: true, extra: b.extra }), { skin: S.skin, allows, lowest: -0.6 });
+      S.blackHold = hold.d;
+      if (hold.d) b.look = withLift(hold.d);
+      const fit = fitStrength(small, build, { skin: S.skin, allows });
       S.fit = fit;
+      if (fit.k >= 1) setStrength(1);
       if (fit.k < 1) setStrength(fit.k);
     } catch (e) { console.warn('fit', e); S.fit = null; }
   }
@@ -230,6 +238,7 @@ export async function startApp(host, root) {
       ${(d || S.suggOn >= 0) && S.fit && S.fit.fitted ? `<div class="small ${S.fit.suits ? 'dim' : 'warn'}">${S.fit.suits
         ? `Brought down to ${Math.round(S.fit.k * 100)}% to fit this shot — at full strength it ${esc(saysOf(S.fit.full || S.fit.faults) || 'damaged the picture')}. Drag Strength back up if you want it anyway.`
         : `<b>This look does not suit this shot.</b> Even at ${Math.round(S.fit.k * 100)}% it ${esc(saysOf(S.fit.faults) || 'damages the picture')}. Shown so you can judge it yourself.`}</div>` : ''}
+      ${(d || S.suggOn >= 0) && S.blackHold ? `<div class="small dim">Black point set back (Lift ${S.blackHold.toFixed(2)}): at its own setting this look lifted the blacks to a milky grey.</div>` : ''}
       ${S.suggOn >= 0 && (S.suggNotes || []).length ? `<div class="small dim">${S.suggNotes.map(esc).join(' ')}</div>` : ''}
       ${d ? `<div class="small">Previewing <b>${esc(S.suggOn >= 0 && S.sugg[S.suggOn] ? S.sugg[S.suggOn].title : d.name)}</b> <span class="dim">(colour, grain and vignette; halation and glow show on the clip)</span></div>
         ${scopeRow()}<div class="row wrap"><button class="primary" data-dapply="${S.chosen}">${esc(applyLabel())}</button><button data-dtweak="${S.chosen}">Tweak</button><button data-dsave="${S.chosen}">Save as preset</button><button id="dclear">Back to the original</button></div>`
@@ -346,14 +355,17 @@ export async function startApp(host, root) {
       out[`z${n}X`] = keys.map(k => ({ t: k.t, v: k.X })); out[`z${n}Y`] = keys.map(k => ({ t: k.t, v: k.Y })); }
     return Object.keys(out).length ? out : null;
   }
-  async function followPlaces() {
+  async function followPlaces(opts = {}) {
     const placed = zoneList().filter(n => (S.extra[`z${n}Amt`] || 0) > 0 && (S.extra[`z${n}BW`] || 0) > 0 && (S.extra[`z${n}BH`] || 0) > 0);
     if (!placed.length) return toast('No colour zone has a place in the frame to follow');
     const t0 = S.meta && S.meta.seconds != null ? S.meta.seconds : S.ctx ? S.ctx.seconds : null; if (t0 == null) return toast('Read a frame first');
-    const sub = S.ctx && S.ctx.subject, a = Math.max(sub && sub.start != null ? sub.start + 0.05 : t0 - 4, t0 - 4), b = Math.min(sub && sub.end != null ? sub.end - 0.05 : t0 + 4, t0 + 4);
-    // about one frame every 0.6 s, at most 3 either side: each read takes as long as a normal frame read
-    const before = Math.min(3, Math.floor((t0 - a) / 0.6)), after = Math.min(3, Math.floor((b - t0) / 0.6));
-    const times = [...Array(before)].map((_, i) => t0 - (before - i) * ((t0 - a) / before)).concat([t0], [...Array(after)].map((_, i) => t0 + (i + 1) * ((b - t0) / after)));
+    // A quarter of a second apart, about two seconds either side. Measured 18 Nov on the forest dolly shot: 1.3 s
+    // apart (the old spacing) the boy's vest matched at only 0.5, as he turned and the trees slid behind him; 0.24 s
+    // apart it matched at 0.86-0.89. Each read takes as long as a normal frame read, so this is ~16 reads with Stop.
+    const STEP = 0.24, SPAN = opts.span || 2;
+    const sub = S.ctx && S.ctx.subject, a = Math.max(sub && sub.start != null ? sub.start + 0.05 : t0 - SPAN, t0 - SPAN), b = Math.min(sub && sub.end != null ? sub.end - 0.05 : t0 + SPAN, t0 + SPAN);
+    const before = Math.max(0, Math.floor((t0 - a) / STEP)), after = Math.max(0, Math.floor((b - t0) / STEP));
+    const times = [...Array(before)].map((_, i) => +(t0 - (before - i) * STEP).toFixed(3)).concat([t0], [...Array(after)].map((_, i) => +(t0 + (i + 1) * STEP).toFixed(3)));
     if (times.length < 2) return toast('This clip is too short around this frame to follow anything');
     S.track = { busy: true, done: 0, of: times.length - 1, zones: {}, lost: {} }; render();
     const frames = [];
@@ -366,7 +378,7 @@ export async function startApp(host, root) {
     for (const n of placed) {
       const X = S.extra[`z${n}X`], Y = S.extra[`z${n}Y`], W = S.extra[`z${n}BW`], H = S.extra[`z${n}BH`];
       const tr = trackBox(frames, from, { x0: X - W, y0: Y - H, x1: X + W, y1: Y + H });
-      S.track.zones[n] = placeKeys(tr); S.track.lost[n] = tr.lostAt;
+      S.track.zones[n] = placeKeys(tr); S.track.lost[n] = tr.lostAt; (S.track.why = S.track.why || {})[n] = tr.lostScore || [];
     }
     S.track.busy = false; S.track.at = Date.now(); render();
     const ok = placed.filter(n => S.track.zones[n].length > 1).length;
@@ -379,7 +391,8 @@ export async function startApp(host, root) {
     const T = S.track;
     if (T && T.busy) return `<p class="small">Following the placed colours through the shot: frame ${T.done} of ${T.of}… <span role="button" tabindex="0" id="trackStop" class="linkbtn small">Stop</span></p>`;
     const rows = T && T.zones ? placed.map(n => { const k = T.zones[n] || [], lost = (T.lost || {})[n] || [];
-      return k.length > 1 ? `Zone ${n}: followed ${fmtSecs(k[0].t)}–${fmtSecs(k[k.length - 1].t)}${lost.length ? ` (lost it at ${lost.map(fmtSecs).join(' and ')}, so it stays put from there)` : ''}.` : `Zone ${n}: could not be followed; it stays where it is in this frame.`; }) : [];
+      const why = ((T.why || {})[n] || []).map(x => x == null ? 'too plain to recognise' : `best match ${Math.round(x * 100)}%, needs 70%`);
+      return k.length > 1 ? `Zone ${n}: followed ${fmtSecs(k[0].t)}–${fmtSecs(k[k.length - 1].t)}${lost.length ? ` (lost it at ${lost.map(fmtSecs).join(' and ')}${why.length ? ': ' + why.join('; ') : ''}, so it stays put from there)` : ''}.` : `Zone ${n}: could not be followed${why.length ? ` (${why.join('; ')})` : ''}; it stays where it is in this frame.`; }) : [];
     const ae = host.name === 'aftereffects';
     return `<div class="row wrap"><button id="trackGo">${T && T.zones ? 'Follow again' : 'Follow the placed colours through the shot'}</button></div>
       ${rows.length ? `<p class="small dim">${rows.join(' ')} ${ae ? 'Apply puts these places on the effect as keyframes.' : 'Following is applied as keyframes in After Effects; in this version Premiere keeps each place where it is in the frame you read.'}</p>` : `<p class="small dim">A placed colour only acts where its item is in this frame. This reads a few frames either side and moves each place with its item.</p>`}`;
@@ -429,7 +442,7 @@ export async function startApp(host, root) {
   function wireCrash() {
     const b = $('#crashBack', root), r = $('#crashReset', root);
     if (b) b.onclick = () => { S.tab = 'shot'; S.crash = null; render(); };
-    if (r) r.onclick = () => { S.suggOn = -1; S.suggZ = null; S.fit = null; S.chosen = -1; S.pickZone = 0; S.crash = null; render(); };
+    if (r) r.onclick = () => { S.suggOn = -1; S.suggZ = null; S.fit = null; S.blackHold = 0; S.chosen = -1; S.pickZone = 0; S.crash = null; render(); };
   }
   try { // anything thrown outside a redraw (a listener, a timer) is reported the same way
     window.addEventListener && window.addEventListener('error', ev => reportCrash('handling a click or a timer', ev && (ev.error || ev)));
@@ -737,7 +750,7 @@ export async function startApp(host, root) {
   }
   function palSet(extra, note, deal, seed) {
     S.extra = extra; S.pal.deal = deal || null; if (seed) S.pal.seed = seed; S.pal.note = note || '';
-    S.strength = 1; S.fit = null; render();
+    S.strength = 1; S.fit = null; S.blackHold = 0; render();
   }
   async function palDeal(reroll) {
     const p = palCurrent(), items = palItems();
@@ -799,7 +812,7 @@ export async function startApp(host, root) {
     const z = S.suggZ, cov = liveCoverage(), rows = [];
     if ((S.extra.ambAmt || 0) > 0 && g.ambience.colour) rows.push(`<div class="it">${sw(g.ambience.hex)}<span><b>Ambience</b> → ${esc(g.ambience.colour)}: on, at ${Math.round(S.extra.ambAmt * 100)}%</span></div>`);
     for (const m of z.mapped) { const c = cov.find(x => x.zone === m.zone), amt = S.extra[`z${m.zone}Amt`] || 0, it = g.items.find(x => x.item === m.item) || {};
-      rows.push(`<div class="it">${sw(it.hex)}<span><b>${esc(m.item)}</b> → ${esc(m.to)}: ${amt <= 0 ? '<span class="warn">switched off</span>' : !c || c.share < 0.004 ? '<span class="warn">this zone is finding almost nothing in your frame. Open Tweak › Colour zones and drag “Zone ' + m.zone + ' pick hue” until it changes.</span>' : `changing about ${Math.max(1, Math.round(c.share * 100))}% of the picture`}${m.placed ? `<span class="dim"> · only where it is in this frame (its colour is in ${Math.round((m.wholeShare || 0) * 100)}% of the picture)${m.placed === 'rough' ? ', placed from the AI\'s description, so check the edges' : ''}. If it moves out of that place during the shot, it needs a mask.</span>` : ''}${m.except ? `<span class="dim"> · everywhere except where the ${esc(m.except)} is, since they share a colour</span>` : ''}</span></div>`); }
+      rows.push(`<div class="it">${sw(it.hex)}<span><b>${esc(m.item)}</b> → ${esc(m.to)}: ${amt <= 0 ? '<span class="warn">switched off</span>' : !c || c.share < 0.004 ? '<span class="warn">this zone is finding almost nothing in your frame. Open Tweak › Colour zones and drag “Zone ' + m.zone + ' pick hue” until it changes.</span>' : `changing about ${Math.max(1, Math.round(c.share * 100))}% of the picture`}${m.placed ? `<span class="dim"> · only where it is in this frame (its colour is in ${Math.round((m.wholeShare || 0) * 100)}% of the picture)${m.placed === 'rough' ? ', placed from the AI\'s description, so check the edges' : ''}. If it moves out of that place during the shot, it needs a mask.</span>` : ''}${m.except ? `<span class="dim"> · everywhere except where the ${[].concat(m.except).map(esc).join(' and the ')} ${[].concat(m.except).length > 1 ? 'are' : 'is'}, since they share a colour</span>` : ''}</span></div>`); }
     return `<div class="k">On your preview now</div>${rows.join('') || '<p class="small">Only the overall look.</p>'}
       ${z.skipped.length ? `<p class="small dim">Not changed: ${esc(z.skipped.map(x => `${x.item} (${x.why})`).join('; '))}.</p>` : ''}${trackHTML()}<p class="small dim">Measured from your frame; it updates as you tweak. Drag across the picture to compare.</p>`;
   }
@@ -841,7 +854,7 @@ export async function startApp(host, root) {
       const z = zonesFor(g, S.study, S.reading ? S.reading.swatches : [], S.frame ? downsample(S.frame, 160) : null);
       const lift = Math.max(S.extra.skinLift || 0, z.params.skinLift || 0);
       S.extra = { ...S.extra, ...zoneDefaults(), ...z.params, skinLift: lift, skinGuard: Math.max(S.extra.skinGuard || 0, 0.7) };
-      S.base = { look: clone(S.look), extra: { ...S.extra } }; S.strength = 1; S.fit = null;
+      S.base = { look: clone(S.look), extra: { ...S.extra } }; S.strength = 1; S.fit = null; S.blackHold = 0;
       await fitToShot(di >= 0 ? (S.smartDirs[di] || {}).allows : null);
       S.recipe = { name: g.title, presetId: null }; S.suggOn = i; S.suggZ = z; S.track = null; S.view = 'split'; S.dockHidden = false; stageCache.key = ''; S.focusSg = i; render();
       toast(z.mapped.length || z.params.ambAmt ? `“${g.title}” is on your preview: drag across the picture to compare` : 'Only the overall look could be previewed for this one; see “What is left to do by hand”'); }));
@@ -1071,7 +1084,7 @@ export async function startApp(host, root) {
           ${grey ? zoneSlider(n, 'ToC', 'How colourful', 0, 0.4, 0.005, { band: satBand(to) }) + zoneSlider(n, 'ToHue', 'New hue', 0, 360, 1, { band: HUE_BAND, thumbColor: lchHex(to, 0.22) })
             : zoneSlider(n, 'ToHue', 'New hue', 0, 360, 1, { band: HUE_BAND, thumbColor: lchHex(to, 0.22) }) + zoneSlider(n, 'ToC', 'How colourful', 0, 0.4, 0.005, { band: satBand(to) })}
           ${zoneSlider(n, 'dL', 'Lighter / darker', -0.3, 0.3, 0.005, { band: lightBand(to) })}
-          ${(S.extra[`z${n}Out`] || 0) > 0.5 && (S.extra[`z${n}BW`] || 0) > 0 ? `<p class="small dim">Keeps out: this zone acts everywhere except one part of the frame (${Math.round((S.extra[`z${n}X`] || 0.5) * 100)}% across, ${Math.round((S.extra[`z${n}Y`] || 0.5) * 100)}% down), where an item of the same colour is being changed differently.</p>` : (S.extra[`z${n}BW`] || 0) > 0 && (S.extra[`z${n}BH`] || 0) > 0 ? `<p class="small dim">Placed: this zone only acts in one part of the frame (${Math.round((S.extra[`z${n}X`] || 0.5) * 100)}% across, ${Math.round((S.extra[`z${n}Y`] || 0.5) * 100)}% down), because its colour is all over the picture. If the item moves out of that place during the shot, it needs a mask.</p>` : ''}
+          ${(S.extra[`z${n}Avoid`] || 0) > 0 ? `<p class="small dim">Keeps out: this zone acts everywhere except where zone${zoneList().filter(j => Math.round(S.extra[`z${n}Avoid`]) >> (j - 1) & 1).length > 1 ? 's' : ''} ${zoneList().filter(j => Math.round(S.extra[`z${n}Avoid`]) >> (j - 1) & 1).join(' and ')} act${zoneList().filter(j => Math.round(S.extra[`z${n}Avoid`]) >> (j - 1) & 1).length > 1 ? '' : 's'}: an item there shares this colour and is being changed differently.</p>` : (S.extra[`z${n}Out`] || 0) > 0.5 && (S.extra[`z${n}BW`] || 0) > 0 ? `<p class="small dim">Keeps out: this zone acts everywhere except one part of the frame (${Math.round((S.extra[`z${n}X`] || 0.5) * 100)}% across, ${Math.round((S.extra[`z${n}Y`] || 0.5) * 100)}% down), where an item of the same colour is being changed differently.</p>` : (S.extra[`z${n}BW`] || 0) > 0 && (S.extra[`z${n}BH`] || 0) > 0 ? `<p class="small dim">Placed: this zone only acts in one part of the frame (${Math.round((S.extra[`z${n}X`] || 0.5) * 100)}% across, ${Math.round((S.extra[`z${n}Y`] || 0.5) * 100)}% down), because its colour is all over the picture. If the item moves out of that place during the shot, it needs a mask.</p>` : ''}
           <div class="row wrap"><button data-zpick="${n}">Re-pick from the picture</button>${(S.extra[`z${n}BW`] || 0) > 0 ? `<button data-zanywhere="${n}">Let it act anywhere</button>` : ''}<button data-zdel="${n}">Remove this zone</button></div>` : ''}</div>`;
     };
     const zonesHTML = (full) => `${S.pickZone ? '<p class="small todo">Now click that colour in the picture above.</p>' : ''}
@@ -1252,6 +1265,7 @@ export async function startApp(host, root) {
     const c = { ...S.smart.cfg }, ring = await geminiRing(), keys = keyOrder(ring);
     c.geminiKeys = keys; c.geminiKey = keys[0] || ''; c.claudeKey = await secret.get('claude'); c.openaiKey = await secret.get('openai');
     c.onKeyLimit = async (key, msg) => { const r = await geminiRing(), e = r.find(x => x.k === key); if (e) { e.rest = restUntil(msg); await secret.set('gemini.ring', ringJSON(r)); S.smart.gemRing = r; } };
+    c.onBusy = ({ round, waitMs }) => toast(`Google's AI is busy. Trying again in ${Math.round(waitMs / 1000)} seconds (attempt ${round + 1})…`, waitMs);
     c.onKeySwitch = (key, n) => toast(`Gemini key ${maskKey(key)} answered: ${n === 1 ? 'the previous key has' : n + ' keys have'} reached Google's free limit for now`);
     return c;
   }

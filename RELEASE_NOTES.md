@@ -1,5 +1,16 @@
 # Release notes
-Each `## 0.19.0
+Each `## 0.20.0
+
+**The background can keep out of several items at once.** In 0.19.0 a forest could keep out of one item of its colour. Now it keeps out of every placed item that shares its colour, so the forest, the boy's olive vest and the woman's olive camo can each go to a different colour family. On a test frame where all three share one olive, they land on mustard, rust and slate teal, each near the colour asked for.
+- The background's colour change now goes all the way. Toward a quiet colour like slate, leaving 15% of the old olive pulled the hue about 35° back toward it.
+
+**Milky blacks: the black point is set back, not the whole look.** When a look lifts the blacks to a milky grey, the panel first pulls the Lift wheel down by the smallest amount that clears it without crushing anything, and says so. Only what is still wrong after that turns the strength down. Turning the strength down had taken the accent colours with it: the mustard vest came out pale khaki.
+
+**Following placed colours through the shot works on moving shots.** Frames are now read a quarter of a second apart (about two seconds either side) instead of about 1.3 seconds. On the forest dolly shot, 1.3 seconds apart the boy's vest matched at only 50% as he turned and the trees slid behind him; a quarter second apart it matched at 86–89%. When a colour is lost, the panel says how close the best match was.
+
+**Gemini keeps trying when it is busy.** Instead of giving up after one quick pass, Colored Lens retries in rounds (10, 20, 40 seconds apart, up to about three minutes) and the panel says it is waiting.
+
+## 0.19.0
 
 **The background can change colour around an item of the same colour.** On the forest shot, "a mustard vest in a muted slate forest" turned the vest mustard but left the forest green: the forest shares the vest's olive, so changing it would have changed the vest too.
 - Now, when the background (foliage, sky, a wall, a field) shares its colour with one placed item, the background's zone acts everywhere except that item's place. The forest goes slate and the vest goes mustard.

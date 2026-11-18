@@ -171,7 +171,7 @@ struct Setup {
   V3 wLift, wGamE, wGainM, wOff, satR, LS, LM, LH, LSat; float lowR, highR, pivot, ucon; bool wpost;
   float hi, sh, wh, bk, bri, gam, lutMix, sharpU;
   float matchAmt, mLg, mLo, mA, mB, mCg; float skinGuard, skinHue, skinDensity, skinLight, skinLift;
-  float z[8][10]; float zb[8][5]; bool boxed; bool zones; float ambHue, ambAmt;
+  float z[8][10]; float zb[8][5]; int zavoid[8]; bool boxed; bool zones; float ambHue, ambAmt;
 };
 inline V3 puck(float x, float y) { return {1.14f * y, -0.395f * x - 0.581f * y, 2.032f * x}; }
 
@@ -204,8 +204,9 @@ Setup makeSetup(const Params& p) {
     for (int k = 0; k < 10; k++) s.z[i][k] = float(p.v[base + k]); if (s.z[i][0] > 0) s.zones = true;
     // where the zone may act (appended 18 Nov): centre across/down, half-width/height; size 0 = anywhere
     for (int k = 0; k < 4; k++) s.zb[i][k] = float(p.v[P_z1X + i * 4 + k]);
-    s.zb[i][4] = float(p.v[P_z1Out + i]); }   // appended later: keep out of the box rather than inside it
-  s.boxed = false; for (int i = 0; i < 8; i++) if (s.z[i][0] > 0 && s.zb[i][2] > 0 && s.zb[i][3] > 0) s.boxed = true;
+    s.zb[i][4] = float(p.v[P_z1Out + i]);   // appended later: keep out of the box rather than inside it
+    s.zavoid[i] = int(p.v[P_z1Avoid + i] + 0.5); }   // and later still: the other zones whose places it keeps out of
+  s.boxed = false; for (int i = 0; i < 8; i++) if (s.z[i][0] > 0 && ((s.zb[i][2] > 0 && s.zb[i][3] > 0) || s.zavoid[i])) s.boxed = true;
   s.ambHue = float(p[P_ambHue]); s.ambAmt = float(p[P_ambAmt]); if (s.ambAmt > 0) s.zones = true;
   s.skinGuard = float(p[P_skinGuard]); s.skinHue = float(p[P_skinHue]); s.skinDensity = float(p[P_skinDensity]); s.skinLight = float(p[P_skinLight]); s.skinLift = float(p[P_skinLift]);
   return s;
@@ -270,12 +271,26 @@ V3 applySkinGuard(V3 src, V3 out, const Setup& s) {
     position (u < 0: a baked LUT, which has no idea where a pixel is) a boxed zone reaches nothing, so a LUT never
     paints an item's colour across the whole frame. A zone set to keep out of its place acts everywhere EXCEPT the box
     (still nothing in a LUT). Mirrors zonePlace in core/look.js. */
-inline float zonePlace(const float* b, float u, float v) {
-  if (!(b[2] > 0 && b[3] > 0)) return 1.f; if (u < 0) return 0.f;
+/** u == FAR: a pixel known to be away from every box (the preview's table for the rest of the frame). */
+constexpr float FAR = -2.f;
+inline float boxInside(const float* b, float u, float v) {
   // a rounded box (superellipse, power 4), fading to nothing at its edge, never beyond it
   float ax = std::fabs(u - b[0]) / b[2], ay = std::fabs(v - b[1]) / b[3], d = std::sqrt(std::sqrt(ax * ax * ax * ax + ay * ay * ay * ay));
-  float in = 1 - smoothstepf(0.7f, 1.f, d);
+  return 1 - smoothstepf(0.7f, 1.f, d);
+}
+inline float zonePlace(const float* b, float u, float v) {
+  if (!(b[2] > 0 && b[3] > 0)) return 1.f;
+  if (u < 0) return u == FAR && b[4] > 0.5f ? 1.f : 0.f;
+  float in = boxInside(b, u, v);
   return b[4] > 0.5f ? 1 - in : in;   // "keep out": everywhere except the box (the box's soft edge cross-fades)
+}
+/** How much zone i is held back by the places of the zones it keeps out of (1 = not at all). Mirrors zoneAvoid. */
+inline float zoneAvoid(const Setup& s, int i, float u, float v) {
+  const int m = s.zavoid[i]; if (!m) return 1.f;
+  if (u < 0) return u == FAR ? 1.f : 0.f;   // a LUT cannot know where the other items are
+  float f = 1.f;
+  for (int j = 0; j < 8; j++) if (j != i && (m >> j & 1) && s.z[j][0] > 0 && s.zb[j][2] > 0 && s.zb[j][3] > 0) f *= 1 - boxInside(s.zb[j], u, v);
+  return f;
 }
 V3 applyZones(V3 src, V3 out, const Setup& s, float u = -1, float v = -1) {
   if (!s.zones) return out;
@@ -291,7 +306,7 @@ V3 applyZones(V3 src, V3 out, const Setup& s, float u = -1, float v = -1) {
   for (int i = 0; i < 8; i++) { const float* z = s.z[i]; if (z[0] <= 0) continue;
     float dh = std::fabs(sh - z[1]); if (dh > 180) dh = 360 - dh;
     float wh = z[4] <= 0.03f ? 1.f : 1 - smoothstepf(z[2] * 0.6f, z[2] * 1.2f, dh);
-    float w = keep * z[0] * wh * soft(sC, z[3], z[4], 0.012f) * soft(so.r, z[5], z[6], 0.05f) * zonePlace(s.zb[i], u, v); if (w <= 0.001f) continue;
+    float w = keep * z[0] * wh * soft(sC, z[3], z[4], 0.012f) * soft(so.r, z[5], z[6], 0.05f) * zonePlace(s.zb[i], u, v) * zoneAvoid(s, i, u, v); if (w <= 0.001f) continue;
     float ref = std::max(0.02f, (z[3] + z[4]) * 0.5f), k = z[4] <= 0.03f ? 1.f : std::clamp(sC / ref, 0.5f, 1.5f), th = z[7] * 0.01745329f, tc = z[8] * k;
     // Skin Guard holds a zone off a face's COLOUR, not off its exposure: lifting an underexposed face is ordinary
     // grading, and refusing it left the plugin able to diagnose a dark face with no way to act on it.

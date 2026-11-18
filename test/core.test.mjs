@@ -421,7 +421,7 @@ test('Gemini moves on to the next saved key when one reaches its limit, and says
 
 // ---------- zones with a place in the frame (18 Nov: on a muted forest one olive covered 61% of the picture) ----------
 import { boxOk, boxFromWords } from '../core/smart.js';
-import { zonePlace, ZONE_KEYS as ZK, ZONE_DEF as ZD, hasBoxedZones, zoneDefaults as zDefs, zoneCoverage as zCov, lookToEngineParams as toParams } from '../core/look.js';
+import { zonePlace, zoneAvoid, ZONE_KEYS as ZK, ZONE_DEF as ZD, hasBoxedZones, zoneDefaults as zDefs, zoneCoverage as zCov, lookToEngineParams as toParams } from '../core/look.js';
 import { previewer } from '../core/preview.js';
 
 test('a place in the frame: Gemini boxes, rough boxes from words, and how far a zone reaches', () => {
@@ -438,6 +438,11 @@ test('a place in the frame: Gemini boxes, rough boxes from words, and how far a 
   assert.ok(zonePlace(z, 0.385, 0.6) > 0 && zonePlace(z, 0.385, 0.6) < 1, 'fading inside the edge');
   assert.equal(zonePlace(z, undefined, undefined), 0, 'no position (a LUT): a boxed zone does nothing');
   assert.equal(zonePlace(ZD, undefined, undefined), 1, 'an unboxed zone reaches everywhere, as before');
+  // a zone keeping out of other zones' places
+  const zs = [z, ZK.map((k, j) => ({ Amt: 1, Avoid: 1 })[k] ?? ZD[j]), ...Array(6).fill(ZD)].map((x, j) => j === 0 ? x.map((y, q) => q === 0 ? 1 : y) : x);
+  assert.equal(zoneAvoid(zs, 2, 0.3, 0.6), 0, 'held out at the centre of zone 1\'s place');
+  assert.equal(zoneAvoid(zs, 2, 0.9, 0.1), 1, 'free everywhere else');
+  assert.equal(zoneAvoid(zs, 2, undefined, undefined), 0, 'and nothing in a LUT');
   const out = z.map((x, j) => ZK[j] === 'Out' ? 1 : x);
   assert.equal(zonePlace(out, 0.3, 0.6), 0, 'keeping out: nothing at the centre of its place');
   assert.equal(zonePlace(out, 0.9, 0.1), 1, 'keeping out: full strength everywhere else');
@@ -470,10 +475,25 @@ test('an item whose colour fills most of the frame gets a zone limited to its pl
     study([{ ...vest, box: { x0: 0.2, y0: 0.3, x1: 0.35, y1: 0.7 } }, { name: 'forest foliage', where: 'background', hex: '#5d6136' }]), sw, f);
   const fm = forest.mapped.find(m => /foliage/.test(m.item)), vm = forest.mapped.find(m => /vest/.test(m.item));
   assert.ok(fm && vm, `both the vest and the forest get zones: ${JSON.stringify(forest.skipped)}`);
-  assert.equal(fm.except, "boy's vest"); assert.equal(forest.params[`z${fm.zone}Out`], 1);
-  assert.equal(forest.params[`z${fm.zone}X`], forest.params[`z${vm.zone}X`], 'the hole is where the vest is');
+  assert.deepEqual(fm.except, ["boy's vest"]); assert.equal(forest.params[`z${fm.zone}Avoid`], 1 << (vm.zone - 1), 'it keeps out of the vest\'s zone');
   const fc = zCov(f, { ...zDefs(), ...forest.params }).find(c => c.zone === fm.zone);
   assert.ok(fc.share > 0.6, `the forest zone reaches the forest: ${fc.share}`);
+  // three colour families: the forest, the vest and the jacket share one olive, and each goes its own way
+  const three = zonesFor({ items: [{ item: "boy's vest", colour: 'mustard', hex: '#c09a2c' }, { item: "woman's jacket", colour: 'rust', hex: '#8c4a30' }, { item: 'forest foliage', colour: 'slate teal', hex: '#4f6a6b' }] },
+    study([{ ...vest, box: { x0: 0.2, y0: 0.3, x1: 0.35, y1: 0.7 } }, { ...jacket, box: { x0: 0.6, y0: 0.25, x1: 0.8, y1: 0.7 } }, { name: 'forest foliage', where: 'background', hex: '#5d6136' }]), sw, f);
+  assert.equal(three.mapped.length, 3, `all three get zones: ${JSON.stringify(three.skipped)}`);
+  const t = Object.fromEntries(three.mapped.map(m => [m.item, m])), tf = t['forest foliage'];
+  assert.deepEqual([...tf.except].sort(), ["boy's vest", "woman's jacket"]);
+  assert.equal(three.params[`z${tf.zone}Avoid`], (1 << (t["boy's vest"].zone - 1)) | (1 << (t["woman's jacket"].zone - 1)));
+  const tp = { ...zDefs(), ...three.params }, pf = makePixelFn(parseCode('C0', cat), cat, luts, { extra: tp });
+  const at = (x, y) => { const i = (y * 200 + x) * 4; return pf([f.data[i] / 255, f.data[i + 1] / 255, f.data[i + 2] / 255], (x + 0.5) / 200, (y + 0.5) / 100); };
+  const hueOf = c => { const l = srgbToOklab(...c); return (Math.atan2(l[2], l[1]) * 57.29578 + 360) % 360; };
+  const hv = hueOf(at(55, 50)), hj = hueOf(at(140, 47)), hf = hueOf(at(110, 90));
+  const apartDeg = (a, b) => Math.min(Math.abs(a - b), 360 - Math.abs(a - b));
+  const want = hex => hueOf(hexToRgb(hex).map(x => x / 255));
+  assert.ok(apartDeg(hv, hf) > 40 && apartDeg(hj, hf) > 40 && apartDeg(hv, hj) > 25, `three different families: vest ${hv.toFixed(0)}°, jacket ${hj.toFixed(0)}°, forest ${hf.toFixed(0)}°`);
+  for (const [got, hex, what] of [[hv, '#c09a2c', 'vest'], [hj, '#8c4a30', 'jacket'], [hf, '#4f6a6b', 'forest']])
+    assert.ok(apartDeg(got, want(hex)) < 30, `${what} lands near its own colour: ${got.toFixed(0)}° vs ${want(hex).toFixed(0)}°`);
 });
 
 test('a baked LUT leaves boxed zones out, while the preview and the effect keep them in their place', async () => {
@@ -519,4 +539,25 @@ test('a grade that lifts the blacks to a milky grey is flagged, unless fading is
   assert.ok(faults(r).some(f => f.id === 'milky'), JSON.stringify(faults(r)));
   assert.ok(!faults(r, { allows: ['fade'] }).some(f => f.id === 'milky'), 'a faded look may lift its blacks');
   assert.ok(!faults(gradeReport(src, src, { skin: { faces: [] } })).some(f => f.id === 'milky'));
+});
+
+test('a busy Gemini is tried again in rounds rather than given up on after one pass', async () => {
+  let calls = 0; const rounds = [];
+  const post = async () => (++calls <= 9 ? { status: 503, text: JSON.stringify({ error: { message: 'The model is overloaded.' } }) } : { status: 200, text: JSON.stringify({ candidates: [{ content: { parts: [{ text: '{"ok":2}' }] } }] }) });
+  const cfg = { provider: 'gemini', geminiKeys: ['KEY-A'], busyFirstWaitMs: 1, busyPauses: [5, 5, 5], onBusy: r => rounds.push(r.round) };
+  assert.equal(await askAI(cfg, { prompt: 'hi', imageB64: 'AAAA' }, post), '{"ok":2}');
+  assert.ok(rounds.length >= 1, 'the panel was told it is waiting');
+  const always = async () => ({ status: 503, text: '{}' });
+  await assert.rejects(askAI({ ...cfg, busyBudgetMs: 30 }, { prompt: 'hi', imageB64: 'AAAA' }, always), /very busy/);
+});
+
+test('milky blacks are answered by setting the black point back, not by shrinking the look', async () => {
+  const { holdBlacks } = await import('../core/quality.js');
+  const src = makeFrame(64, 32); for (let p = 0; p < 64 * 32; p++) { const v = 12 + (p % 64) * 3.2; src.data.set([v, v + 3, v - 4, 255].map(x => Math.max(0, x)), p * 4); }
+  // a "look" that lifts everything, blacks included; d moves its black point down
+  const build = d => rgb => rgb.map(c => { const lifted = 0.16 + c * 0.8; return Math.max(0, lifted + d * 0.14 * (1 - Math.min(1, lifted / 0.38))); });
+  const h = holdBlacks(src, build, { skin: { faces: [] } });
+  assert.ok(h.d < 0, `the black point is set back: ${h.d}`);
+  assert.ok(!h.faults.some(f => f.id === 'milky' || /crushed/.test(f.id)), JSON.stringify(h.faults));
+  assert.equal(holdBlacks(src, () => rgb => rgb, { skin: { faces: [] } }).d, 0, 'nothing to do on an untouched picture');
 });

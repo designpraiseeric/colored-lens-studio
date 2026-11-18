@@ -2,7 +2,7 @@
 // The exact per-pixel pipeline (core/look.js) is baked into a small 3D LUT once per look, then applied to a
 // preview-sized frame. Grain and vignette are approximated so their sliders visibly do something; halation and
 // diffusion glow are spatial effects that only the real effect renders ("Try on clip").
-import { makePixelFn, hasBoxedZones, zonePlace, ZONE_KEYS, ZONE_DEF, zoneList } from './look.js';
+import { makePixelFn, hasBoxedZones, boxInside, zoneBoxed, zoneArrays, FAR } from './look.js';
 import { makeFrame, downsample } from './image.js';
 
 const N = 25;
@@ -40,7 +40,7 @@ export function applyTable(frame, tab, tex = { grain: 0, vig: 0, gsize: 1 }, ful
     const i = (y * frame.w + x) * 4, u = (x + 0.5) / frame.w, v = (y + 0.5) / frame.h;
     // A colour zone with a place in the frame cannot live in a table (a table has no idea where a pixel is), so
     // pixels a boxed zone can reach go through the exact pipeline with their position; everything else uses the table.
-    if (exact && exact.boxes.some(z => zonePlace(z, u, v) > 0)) { const r = exact.fn([d[i] / 255, d[i + 1] / 255, d[i + 2] / 255], u, v); c[0] = r[0]; c[1] = r[1]; c[2] = r[2]; }
+    if (exact && exact.boxes.some(z => boxInside(z, u, v) > 0)) { const r = exact.fn([d[i] / 255, d[i + 1] / 255, d[i + 2] / 255], u, v); c[0] = r[0]; c[1] = r[1]; c[2] = r[2]; }
     else sample(tab, d[i] / 255, d[i + 1] / 255, d[i + 2] / 255, c);
     let k = 1;
     if (tex.vig > 0) { const dx = (x + 0.5) / frame.w - 0.5, dy = ((y + 0.5) / frame.h - 0.5) * 0.8, v = Math.hypot(dx, dy) / 0.62, t = Math.min(1, Math.max(0, (v - 0.55) / 0.45)); k = 1 - tex.vig * t * t * (3 - 2 * t); }
@@ -74,12 +74,14 @@ export function previewer(frame, cat, getLuts) {
     async table(look, extra, input) {
       const key = JSON.stringify([look, extra, input]); let t = cache.get(key); if (t) return t;
       const fn = makePixelFn(look, cat, await getLuts(look), { input, keepExposure: true, extra });
-      t = bakeTable(fn); if (cache.size > 40) cache.delete(cache.keys().next().value); cache.set(key, t); return t;
+      // baked as a pixel away from every box: zones that keep out of a place act there; zones with a place do not
+      t = bakeTable(rgb => fn(rgb, FAR, FAR)); if (cache.size > 40) cache.delete(cache.keys().next().value); cache.set(key, t); return t;
     },
     async render(look, extra, input, size = 640) {
       let exact = null;
       if (hasBoxedZones(extra)) {
-        const boxes = zoneList().map(i => ZONE_KEYS.map((k, j) => extra[`z${i}${k}`] ?? ZONE_DEF[j])).filter(z => z[0] > 0 && z[12] > 0 && z[13] > 0);
+        // every place any zone acts in or keeps out of; away from all of them, the table (baked at FAR) is exact
+        const boxes = zoneArrays(extra).filter(z => z[0] > 0 && zoneBoxed(z));
         exact = { boxes, fn: makePixelFn(look, cat, await getLuts(look), { input, keepExposure: true, extra }) };
       }
       return applyTable(base(size), await this.table(look, extra, input), textureOf(look, cat), frame.w, exact);

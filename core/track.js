@@ -66,18 +66,18 @@ export function follow(a, b, box, opts = {}) {
  * only the times the item was found; after a weak match the track stops in that direction.
  */
 export function trackBox(frames, from, box, opts = {}) {
-  const keys = [{ t: frames[from].t, box, score: 1 }], lostAt = [], min = opts.min ?? MIN_SCORE;
+  const keys = [{ t: frames[from].t, box, score: 1 }], lostAt = [], lostScore = [], min = opts.min ?? MIN_SCORE;
   for (const dir of [1, -1]) {
     let cur = box;
     for (let i = from + dir; i >= 0 && i < frames.length; i += dir) {
       const r = follow(frames[i - dir].planes, frames[i].planes, cur, opts);
-      if (r.flat) { lostAt.push(frames[i].t); break; }
-      if (r.score < min) { lostAt.push(frames[i].t); break; }
+      if (r.flat) { lostAt.push(frames[i].t); lostScore.push(null); break; }
+      if (r.score < min) { lostAt.push(frames[i].t); lostScore.push(r.score); break; }
       cur = r.box; keys.push({ t: frames[i].t, box: cur, score: r.score });
     }
   }
   keys.sort((x, y) => x.t - y.t);
-  return { keys, lostAt };
+  return { keys, lostAt, lostScore };
 }
 
 /** Keyframes for a zone's place from a track: [{ t, X, Y }] (centre of the box; its size stays as it was). */

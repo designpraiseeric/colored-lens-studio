@@ -96,7 +96,18 @@
   X(z5Out, B, "Zone 5 keep out of its place", 0, 1, 0, "Zone places") \
   X(z6Out, B, "Zone 6 keep out of its place", 0, 1, 0, "Zone places") \
   X(z7Out, B, "Zone 7 keep out of its place", 0, 1, 0, "Zone places") \
-  X(z8Out, B, "Zone 8 keep out of its place", 0, 1, 0, "Zone places")
+  X(z8Out, B, "Zone 8 keep out of its place", 0, 1, 0, "Zone places") \
+  /* Appended 18 Nov 2026 (later still). Which OTHER zones' places a zone keeps out of, as a set of bits (zone 1 = 1,
+     zone 2 = 2, zone 3 = 4 ... zone 8 = 128). A forest that shares its olive with both a vest and a jacket keeps out of
+     both, so all three can go to different colours. */ \
+  X(z1Avoid, F, "Zone 1 keeps out of zones", 0, 255, 0, "Zone places") \
+  X(z2Avoid, F, "Zone 2 keeps out of zones", 0, 255, 0, "Zone places") \
+  X(z3Avoid, F, "Zone 3 keeps out of zones", 0, 255, 0, "Zone places") \
+  X(z4Avoid, F, "Zone 4 keeps out of zones", 0, 255, 0, "Zone places") \
+  X(z5Avoid, F, "Zone 5 keeps out of zones", 0, 255, 0, "Zone places") \
+  X(z6Avoid, F, "Zone 6 keeps out of zones", 0, 255, 0, "Zone places") \
+  X(z7Avoid, F, "Zone 7 keeps out of zones", 0, 255, 0, "Zone places") \
+  X(z8Avoid, F, "Zone 8 keeps out of zones", 0, 255, 0, "Zone places")
 
 namespace lukuluku {
 enum ParamId {
