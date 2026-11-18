@@ -478,3 +478,22 @@ test('a baked LUT leaves boxed zones out, while the preview and the effect keep 
   assert.deepEqual(px(out, 70, 20), px(ref, 70, 20), 'outside it, nothing changes');
   const params = toParams(look, cat, { params: boxedZone }); assert.equal(params.z1BW, 0.2, 'the effect receives the box');
 });
+
+// ---------- places that follow the subject ----------
+import { planes as trackPlanes, trackBox, placeKeys } from '../core/track.js';
+test('a place follows its item through the shot, and stops honestly when the item is lost', () => {
+  const W = 320, H = 180, rnd = (x, y, s) => { let h = (x * 374761393 + y * 668265263 + s * 2246822519) | 0; h = (h ^ (h >>> 13)) * 1274126177; return ((h ^ (h >>> 16)) >>> 0) / 4294967295; };
+  const scene = (ox, hidden) => { const f = makeFrame(W, H);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const i = (y * W + x) * 4, n = rnd(Math.floor(x / 10), Math.floor(y / 10), 1); f.data[i] = 80 + n * 40; f.data[i + 1] = 90 + n * 40; f.data[i + 2] = 50 + n * 20; f.data[i + 3] = 255; }
+    if (!hidden) for (let y = 60; y < 120; y++) for (let x = 0; x < 40; x++) { const i = (y * W + ox + x) * 4, n = rnd(Math.floor(x / 7), Math.floor(y / 7), 7); f.data[i] = 70 + n * 70; f.data[i + 1] = 110 + n * 60; f.data[i + 2] = 30 + n * 30; }
+    return f; };
+  const xs = [60, 75, 90, 105, 120, 135, 150];
+  const frames = xs.map((ox, i) => ({ t: i * 0.5, planes: trackPlanes(scene(ox, i === 6)) }));   // hidden in the last frame
+  const from = 2, box = { x0: 90 / W, y0: 60 / H, x1: 130 / W, y1: 120 / H };
+  const tr = trackBox(frames, from, box);
+  for (const k of tr.keys) { const truth = (xs[Math.round(k.t / 0.5)] + 20) / W, got = (k.box.x0 + k.box.x1) / 2;
+    assert.ok(Math.abs(got - truth) * W < 2.5, `at ${k.t}s the place is ${((got - truth) * W).toFixed(1)} px off`); }
+  assert.deepEqual(tr.keys.map(k => k.t), [0, 0.5, 1, 1.5, 2, 2.5], 'followed both ways from the frame it was drawn on');
+  assert.deepEqual(tr.lostAt, [3], 'and stopped where the item disappeared instead of locking onto the background');
+  const pk = placeKeys(tr); assert.equal(pk.length, 6); assert.ok(pk[5].X > pk[0].X);
+});

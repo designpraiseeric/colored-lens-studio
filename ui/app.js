@@ -21,6 +21,7 @@ import { sliderHTML, wireSliders } from './slider.js';
 import { COACH, routes, helpPrompt } from './guide.js';
 import { decodeImage, makeFrame } from '../core/image.js';
 import { encodeJPEG } from '../core/jpeg.js';
+import { planes as trackPlanes, trackBox, placeKeys } from '../core/track.js';
 import { fingerprint, lookup as cacheLookup, remember as cacheRemember, ago } from '../core/aicache.js';
 import { parseRing, ringJSON, addKey, removeKey, keyOrder, restUntil, maskKey } from '../core/keyring.js';
 
@@ -131,7 +132,7 @@ export async function startApp(host, root) {
     const key = S.ctx && S.ctx.subject ? `${S.ctx.subject.track}|${S.ctx.subject.name}|${S.ctx.subject.start}` : ''; if (key !== S.layerKey) { S.layerOff = []; S.layerKey = key; }
     try { S.selCount = await (host.selectionCount ? host.selectionCount() : 0); } catch { S.selCount = 0; }
     S.readErr = null;
-    const g = await host.grabFrame(undefined, { clean: true, hide: S.layerOff, onSlow: s => status(`Waiting for Premiere to render this frame — ${s}s (heavy timelines take a while)…`) }); S.frame = g.frame; S.meta = g; g.readWithout = S.layerOff.slice().sort(); S.sample = null; S.chosen = -1; S.lead = 0;
+    const g = await host.grabFrame(undefined, { clean: true, hide: S.layerOff, onSlow: s => status(`Waiting for Premiere to render this frame — ${s}s (heavy timelines take a while)…`) }); S.frame = g.frame; S.meta = g; S.track = null; g.readWithout = S.layerOff.slice().sort(); S.sample = null; S.chosen = -1; S.lead = 0;
     aiGen++; aiBusy = false; S.fp = null;
     S.study = null; S.sugg = []; S.suggOpen = S.suggHow = -1; S.rangeInfo = null; S.ai = { busy: '', error: '', chat: [], none: false };
     S.smartDirs = []; S.smart.turns = []; S.smart.history = [];
@@ -334,10 +335,66 @@ export async function startApp(host, root) {
     line.style.left = (x - 1) + 'px'; line.style.display = S.view === 'split' && !same ? 'block' : 'none';
   }
 
+
+  // ---------- places that follow the subject ----------
+  // A placed zone is placed for the frame that was read. "Follow" reads a few frames either side within the clip,
+  // follows each placed zone's box by what it looks like (core/track.js), and keeps the result as keyframes for Apply.
+  /** Keyframes for the zones whose places were followed: { z1X: [{t, v}], z1Y: [...] } (only zones still live and placed). */
+  function trackKeys(extra) {
+    if (!S.track || !S.track.zones) return null; const out = {};
+    for (const [n, keys] of Object.entries(S.track.zones)) { if (!((extra[`z${n}Amt`] || 0) > 0 && (extra[`z${n}BW`] || 0) > 0) || keys.length < 2) continue;
+      out[`z${n}X`] = keys.map(k => ({ t: k.t, v: k.X })); out[`z${n}Y`] = keys.map(k => ({ t: k.t, v: k.Y })); }
+    return Object.keys(out).length ? out : null;
+  }
+  async function followPlaces() {
+    const placed = zoneList().filter(n => (S.extra[`z${n}Amt`] || 0) > 0 && (S.extra[`z${n}BW`] || 0) > 0 && (S.extra[`z${n}BH`] || 0) > 0);
+    if (!placed.length) return toast('No colour zone has a place in the frame to follow');
+    const t0 = S.meta && S.meta.seconds != null ? S.meta.seconds : S.ctx ? S.ctx.seconds : null; if (t0 == null) return toast('Read a frame first');
+    const sub = S.ctx && S.ctx.subject, a = Math.max(sub && sub.start != null ? sub.start + 0.05 : t0 - 4, t0 - 4), b = Math.min(sub && sub.end != null ? sub.end - 0.05 : t0 + 4, t0 + 4);
+    // about one frame every 0.6 s, at most 3 either side: each read takes as long as a normal frame read
+    const before = Math.min(3, Math.floor((t0 - a) / 0.6)), after = Math.min(3, Math.floor((b - t0) / 0.6));
+    const times = [...Array(before)].map((_, i) => t0 - (before - i) * ((t0 - a) / before)).concat([t0], [...Array(after)].map((_, i) => t0 + (i + 1) * ((b - t0) / after)));
+    if (times.length < 2) return toast('This clip is too short around this frame to follow anything');
+    S.track = { busy: true, done: 0, of: times.length - 1, zones: {}, lost: {} }; render();
+    const frames = [];
+    for (const t of times) {
+      if (!S.track || !S.track.busy) return;   // stopped
+      const f = t === t0 ? S.frame : (await host.grabFrame(t, { clean: true, hide: S.layerOff })).frame;
+      frames.push({ t, planes: trackPlanes(downsample(f, 384)) }); if (t !== t0) { S.track.done++; render(); }
+    }
+    const from = times.indexOf(t0);
+    for (const n of placed) {
+      const X = S.extra[`z${n}X`], Y = S.extra[`z${n}Y`], W = S.extra[`z${n}BW`], H = S.extra[`z${n}BH`];
+      const tr = trackBox(frames, from, { x0: X - W, y0: Y - H, x1: X + W, y1: Y + H });
+      S.track.zones[n] = placeKeys(tr); S.track.lost[n] = tr.lostAt;
+    }
+    S.track.busy = false; S.track.at = Date.now(); render();
+    const ok = placed.filter(n => S.track.zones[n].length > 1).length;
+    toast(ok ? `Followed ${ok} of ${placed.length} placed colour${placed.length > 1 ? 's' : ''} through ${fmtSecs(times[0])}–${fmtSecs(times[times.length - 1])}. Apply keyframes them.` : 'Could not follow the placed colours: they change too much between frames. They stay where they are in this frame.', 7000);
+  }
+  const fmtSecs = s => { const m = Math.floor(s / 60), x = s - m * 60; return `${m}:${x.toFixed(1).padStart(4, '0')}`; };
+  function trackHTML() {
+    const placed = zoneList().filter(n => (S.extra[`z${n}Amt`] || 0) > 0 && (S.extra[`z${n}BW`] || 0) > 0);
+    if (!placed.length || !S.frame) return '';
+    const T = S.track;
+    if (T && T.busy) return `<p class="small">Following the placed colours through the shot: frame ${T.done} of ${T.of}… <span role="button" tabindex="0" id="trackStop" class="linkbtn small">Stop</span></p>`;
+    const rows = T && T.zones ? placed.map(n => { const k = T.zones[n] || [], lost = (T.lost || {})[n] || [];
+      return k.length > 1 ? `Zone ${n}: followed ${fmtSecs(k[0].t)}–${fmtSecs(k[k.length - 1].t)}${lost.length ? ` (lost it at ${lost.map(fmtSecs).join(' and ')}, so it stays put from there)` : ''}.` : `Zone ${n}: could not be followed; it stays where it is in this frame.`; }) : [];
+    const ae = host.name === 'aftereffects';
+    return `<div class="row wrap"><button id="trackGo">${T && T.zones ? 'Follow again' : 'Follow the placed colours through the shot'}</button></div>
+      ${rows.length ? `<p class="small dim">${rows.join(' ')} ${ae ? 'Apply puts these places on the effect as keyframes.' : 'Following is applied as keyframes in After Effects; in this version Premiere keeps each place where it is in the frame you read.'}</p>` : `<p class="small dim">A placed colour only acts where its item is in this frame. This reads a few frames either side and moves each place with its item.</p>`}`;
+  }
+  function wireTrack(el) {
+    if ($('#trackGo', el)) $('#trackGo', el).onclick = () => followPlaces().catch(e => { if (S.track) S.track.busy = false; toast(e.message || String(e), 6000); render(); });
+    if ($('#trackStop', el)) $('#trackStop', el).onclick = () => { S.track = null; render(); };
+  }
+
   // ---------- applying ----------
   async function applyLookToClips(look, extra, input, matte) {
     const C = cat(), params = lookToEngineParams(look, C, { matte, params: { ...extra, input: input === 'logc3' ? 1 : 0 } });
-    const res = await host.applyLook({ params, look, scope: S.ctx ? S.scope : 'clip', makeCube: async () => bakeCube(look, C, await lutsFor(look), { input, keepExposure: true, extra }) });
+    // places followed through the shot become keyframes on the zones' place settings, where the host can set them
+    const keys = trackKeys(extra);
+    const res = await host.applyLook({ params, look, keys, scope: S.ctx ? S.scope : 'clip', makeCube: async () => bakeCube(look, C, await lutsFor(look), { input, keepExposure: true, extra }) });
     toast(res.message, 6000); return res;
   }
   async function saveCurrentAsPreset(name, asNew) {
@@ -744,9 +801,10 @@ export async function startApp(host, root) {
     for (const m of z.mapped) { const c = cov.find(x => x.zone === m.zone), amt = S.extra[`z${m.zone}Amt`] || 0, it = g.items.find(x => x.item === m.item) || {};
       rows.push(`<div class="it">${sw(it.hex)}<span><b>${esc(m.item)}</b> → ${esc(m.to)}: ${amt <= 0 ? '<span class="warn">switched off</span>' : !c || c.share < 0.004 ? '<span class="warn">this zone is finding almost nothing in your frame. Open Tweak › Colour zones and drag “Zone ' + m.zone + ' pick hue” until it changes.</span>' : `changing about ${Math.max(1, Math.round(c.share * 100))}% of the picture`}${m.placed ? `<span class="dim"> · only where it is in this frame (its colour is in ${Math.round((m.wholeShare || 0) * 100)}% of the picture)${m.placed === 'rough' ? ', placed from the AI\'s description, so check the edges' : ''}. If it moves out of that place during the shot, it needs a mask.</span>` : ''}</span></div>`); }
     return `<div class="k">On your preview now</div>${rows.join('') || '<p class="small">Only the overall look.</p>'}
-      ${z.skipped.length ? `<p class="small dim">Not changed: ${esc(z.skipped.map(x => `${x.item} (${x.why})`).join('; '))}.</p>` : ''}<p class="small dim">Measured from your frame; it updates as you tweak. Drag across the picture to compare.</p>`;
+      ${z.skipped.length ? `<p class="small dim">Not changed: ${esc(z.skipped.map(x => `${x.item} (${x.why})`).join('; '))}.</p>` : ''}${trackHTML()}<p class="small dim">Measured from your frame; it updates as you tweak. Drag across the picture to compare.</p>`;
   }
   function wireAI(body) {
+    wireTrack(body);
     wireSmart(body);
     body.querySelectorAll('[data-lay]').forEach(b => b.onclick = () => { const t = +b.dataset.lay; S.layerOff = S.layerOff.includes(t) ? S.layerOff.filter(x => x !== t) : [...S.layerOff, t]; render(); });
     body.querySelectorAll('[data-range]').forEach(b => b.onclick = () => { S.range = b.dataset.range; settings.set('range', S.range); S.rangeInfo = null; render(); });
@@ -785,7 +843,7 @@ export async function startApp(host, root) {
       S.extra = { ...S.extra, ...zoneDefaults(), ...z.params, skinLift: lift, skinGuard: Math.max(S.extra.skinGuard || 0, 0.7) };
       S.base = { look: clone(S.look), extra: { ...S.extra } }; S.strength = 1; S.fit = null;
       await fitToShot(di >= 0 ? (S.smartDirs[di] || {}).allows : null);
-      S.recipe = { name: g.title, presetId: null }; S.suggOn = i; S.suggZ = z; S.view = 'split'; S.dockHidden = false; stageCache.key = ''; S.focusSg = i; render();
+      S.recipe = { name: g.title, presetId: null }; S.suggOn = i; S.suggZ = z; S.track = null; S.view = 'split'; S.dockHidden = false; stageCache.key = ''; S.focusSg = i; render();
       toast(z.mapped.length || z.params.ambAmt ? `“${g.title}” is on your preview: drag across the picture to compare` : 'Only the overall look could be previewed for this one; see “What is left to do by hand”'); }));
   }
   // What the timeline says about this shot. Context proposes; the editor decides.

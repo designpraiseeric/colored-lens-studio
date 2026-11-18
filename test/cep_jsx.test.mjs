@@ -71,3 +71,16 @@ test('cl_apply skips a setting that already has the value, and retries a refused
   assert.equal(layer.lastSet['Anamorphic streaks'], true);
   assert.ok(!('Animate grain' in layer.lastSet) || layer.lastSet['Animate grain'] === undefined, 'Animate grain is on by default, so it is left alone');
 });
+
+test('cl_apply keyframes the places of zones that were followed through the shot', () => {
+  const { ctx, layer } = makeAE();
+  const keyed = {};
+  // give the mock effect's place controls keyframe support
+  const orig = layer.property('ADBE Effect Parade').addProperty.bind(layer.property('ADBE Effect Parade'));
+  layer.property('ADBE Effect Parade').addProperty = m => { const fx = orig(m); for (let i = 1; i <= fx.numProperties; i++) { const pr = fx.property(i);
+    pr.numKeys = 0; pr.removeKey = () => { pr.numKeys--; }; pr.setValuesAtTimes = (ts, vs) => { keyed[pr.name] = ts.map((t, j) => [t, vs[j]]); pr.numKeys = ts.length; }; } return fx; };
+  const r = JSON.parse(ctx.cl_apply(list(['z1Amt']), 'clip', 1, [['Zone 1 place across', [[1, 0.4], [1.5, 0.45]]], ['Zone 1 place down', [[1, 0.5], [1.5, 0.52]]]]));
+  assert.equal(r.ok, true, r.error); assert.deepEqual(r.v.missed, []);
+  assert.equal(r.v.keyed, 2);
+  assert.equal(JSON.stringify(keyed['Zone 1 place across']), '[[1,0.4],[1.5,0.45]]');
+});

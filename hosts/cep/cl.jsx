@@ -64,7 +64,7 @@ function cl_miss(list, name) { for (var i = 0; i < list.length; i++) if (list[i]
  * Adds or updates the Lukuluku Look. params: [[label, kind, value], ...]. scope 'adjust' = a layer named "Colored Lens"
  * (made the first time, at the top); otherwise the selected layers, else the given track's layer. One undo step.
  */
-function cl_apply(params, scope, subjectTrack) {
+function cl_apply(params, scope, subjectTrack, keys) {
   var open = false;
   try { var c = cl_comp(), targets = [], where = '', n = c.numLayers;
     if (scope === 'adjust') { app.beginUndoGroup('Colored Lens: apply look'); open = true; var adj = null; for (var i = 1; i <= n; i++) { var l = c.layer(i); if (l.adjustmentLayer && l.name === 'Colored Lens') { adj = l; break; } }
@@ -76,16 +76,21 @@ function cl_apply(params, scope, subjectTrack) {
     }
     if (!targets.length) return cl_json({ ok: false, error: 'There is no layer at the current time. Select layers, or move to a shot.' });
     if (!open) { app.beginUndoGroup('Colored Lens: apply look'); open = true; } // only once something will change: no empty undo steps
-    var added = 0, updated = 0, missed = [];
+    var added = 0, updated = 0, missed = [], keyed = 0;
     for (var t = 0; t < targets.length; t++) { var L = targets[t], fx = cl_lookFx(L);
       if (fx) updated++; else { fx = L.property('ADBE Effect Parade').addProperty(CL_MATCH); added++; }
       var byName = cl_controls(fx);
       for (var p = 0; p < params.length; p++) { var pr = byName['@' + params[p][0]]; if (!pr) { cl_miss(missed, params[p][0]); continue; }
         var v = params[p][2], k = params[p][1]; v = k === 'B' ? (v ? 1 : 0) : k === 'P' ? Math.round(v) + 1 : Number(v); // AE popups are 1-based
         try { if (k === 'F' && pr.hasMin && v < pr.minValue) v = pr.minValue; if (k === 'F' && pr.hasMax && v > pr.maxValue) v = pr.maxValue; var cur = null; try { cur = pr.value; } catch (e0) {} if (pr.numKeys === 0 && cur === v) continue; // already right: nothing to change
+          while (pr.numKeys > 0) pr.removeKey(1); // re-applying: a keyframed setting refuses a plain value
           try { pr.setValue(v); } catch (e1) { if (k !== 'B') throw e1; pr.setValue(!!v); } } catch (e) { var dv = ''; try { dv = '; was ' + pr.value + ', sent ' + v + ', ' + pr.matchName; } catch (e2) {}
-          cl_miss(missed, params[p][0] + ' (' + String(e && e.message ? e.message : e).replace(/^.*?:\s*/, '').slice(0, 120) + dv + ')'); } } }
-    return cl_ok({ added: added, updated: updated, missing: missed.length, missed: missed, where: where });
+          cl_miss(missed, params[p][0] + ' (' + String(e && e.message ? e.message : e).replace(/^.*?:\s*/, '').slice(0, 120) + dv + ')'); } }
+      // places followed through the shot: keyframes at comp times [[label, [[t, v], ...]], ...]
+      for (var q = 0; keys && q < keys.length; q++) { var kp = byName['@' + keys[q][0]]; if (!kp) { cl_miss(missed, keys[q][0]); continue; }
+        var ts = [], vs = []; for (var j = 0; j < keys[q][1].length; j++) { ts.push(keys[q][1][j][0]); vs.push(keys[q][1][j][1]); }
+        try { while (kp.numKeys > 0) kp.removeKey(1); kp.setValuesAtTimes(ts, vs); keyed++; } catch (e3) { cl_miss(missed, keys[q][0] + ' keyframes (' + String(e3.message || e3).slice(0, 80) + ')'); } } }
+    return cl_ok({ added: added, updated: updated, missing: missed.length, missed: missed, where: where, keyed: keyed });
   } catch (e) { return cl_err(e); } finally { if (open) app.endUndoGroup(); }
 }
 

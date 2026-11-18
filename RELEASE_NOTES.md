@@ -1,5 +1,15 @@
 # Release notes
-Each `## 0.17.0
+Each `## 0.18.0
+
+**Placed colours can follow their item through the shot.** A colour change that has a place in the frame (0.17.0) was placed for the one frame you read, so a walking subject left it behind. After trying a suggestion, "Follow the placed colours through the shot" reads a few frames either side within the clip (up to about 4 seconds each way), follows each placed item by what it looks like, and moves its place with it.
+- In After Effects, Apply puts these places on the effect as keyframes, in the same single undo step.
+- In Premiere, for now, each place stays where it is in the frame you read; following will come to Premiere once it is tested there.
+- If an item changes too much between frames (it turns away, or something passes in front of it), following stops at that point and the panel says when; the place stays put from there rather than drifting onto the background.
+- It takes as long as reading that many frames, and Stop is there if you change your mind.
+
+After Effects: the panel now writes how long each step of opening takes (in ColoredLens/cep_timing.log), to find out why it can take about 20 seconds to appear.
+
+## 0.17.0
 
 **Per-item colour now works on muted footage.** On a forest shot every colour suggestion used to collapse to "Only the overall look": the boy's olive vest shares its colour with most of a forest, so a colour zone could not pick it out. Now each colour zone can also have a place in the frame.
 - Gemini gives a box for each thing it names, and a zone acts only inside that box (softly, fading out before the box's edge). Two items of the same colour in different places, like an olive vest and an olive jacket, each get their own zone.

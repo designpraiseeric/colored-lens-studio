@@ -73,14 +73,15 @@ const host = {
   },
   async addMarker({ seconds, name, note }) { await ready(); await es(`cl_addMarker(${+seconds}, ${lit(name)}, ${lit(note)})`); },
   async listMarkers() { await ready(); return es('cl_markers()'); },
-  async applyLook({ params, makeCube, scope = 'clip' }) {
+  async applyLook({ params, makeCube, scope = 'clip', keys = null }) {
     await ready();
     if ((await es('cl_canApply()')) === false) { const cube = await makeCube(); const p = await host.saveFile(cube.name + '.cube', cube.text);
       return { ok: !!p, message: p ? 'The Lukuluku Look effect is not installed for After Effects, so the look was saved as a .cube. Apply it with Lumetri Color › Creative › Look.' : 'Cancelled' }; }
     const list = Object.entries(params).map(([id, v]) => { const m = kParamLabels[id]; return m ? [m.label, m.kind, typeof v === 'boolean' ? (v ? 1 : 0) : +v] : null; }).filter(Boolean);
     const sub = subjectOf((await es('cl_context()')).layers);
-    const r = await es(`cl_apply(${lit(list)}, ${lit(scope === 'adjust' ? 'adjust' : 'clip')}, ${sub ? sub.track : 0})`);
-    const parts = [r.added && `added to ${r.added} layer${r.added === 1 ? '' : 's'}`, r.updated && `updated on ${r.updated} layer${r.updated === 1 ? '' : 's'}`].filter(Boolean);
+    const klist = keys ? Object.entries(keys).filter(([id]) => kParamLabels[id]).map(([id, ks]) => [kParamLabels[id].label, ks.map(k => [+k.t, +k.v])]) : [];
+    const r = await es(`cl_apply(${lit(list)}, ${lit(scope === 'adjust' ? 'adjust' : 'clip')}, ${sub ? sub.track : 0}, ${lit(klist)})`);
+    const parts = [r.added && `added to ${r.added} layer${r.added === 1 ? '' : 's'}`, r.updated && `updated on ${r.updated} layer${r.updated === 1 ? '' : 's'}`, r.keyed && `with ${r.keyed / 2 | 0 || 1} place${r.keyed > 2 ? 's' : ''} keyframed to follow ${r.keyed > 2 ? 'their items' : 'its item'}`].filter(Boolean);
     return { ok: true, message: `Lukuluku Look ${parts.join(', ')}${r.where}. Edit › Undo removes it in one step.${r.missing ? ` Not set (missing from this version of the effect): ${(r.missed || []).join(', ') || r.missing}.` : ''}` };
   },
   async selectionCount() { try { await ready(); return await es('cl_selection()'); } catch { return 0; } },
