@@ -561,3 +561,13 @@ test('milky blacks are answered by setting the black point back, not by shrinkin
   assert.ok(!h.faults.some(f => f.id === 'milky' || /crushed/.test(f.id)), JSON.stringify(h.faults));
   assert.equal(holdBlacks(src, () => rgb => rgb, { skin: { faces: [] } }).d, 0, 'nothing to do on an untouched picture');
 });
+
+test('a model\'s broken JSON is repaired where it can be, and reported as garbled where it cannot', async () => {
+  const { repairJSON } = await import('../core/smart.js');
+  assert.deepEqual(parseReply('{"a": [1, 2, ], "b": "x"}'), { a: [1, 2], b: 'x' }, 'trailing comma');
+  assert.deepEqual(parseReply('{"t": "the "slate" forest", "n": 1}'), { t: 'the "slate" forest', n: 1 }, 'unescaped quotes inside a sentence');
+  assert.deepEqual(parseReply('{"s": [{"t": "one"}, {"t": "two"}, {"t": "thr'), { s: [{ t: 'one' }, { t: 'two' }] }, 'cut off part-way: the incomplete element is dropped');
+  assert.deepEqual(parseReply('```json\n{"ok": true}\n```'), { ok: true });
+  assert.equal(typeof repairJSON('{"a":1}'), 'string');
+  assert.throws(() => parseReply('{"a": 1 "b": }'), e => e.garbled === true);
+});

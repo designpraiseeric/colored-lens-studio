@@ -643,9 +643,11 @@ export async function startApp(host, root) {
     const range = kind === 'tell' ? null : await sampleRange(), lite = real.provider === 'apple';
     const a = { reading: S.reading, skin: S.skin, intent: S.intent, ctx: S.ctx, neigh: S.neigh, summary: frameSummary(S.reading, enc()), layers: scopeLayers(), range, vision, message, enc: enc(), lite, understanding: S.study, count: lite || S.ai.small || real.provider === 'ollama' || real.provider === 'openai' ? (S.ai.small ? 3 : 5) : 10 };
     status(kind === 'study' ? 'The AI is studying the frame…' : kind === 'tell' ? 'The AI is thinking about what you said…' : 'The AI is working out colour suggestions…');
-    const text = await ask(real, { prompt: kind === 'study' ? buildStudy(a) : kind === 'tell' ? buildTell(a) : buildSuggest(a), system: kind === 'study' ? SYSTEM_STUDY : kind === 'tell' ? SYSTEM_TELL : SYSTEM_SUGGEST, imageB64: toBase64(encodeJPEG(downsample(S.frame, kind === 'tell' ? 448 : 768), 84)), mime: 'image/jpeg',
-      images: range && range.sheet && !['ollama', 'openai'].includes(real.provider) ? [toBase64(encodeJPEG(range.sheet, 80))] : [], history: S.smart.history }, httpPost, host.bridge);
-    return parseReply(text);
+    const req = { prompt: kind === 'study' ? buildStudy(a) : kind === 'tell' ? buildTell(a) : buildSuggest(a), system: kind === 'study' ? SYSTEM_STUDY : kind === 'tell' ? SYSTEM_TELL : SYSTEM_SUGGEST, imageB64: toBase64(encodeJPEG(downsample(S.frame, kind === 'tell' ? 448 : 768), 84)), mime: 'image/jpeg',
+      images: range && range.sheet && !['ollama', 'openai'].includes(real.provider) ? [toBase64(encodeJPEG(range.sheet, 80))] : [], history: S.smart.history };
+    // A garbled answer that cannot be repaired is asked for once more: a fresh answer is almost always well formed.
+    try { return parseReply(await ask(real, req, httpPost, host.bridge)); }
+    catch (e) { if (!e.garbled) throw e; status('The AI\'s answer came back garbled; asking again…'); return parseReply(await ask(real, req, httpPost, host.bridge)); }
   }
   async function studyFrame(message) {
     if (!S.frame) return;

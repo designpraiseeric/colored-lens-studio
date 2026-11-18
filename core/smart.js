@@ -82,8 +82,36 @@ export function buildPrompt({ reading, skin, intent, ctx, neigh, message, summar
 /** Pulls the JSON object out of a model's text (tolerates code fences and chatter around it). */
 export function parseReply(text) {
   const s = String(text || '').replace(/```(?:json)?/gi, ''), a = s.indexOf('{'), b = s.lastIndexOf('}');
-  if (a < 0 || b <= a) throw new Error('The model did not answer in the expected format');
-  return JSON.parse(s.slice(a, b + 1));
+  if (a < 0) throw new Error('The model did not answer in the expected format');
+  try { if (b > a) return JSON.parse(s.slice(a, b + 1)); } catch (e) { /* repaired below */ }
+  // Models sometimes break their own JSON (seen 18 Nov from Gemini: "Expected ',' or ']' after array element"):
+  // a quote inside a sentence left unescaped, a trailing comma, or a reply cut off part-way. Repair what can be
+  // repaired; whatever cannot be is reported, and the caller asks the model again.
+  const fixed = repairJSON(s.slice(a));
+  try { return JSON.parse(fixed); } catch (e) { const err = new Error('The AI\'s answer came back garbled (' + e.message + ')'); err.garbled = true; throw err; }
+}
+/**
+ * A best-effort repair of a model's JSON: unescaped quotes inside strings (a quote that is not followed by , : } ]
+ * is taken as part of the text), trailing commas, and a reply cut off part-way (the incomplete last element is
+ * dropped and the open brackets closed).
+ */
+export function repairJSON(src) {
+  let out = '', inStr = false, esc = false; const stack = []; let lastSafe = 0, lastSafeStack = [];
+  const nextSig = i => { for (let j = i; j < src.length; j++) if (!/\s/.test(src[j])) return src[j]; return ''; };
+  for (let i = 0; i < src.length; i++) { const ch = src[i];
+    if (inStr) {
+      if (esc) { esc = false; out += ch; continue; }
+      if (ch === '\\') { esc = true; out += ch; continue; }
+      if (ch === '\n') { out += '\\n'; continue; }
+      if (ch === '"') { const n = nextSig(i + 1); if (n && !',:}]'.includes(n)) { out += '\\"'; continue; } inStr = false; out += ch; continue; }
+      out += ch; continue; }
+    if (ch === '"') { inStr = true; out += ch; continue; }
+    if (ch === '{' || ch === '[') { stack.push(ch === '{' ? '}' : ']'); out += ch; continue; }
+    if (ch === '}' || ch === ']') { stack.pop(); out = out.replace(/,\s*$/, ''); out += ch; lastSafe = out.length; lastSafeStack = stack.slice(); if (!stack.length) break; continue; }
+    if (ch === ',') { lastSafe = out.length; lastSafeStack = stack.slice(); }
+    out += ch; }
+  if (stack.length || inStr) { out = out.slice(0, lastSafe).replace(/,\s*$/, ''); out += lastSafeStack.slice().reverse().join(''); }
+  return out;
 }
 
 /** Keeps only what is valid: known recipes, known answer ids, adjustments clamped to their ranges. */
@@ -182,6 +210,7 @@ export async function ask(cfg, { prompt, imageB64, images = [], history = [], sy
         let keyLimited = false;
         for (let i = 0; i < order.length && !j && !keyLimited; i++) {
           for (let attempt = 0; attempt < (i === 0 && round === 0 ? 2 : 1) && !j; attempt++) {
+            if (round > 0 && Date.now() - started > BUDGET) break;   // out of patience: report rather than start another slow call
             try { j = await call(order[i], key); } catch (e) { lastErr = e; const m = String(e.message);
               if (isLimit(m)) { keyLimited = true; limited++; try { cfg.onKeyLimit && cfg.onKeyLimit(key, m); } catch {} break; } // this key is spent: next key
               if (/answered (503|500|502|504)/.test(m) || /took too long/.test(m)) { busy = true; if (i === 0 && attempt === 0 && round === 0) await wait(cfg.busyFirstWaitMs ?? 4000); continue; } // busy: retry, then next model

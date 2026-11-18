@@ -1,5 +1,10 @@
 # Release notes
-Each `## 0.20.0
+Each `## 0.20.1
+
+- A garbled answer from the AI is repaired where possible (a quote inside a sentence, a trailing comma, a reply cut off part-way), and otherwise asked for once more, instead of showing an error like "Expected ',' or ']' after array element".
+- Waiting on a busy Gemini now stops at about three minutes, as intended; slow calls could stretch it longer.
+
+## 0.20.0
 
 **The background can keep out of several items at once.** In 0.19.0 a forest could keep out of one item of its colour. Now it keeps out of every placed item that shares its colour, so the forest, the boy's olive vest and the woman's olive camo can each go to a different colour family. On a test frame where all three share one olive, they land on mustard, rust and slate teal, each near the colour asked for.
 - The background's colour change now goes all the way. Toward a quiet colour like slate, leaving 15% of the old olive pulled the hue about 35° back toward it.
