@@ -1,6 +1,6 @@
 # Colored Lens Studio — developer handoff
 
-**Purpose of this doc:** everything a new Claude session (or a new account) needs to take over this project with no other context. Keep it updated at every release. Last updated: 17 Nov 2026, 23:30 WAT, at v0.14.0.
+**Purpose of this doc:** everything a new Claude session (or a new account) needs to take over this project with no other context. Keep it updated at every release. Last updated: 18 Nov 2026, 02:10 WAT, at v0.15.0.
 
 **This file now lives in the repo at `docs/HANDOFF.md`** (and `docs/after-effects-scope.md`), as well as in the claude.ai Project. Before 0.14.0 they existed only as Project uploads; the repo copy is the one to edit.
 
@@ -318,10 +318,29 @@ Claude-Session: https://claude.ai/code/session_...
 | 0.12.0 | **the skin model excluded deep skin** — hue 28°/chroma 0.022 against a real subject at 24.1°/0.0158, so every face protection scored her 0.001 and saw nothing. Gamut widened to 18–92°/0.012 and **split in two** (`SKIN` to find a face, `SKIN_WIDE` to protect and measure one); **`skinLift` ("Lift the face")** lifts by skin weight where a colour-qualified zone cannot reach; `fitStrength` stops pre-shrinking the frame. Debt: 2 → 1 |
 | 0.12.1 | **a reply is not a restudy**: `SYSTEM_TELL`/`buildTell` answer the editor from the reading the AI already has, with no fresh inventory and no contact sheet; the AI's own question sits above the message box instead of being pasted into it. The host test's chat leg was passing vacuously and now drives the real path |
 | 0.12.2 | **a lift is for shadows, and nothing spends room the picture has not got.** `skinLift` was lifting the warm wall and the wooden door as hard as the face; it is now shadow-weighted and hard-capped. Colour zones and the ambience gained a lightness ceiling and a headroom rolloff on any move that ADDS colour. On the founder's frame, per-item building went from adding 6.1 points of blown picture to adding **none** |
+| 0.15.0 | **After Effects panel (preview)**; share code works in UXP; plain zone names; cache keeps notes |
+| 0.14.1 | scan fixed; guarded render + crash card; Apple prompt fits 4,096 tokens; Skin Guard group renamed |
 | 0.14.0 | **a dark face is lifted, not the whole picture** (AI exposure tweaks routed to skinLift; per-suggestion tweaks; Strength = scaleLook incl. skinLift + zones 5–8; dock shows worst two faults; captions are not items) and **speed** (prefetch, per-shot cache, seconds + Stop). `tools/frame_bench.mjs` |
 | 0.13.0 | **palette structures become a working surface**: `core/palette.js` — give one swatch to one item, or deal a whole structure across every live zone and re-deal it. Constrained (the accent goes to the smallest surface), scored by the quality gate before it is shown, and seeded so a good deal can be asked for again |
 
 ---
+
+## 11b. 18 Nov, 00:50–02:10 — the every-tab sweep in his "tests" project, and the AE start
+
+He asked for every feature under every tab to be checked. Found live (Premiere 26.5.2, Apple Intelligence text variant), fixed in 0.14.1 / 0.15.0:
+- **Scene › Scan the sequence** threw `addShot is not defined` (addShot was scoped to the Scene wiring). Fixed, host test added, verified live (4 frames, strip, reading).
+- **Panel froze**: every click logged uncaught exceptions with no message (UXP drops it). render() is now guarded (crash card + full message/stack to the log via console.error, which UXP does keep), root listeners use `near()` not `e.target.closest`. 4 message-less exceptions per click STILL appear in 0.14.1 even when clicks work: source not yet found; look in `~/Library/Logs/Adobe/Adobe Premiere Pro 2026/UXPLogs_*.log` for `[Colored Lens] error while` lines next time.
+- **Apple Intelligence** suggest prompt overflowed its 4,096-token window ("4098 tokens") and was reported as "not available". Lite prompt now ~1,900 tokens; history dropped first; one squeezed retry; honest message.
+- Apple text variant gets Vision labels, not "measurements only"; note corrected. Its item hexes are guesses, so its colour zones target guessed colours — open problem.
+- **Presets › Share code** threw (no btoa/TextEncoder in this UXP). core/b64.js is pure JS; the code opens under its preset. Same fix for pasting a Lukuluku link.
+- Zone named "amber" for an olive pick (encyclopedia has 13 hues, no olive/brown) → `plainColourName` in core/color.js.
+- "Skin Guard" twice in Effect Controls (skinLift appended under that group; OFX defined grp_Skin_Guard twice) → group "Lift the face"; test that groups are contiguous and unique.
+- "in a analogous" → "an". "exposure 0" no longer listed. Cache keeps vision + stale flags.
+- **Open, not fixed:** on a muted forest shot every item is skipped ("61–90% of the picture has that same colour") so suggestions are overall-look only — Premiere's real limit, AE/segmentation is the answer. A single colour pick can cover 57% of a muted frame with no warning.
+- Read/scan did NOT mark this project Edited (no Lukuluku on the clip to bypass).
+- Not yet swept: Guide, AI settings, Encyclopedia tab, Simple/Dark toggles, Apply (needs his say-so), the popped-out Preview panel on 0.14.1+.
+
+**After Effects, started 18 Nov** (0.15.0 ships `ColoredLens-AfterEffects-preview-<v>.ccx`): `hosts/aftereffects/host.js` + `hosts/uxp_common.js`, manifest v6 host aftereffects 27.0, id `com.designpraise.coloredlens.ae`, AE mock + contract test in hosts.test. **Never run on a real AE yet.** The live unknown is frame export: `tools/ae_probe` (read-only) is at `~/tmp_frames/ColoredLens-AE-probe.ccx` on his Mac; once installed and opened it writes `~/Library/Application Support/ColoredLens/ae_probe.json` — read it with his Filesystem MCP (allowed `/`). The device shell is a Linux VM and cannot install .ccx; he double-clicks.
 
 ## 11a. 17 Nov night — the live run on 0.13.0, and what it found
 

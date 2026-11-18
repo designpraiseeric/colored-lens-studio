@@ -1,6 +1,6 @@
 # Colored Lens Studio for After Effects: scope
 
-Status: scoping only. Nothing built. Premiere stays the test priority.
+Status: **started 18 Nov.** 0.15.0 ships a preview AE panel (hosts/aftereffects). Not yet run on a real AE; frame export is the open question (tools/ae_probe).
 
 ## 17 Nov night: the main unknown is answered — UXP, and the same plugin
 
