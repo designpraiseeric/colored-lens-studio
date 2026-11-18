@@ -171,7 +171,7 @@ struct Setup {
   V3 wLift, wGamE, wGainM, wOff, satR, LS, LM, LH, LSat; float lowR, highR, pivot, ucon; bool wpost;
   float hi, sh, wh, bk, bri, gam, lutMix, sharpU;
   float matchAmt, mLg, mLo, mA, mB, mCg; float skinGuard, skinHue, skinDensity, skinLight, skinLift;
-  float z[8][10]; float zb[8][4]; bool boxed; bool zones; float ambHue, ambAmt;
+  float z[8][10]; float zb[8][5]; bool boxed; bool zones; float ambHue, ambAmt;
 };
 inline V3 puck(float x, float y) { return {1.14f * y, -0.395f * x - 0.581f * y, 2.032f * x}; }
 
@@ -203,7 +203,8 @@ Setup makeSetup(const Params& p) {
   for (int i = 0; i < 8; i++) { const int base = i < 4 ? P_z1Amt + i * 10 : P_z5Amt + (i - 4) * 10;
     for (int k = 0; k < 10; k++) s.z[i][k] = float(p.v[base + k]); if (s.z[i][0] > 0) s.zones = true;
     // where the zone may act (appended 18 Nov): centre across/down, half-width/height; size 0 = anywhere
-    for (int k = 0; k < 4; k++) s.zb[i][k] = float(p.v[P_z1X + i * 4 + k]); }
+    for (int k = 0; k < 4; k++) s.zb[i][k] = float(p.v[P_z1X + i * 4 + k]);
+    s.zb[i][4] = float(p.v[P_z1Out + i]); }   // appended later: keep out of the box rather than inside it
   s.boxed = false; for (int i = 0; i < 8; i++) if (s.z[i][0] > 0 && s.zb[i][2] > 0 && s.zb[i][3] > 0) s.boxed = true;
   s.ambHue = float(p[P_ambHue]); s.ambAmt = float(p[P_ambAmt]); if (s.ambAmt > 0) s.zones = true;
   s.skinGuard = float(p[P_skinGuard]); s.skinHue = float(p[P_skinHue]); s.skinDensity = float(p[P_skinDensity]); s.skinLight = float(p[P_skinLight]); s.skinLift = float(p[P_skinLift]);
@@ -267,12 +268,14 @@ V3 applySkinGuard(V3 src, V3 out, const Setup& s) {
 /** How much of a zone reaches the point (u, v) of the frame (0..1, top-left origin). A zone without a box reaches
     everywhere. With a box it reaches fully in its core and fades to nothing at the box's edge, never beyond it. Without a
     position (u < 0: a baked LUT, which has no idea where a pixel is) a boxed zone reaches nothing, so a LUT never
-    paints an item's colour across the whole frame. Mirrors zonePlace in core/look.js. */
+    paints an item's colour across the whole frame. A zone set to keep out of its place acts everywhere EXCEPT the box
+    (still nothing in a LUT). Mirrors zonePlace in core/look.js. */
 inline float zonePlace(const float* b, float u, float v) {
   if (!(b[2] > 0 && b[3] > 0)) return 1.f; if (u < 0) return 0.f;
   // a rounded box (superellipse, power 4), fading to nothing at its edge, never beyond it
   float ax = std::fabs(u - b[0]) / b[2], ay = std::fabs(v - b[1]) / b[3], d = std::sqrt(std::sqrt(ax * ax * ax * ax + ay * ay * ay * ay));
-  return 1 - smoothstepf(0.7f, 1.f, d);
+  float in = 1 - smoothstepf(0.7f, 1.f, d);
+  return b[4] > 0.5f ? 1 - in : in;   // "keep out": everywhere except the box (the box's soft edge cross-fades)
 }
 V3 applyZones(V3 src, V3 out, const Setup& s, float u = -1, float v = -1) {
   if (!s.zones) return out;

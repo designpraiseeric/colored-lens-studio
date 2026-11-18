@@ -420,6 +420,7 @@ export function boxFromWords(where) {
   return { x0, y0, x1, y1, rough: true };
 }
 
+const BACKGROUND = /\b(background|backdrop|foliage|forest|woods?|trees|leaves|canopy|bushes|undergrowth|vegetation|grass|lawn|field|meadow|sky|clouds?|sea|ocean|water|lake|walls?|scenery|landscape|surroundings|environment|hills?|mountains?)\b/i;
 export function zonesFor(sg, study, swatches = [], frame = null) {
   const params = {}, mapped = [], skipped = [], sw = swatches.map(x => (typeof x === 'string' ? x : x && (x.hex || x[0]))).map(lchOf).filter(Boolean);
   const amb = lchOf(sg.ambience && sg.ambience.hex); if (amb && amb.C > 0.02) { params.ambHue = +amb.h.toFixed(1); params.ambAmt = 0.5; }
@@ -448,13 +449,22 @@ export function zonesFor(sg, study, swatches = [], frame = null) {
     if (change < 0.025) { skipped.push({ item: it.item, why: 'it is already about this colour' }); continue; }
     cands.push({ it, from, to, change, place: (st && (st.box || boxFromWords(st.where))) || boxFromWords(it.where) || null });
   }
-  // two items that have the same colour now cannot be told apart by colour alone
-  cands.sort((a, b) => b.change - a.change); const used = [];
+  // The background (foliage, sky, a wall) is meant to cover much of the frame, so its large share is not a reason
+  // to refuse it. Seen 18 Nov: "a muted slate forest" was dropped because the forest is 61% of a forest shot.
+  // (By its name only: a vest whose box is most of the frame is still a vest, and must not be painted everywhere.)
+  for (const c of cands) c.broad = BACKGROUND.test(c.it.item);
+  // Items go first and the background last, so the background can keep out of the place an item of its colour holds.
+  cands.sort((a, b) => (a.broad - b.broad) || (b.change - a.change)); const used = [];
   for (const c of cands) {
+    // two items that have the same colour now cannot be told apart by colour alone...
     // ...unless each has its own place in the frame and the two places do not overlap
     const apart = (a, b) => a && b && (a.x1 <= b.x0 || b.x1 <= a.x0 || a.y1 <= b.y0 || b.y1 <= a.y0);
-    const clash = used.find(u => !apart(u.box, c.place) && (u.from.C < 0.035) === (c.from.C < 0.035) && (c.from.C < 0.035 ? Math.abs(u.from.L - c.from.L) < 0.12 : Math.min(Math.abs(u.from.h - c.from.h), 360 - Math.abs(u.from.h - c.from.h)) < 18 && Math.abs(u.from.L - c.from.L) < 0.25));
-    if (clash) { skipped.push({ item: c.it.item, why: `it is the same colour as the ${clash.it.item} now, so it needs a mask` }); continue; }
+    const same = u => (u.from.C < 0.035) === (c.from.C < 0.035) && (c.from.C < 0.035 ? Math.abs(u.from.L - c.from.L) < 0.12 : Math.min(Math.abs(u.from.h - c.from.h), 360 - Math.abs(u.from.h - c.from.h)) < 18 && Math.abs(u.from.L - c.from.L) < 0.25);
+    const clashes = used.filter(u => !apart(u.box, c.place) && same(u));
+    // ...or the newcomer is the background and the one item it shares a colour with has a place: then the
+    // background acts everywhere EXCEPT that place (the forest goes slate, the vest in it goes mustard).
+    if (clashes.length === 1 && c.broad && clashes[0].box) { c.hole = clashes[0].box; c.holeOf = clashes[0].it.item; }
+    else if (clashes.length) { skipped.push({ item: c.it.item, why: `it is the same colour as the ${clashes.map(u => u.it.item).join(' and the ')} now, so it needs a mask` }); continue; }
     if (used.length >= 8) { skipped.push({ item: c.it.item, why: 'all eight colour zones are already in use' }); continue; }
     // A mint shirt sits at about 0.02 colourfulness: pale, but with a hue anyone can name. Treating anything under
     // 0.035 as "grey" meant the shirt, the wall and every other soft colour in a room were all the same zone, which
@@ -468,7 +478,7 @@ export function zonesFor(sg, study, swatches = [], frame = null) {
         if (n ? C < 0.015 && Math.abs(lab[0] - c.from.L) < 0.14 : dh < wid && C > Math.max(0.010, c.from.C * 0.45) && Math.abs(lab[0] - c.from.L) < 0.32) hit++; tot++; }
       const share = hit / Math.max(1, tot), small = /\b(glare|reflection|stud|earring|button|trim|frame|frames|text|logo|subtitle|ring|watch|lip|eye)/i.test(c.it.item);
       // skin is exempt: a face is meant to be a large part of the frame, and its zone only moves exposure
-      if (!c.skin && (share > (n ? 0.12 : 0.5) || (small && share > 0.08))) {
+      if (!c.skin && !c.broad && (share > (n ? 0.12 : 0.5) || (small && share > 0.08))) {
         // Colour alone cannot pick it out: on a muted frame one olive covers most of a forest. But the item has a
         // place, and inside that place its colour may well be the thing. Give the zone a box (padded a little) if
         // the box is a modest part of the frame and the colour really is there inside it.
@@ -491,8 +501,11 @@ export function zonesFor(sg, study, swatches = [], frame = null) {
     // A skin zone exists to answer "the face is underexposed", so it carries the whole move rather than half of it.
     P('dL', Math.max(-0.18, Math.min(0.18, (c.to.L - c.from.L) * (c.skin ? 1 : 0.5))));
     // its place: centre and half-size of the box (the zone fades to nothing at the box's edge)
-    if (c.box) { P('X', (c.box.x0 + c.box.x1) / 2); P('Y', (c.box.y0 + c.box.y1) / 2); P('BW', (c.box.x1 - c.box.x0) / 2); P('BH', (c.box.y1 - c.box.y0) / 2); }
-    mapped.push({ item: c.it.item, to: c.it.colour, zone: i, ...(c.box ? { placed: c.place.rough ? 'rough' : 'box', wholeShare: c.wholeShare } : {}) });
+    const bx = c.box || c.hole;
+    if (bx) { P('X', (bx.x0 + bx.x1) / 2); P('Y', (bx.y0 + bx.y1) / 2); P('BW', (bx.x1 - bx.x0) / 2); P('BH', (bx.y1 - bx.y0) / 2); }
+    // a hole: the box is the item's, and this zone keeps out of it
+    if (c.hole) P('Out', 1);
+    mapped.push({ item: c.it.item, to: c.it.colour, zone: i, ...(c.box ? { placed: c.place.rough ? 'rough' : 'box', wholeShare: c.wholeShare } : {}), ...(c.hole ? { except: c.holeOf } : {}) });
   }
   return { params, mapped, skipped };
 }

@@ -1,5 +1,15 @@
 # Release notes
-Each `## 0.18.0
+Each `## 0.19.0
+
+**The background can change colour around an item of the same colour.** On the forest shot, "a mustard vest in a muted slate forest" turned the vest mustard but left the forest green: the forest shares the vest's olive, so changing it would have changed the vest too.
+- Now, when the background (foliage, sky, a wall, a field) shares its colour with one placed item, the background's zone acts everywhere except that item's place. The forest goes slate and the vest goes mustard.
+- The panel says so: "everywhere except where the boy's vest is". In Tweak the zone is marked "Keeps out".
+- The background is no longer refused for covering most of the frame. It is meant to.
+- Like any placed zone, this is left out of exported LUTs.
+
+**Milky blacks are caught.** A grade that lifts the darkest part of the picture to a milky grey (the same suggestion took the forest's blacks from about 16% to 25% grey) is now one of the faults the fitter dials a look back from. Looks whose point is faded blacks (Faded Eterna, Pastel mist, Fogbound) are allowed it.
+
+## 0.18.0
 
 **Placed colours can follow their item through the shot.** A colour change that has a place in the frame (0.17.0) was placed for the one frame you read, so a walking subject left it behind. After trying a suggestion, "Follow the placed colours through the shot" reads a few frames either side within the clip (up to about 4 seconds each way), follows each placed item by what it looks like, and moves its place with it.
 - In After Effects, Apply puts these places on the effect as keyframes, in the same single undo step.

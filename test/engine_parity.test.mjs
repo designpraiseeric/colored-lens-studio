@@ -24,6 +24,10 @@ const BOXED = { z1Amt: 1, z1Hue: 120, z1Wid: 40, z1Cmin: 0.03, z1Cmax: 0.4, z1To
   z5Amt: 0.8, z5Cmin: 0, z5Cmax: 0.03, z5ToHue: 250, z5ToC: 0.06, z5X: 0.8, z5Y: 0.2, z5BW: 0.1, z5BH: 0.1, z2Amt: 0.5, z2Hue: 30, z2Wid: 30, z2ToHue: 60, z2ToC: 0.1, skinGuard: 0.5 };
 for (const [where, u, v] of [['inside its box', 0.32, 0.55], ['on the soft edge', 0.3 + 0.15 * 1.15, 0.6], ['far outside', 0.95, 0.95], ['without a position', undefined, undefined]])
   CASES.push([`zones with a place, ${where}`, 'C1·M2', {}, BOXED, u, v]);
+// a zone that keeps OUT of its place (the forest going slate everywhere except the vest)
+const HOLE = { ...BOXED, z2X: 0.3, z2Y: 0.6, z2BW: 0.15, z2BH: 0.25, z2Out: 1 };
+for (const [where, u, v] of [['inside the hole', 0.32, 0.55], ['on the hole\'s edge', 0.3 + 0.15 * 0.85, 0.6], ['away from the hole', 0.95, 0.95], ['without a position', undefined, undefined]])
+  CASES.push([`a zone keeping out of its place, ${where}`, 'C1·M2', {}, HOLE, u, v]);
 for (const [name, code, G, extra, u, v] of CASES) test(`engine parity: ${name}`, { skip: !fs.existsSync(bin) && 'engine not built' }, () => {
   const look = parseCode(code, cat); look.G = fullGrade(G);
   const params = lookToEngineParams(look, cat, { params: extra });

@@ -86,7 +86,17 @@
   X(z5X, F, "Zone 5 place across", 0, 1, 0.5, "Zone places") X(z5Y, F, "Zone 5 place down", 0, 1, 0.5, "Zone places") X(z5BW, F, "Zone 5 place width", 0, 1, 0, "Zone places") X(z5BH, F, "Zone 5 place height", 0, 1, 0, "Zone places") \
   X(z6X, F, "Zone 6 place across", 0, 1, 0.5, "Zone places") X(z6Y, F, "Zone 6 place down", 0, 1, 0.5, "Zone places") X(z6BW, F, "Zone 6 place width", 0, 1, 0, "Zone places") X(z6BH, F, "Zone 6 place height", 0, 1, 0, "Zone places") \
   X(z7X, F, "Zone 7 place across", 0, 1, 0.5, "Zone places") X(z7Y, F, "Zone 7 place down", 0, 1, 0.5, "Zone places") X(z7BW, F, "Zone 7 place width", 0, 1, 0, "Zone places") X(z7BH, F, "Zone 7 place height", 0, 1, 0, "Zone places") \
-  X(z8X, F, "Zone 8 place across", 0, 1, 0.5, "Zone places") X(z8Y, F, "Zone 8 place down", 0, 1, 0.5, "Zone places") X(z8BW, F, "Zone 8 place width", 0, 1, 0, "Zone places") X(z8BH, F, "Zone 8 place height", 0, 1, 0, "Zone places")
+  X(z8X, F, "Zone 8 place across", 0, 1, 0.5, "Zone places") X(z8Y, F, "Zone 8 place down", 0, 1, 0.5, "Zone places") X(z8BW, F, "Zone 8 place width", 0, 1, 0, "Zone places") X(z8BH, F, "Zone 8 place height", 0, 1, 0, "Zone places") \
+  /* Appended 18 Nov 2026 (later). A zone can keep OUT of its place instead: it acts everywhere except the box. The
+     forest shares the boy's vest's olive, so "turn the forest slate" can only land if it stays off the vest. */ \
+  X(z1Out, B, "Zone 1 keep out of its place", 0, 1, 0, "Zone places") \
+  X(z2Out, B, "Zone 2 keep out of its place", 0, 1, 0, "Zone places") \
+  X(z3Out, B, "Zone 3 keep out of its place", 0, 1, 0, "Zone places") \
+  X(z4Out, B, "Zone 4 keep out of its place", 0, 1, 0, "Zone places") \
+  X(z5Out, B, "Zone 5 keep out of its place", 0, 1, 0, "Zone places") \
+  X(z6Out, B, "Zone 6 keep out of its place", 0, 1, 0, "Zone places") \
+  X(z7Out, B, "Zone 7 keep out of its place", 0, 1, 0, "Zone places") \
+  X(z8Out, B, "Zone 8 keep out of its place", 0, 1, 0, "Zone places")
 
 namespace lukuluku {
 enum ParamId {

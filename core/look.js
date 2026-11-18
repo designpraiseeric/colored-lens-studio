@@ -208,8 +208,9 @@ export function applySkinGuard(src, out, p) {
 
 /** Colour zones (mirrors applyZones in the C++ engine): pixels picked by their original colour move to a new colour. */
 // The last four (appended 18 Nov 2026) are the zone's place in the frame: centre across/down and half-width/height,
-// as fractions of the frame; a size of 0 means anywhere. See zonePlace.
-export const ZONE_KEYS = ['Amt', 'Hue', 'Wid', 'Cmin', 'Cmax', 'Lmin', 'Lmax', 'ToHue', 'ToC', 'dL', 'X', 'Y', 'BW', 'BH'], ZONE_DEF = [0, 0, 25, 0.03, 0.4, 0, 1, 0, 0.1, 0, 0.5, 0.5, 0, 0];
+// as fractions of the frame; a size of 0 means anywhere. 'Out' (appended later) turns the box into a hole: the zone
+// acts everywhere except there. See zonePlace.
+export const ZONE_KEYS = ['Amt', 'Hue', 'Wid', 'Cmin', 'Cmax', 'Lmin', 'Lmax', 'ToHue', 'ToC', 'dL', 'X', 'Y', 'BW', 'BH', 'Out'], ZONE_DEF = [0, 0, 25, 0.03, 0.4, 0, 1, 0, 0.1, 0, 0.5, 0.5, 0, 0, 0];
 /** Does this zone have a place in the frame (a box), rather than acting wherever its colour is? */
 export const zoneBoxed = z => z[12] > 0 && z[13] > 0;
 /**
@@ -223,7 +224,8 @@ export function zonePlace(z, u, v) {
   if (!zoneBoxed(z)) return 1; if (u == null || u < 0) return 0;
   // a rounded box (superellipse, power 4): an item rarely fills its box's corners, the background does
   const ax = Math.abs(u - z[10]) / z[12], ay = Math.abs(v - z[11]) / z[13], d = Math.sqrt(Math.sqrt(ax * ax * ax * ax + ay * ay * ay * ay));
-  return 1 - smooth(0.7, 1, d);
+  const inside = 1 - smooth(0.7, 1, d);
+  return z[14] > 0.5 ? 1 - inside : inside;   // "keep out": everywhere except the box
 }
 /** Is any live zone boxed? (Then a frame must be rendered with positions, not through a baked table.) */
 export const hasBoxedZones = p => !!p && zoneList().some(i => (p[`z${i}Amt`] || 0) > 0 && (p[`z${i}BW`] || 0) > 0 && (p[`z${i}BH`] || 0) > 0);

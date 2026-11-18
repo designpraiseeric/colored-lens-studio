@@ -438,6 +438,10 @@ test('a place in the frame: Gemini boxes, rough boxes from words, and how far a 
   assert.ok(zonePlace(z, 0.385, 0.6) > 0 && zonePlace(z, 0.385, 0.6) < 1, 'fading inside the edge');
   assert.equal(zonePlace(z, undefined, undefined), 0, 'no position (a LUT): a boxed zone does nothing');
   assert.equal(zonePlace(ZD, undefined, undefined), 1, 'an unboxed zone reaches everywhere, as before');
+  const out = z.map((x, j) => ZK[j] === 'Out' ? 1 : x);
+  assert.equal(zonePlace(out, 0.3, 0.6), 0, 'keeping out: nothing at the centre of its place');
+  assert.equal(zonePlace(out, 0.9, 0.1), 1, 'keeping out: full strength everywhere else');
+  assert.equal(zonePlace(out, undefined, undefined), 0, 'keeping out still does nothing in a LUT');
 });
 
 test('an item whose colour fills most of the frame gets a zone limited to its place', () => {
@@ -461,6 +465,15 @@ test('an item whose colour fills most of the frame gets a zone limited to its pl
   assert.ok(words.mapped.some(m => m.placed === 'rough'), 'the AI\'s words alone place it roughly');
   const huge = zonesFor({ items: [sg.items[0]] }, study([{ ...vest, box: { x0: 0, y0: 0, x1: 0.9, y1: 0.9 } }]), sw, f);
   assert.equal(huge.mapped.length, 0, 'a box that is most of the frame isolates nothing');
+  // the background shares the vest's colour: it gets a zone that keeps out of the vest's place
+  const forest = zonesFor({ items: [sg.items[0], { item: 'forest foliage', colour: 'slate grey-green', hex: '#5f6b66' }] },
+    study([{ ...vest, box: { x0: 0.2, y0: 0.3, x1: 0.35, y1: 0.7 } }, { name: 'forest foliage', where: 'background', hex: '#5d6136' }]), sw, f);
+  const fm = forest.mapped.find(m => /foliage/.test(m.item)), vm = forest.mapped.find(m => /vest/.test(m.item));
+  assert.ok(fm && vm, `both the vest and the forest get zones: ${JSON.stringify(forest.skipped)}`);
+  assert.equal(fm.except, "boy's vest"); assert.equal(forest.params[`z${fm.zone}Out`], 1);
+  assert.equal(forest.params[`z${fm.zone}X`], forest.params[`z${vm.zone}X`], 'the hole is where the vest is');
+  const fc = zCov(f, { ...zDefs(), ...forest.params }).find(c => c.zone === fm.zone);
+  assert.ok(fc.share > 0.6, `the forest zone reaches the forest: ${fc.share}`);
 });
 
 test('a baked LUT leaves boxed zones out, while the preview and the effect keep them in their place', async () => {
@@ -496,4 +509,14 @@ test('a place follows its item through the shot, and stops honestly when the ite
   assert.deepEqual(tr.keys.map(k => k.t), [0, 0.5, 1, 1.5, 2, 2.5], 'followed both ways from the frame it was drawn on');
   assert.deepEqual(tr.lostAt, [3], 'and stopped where the item disappeared instead of locking onto the background');
   const pk = placeKeys(tr); assert.equal(pk.length, 6); assert.ok(pk[5].X > pk[0].X);
+});
+
+test('a grade that lifts the blacks to a milky grey is flagged, unless fading is the point', async () => {
+  const { gradeReport, faults } = await import('../core/quality.js');
+  const src = makeFrame(64, 32); for (let p = 0; p < 64 * 32; p++) { const v = 20 + (p % 64) * 3; src.data.set([v, v + 4, v - 6, 255], p * 4); }
+  const milk = makeFrame(64, 32); for (let p = 0; p < 64 * 32; p++) { const v = 64 + (p % 64) * 2.6; milk.data.set([v, v + 4, v - 6, 255], p * 4); }
+  const r = gradeReport(src, milk, { skin: { faces: [] } });
+  assert.ok(faults(r).some(f => f.id === 'milky'), JSON.stringify(faults(r)));
+  assert.ok(!faults(r, { allows: ['fade'] }).some(f => f.id === 'milky'), 'a faded look may lift its blacks');
+  assert.ok(!faults(gradeReport(src, src, { skin: { faces: [] } })).some(f => f.id === 'milky'));
 });

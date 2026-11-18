@@ -120,6 +120,9 @@ export function gradeReport(src, out, opts = {}) {
   // whole picture
   r.blownAdded = r.picture.after.blown - r.picture.before.blown;
   r.crushedAdded = r.picture.after.crushed - r.picture.before.crushed;
+  // How far the darkest part of the picture rose (Oklab L of the darkest 1%). A look that brightens everything,
+  // blacks included, reads as milky: seen 18 Nov, a "muted slate forest" took the forest's blacks from 16% to 25% grey.
+  r.blackFloorAdded = r.picture.after.p1 - r.picture.before.p1; r.blackFloor = r.picture.after.p1;
   { const a = pinned(s), b = pinned(o);
     // On a picture that is already mostly at the ceiling there is little left to protect, so the measure is scaled
     // by the room the source still had. Otherwise every warm push on a high-key frame reads as a catastrophe.
@@ -171,6 +174,8 @@ export const BAR = {
   grainAdded: 4.5,          // and the grain it adds on purpose, which is allowed but not without limit
   levelsDrop: 0.22,         // losing this much of the occupied levels is banding
   rangeDrop: 0.25,          // the usable tonal range collapsing
+  blackFloorAdded: 0.06,    // the blacks rising this far (Oklab L), when they end up above...
+  blackFloor: 0.30,         // ...this: about 9% grey in video levels. Below it a lift is a style; above it, a veil.
   neutralCast: 0.035,       // greys picking up a colour nobody asked for
 };
 
@@ -183,8 +188,9 @@ export const BAR = {
  *   soft   diffusion is the point, so local detail is meant to drop
  *   crush  deep blacks are the point, in the picture — never in the subject's face
  *   grain  the look adds its own texture, so flat-area noise is not the grade amplifying the source
+ *   fade   faded, lifted blacks are the point (a bleached print, a memory)
  */
-export const ALLOWS = ['mono', 'tint', 'soft', 'crush', 'grain'];
+export const ALLOWS = ['mono', 'tint', 'soft', 'crush', 'grain', 'fade'];
 
 /**
  * Everything wrong with a grade, in plain words, worst first. An empty list means it is fit to show.
@@ -215,6 +221,7 @@ export function faults(r, opts = {}) {
   if (!may.has('grain') && r.flatNoiseRatio > bar.flatNoiseRatio) add('noise-up', 2, `amplifies the source's own grain and blocking ${r.flatNoiseRatio.toFixed(1)}× in the flat areas`);
   if (r.grainAdded > bar.grainAdded) add('grain-heavy', 2, `lays grain ${r.grainAdded.toFixed(1)}× over the flat areas, past what the picture can carry`);
   if (!may.has('soft') && r.levelsBefore - r.levelsAfter > bar.levelsDrop) add('banding', 3, `combs the histogram (${pc(r.levelsBefore)} of levels used down to ${pc(r.levelsAfter)}), which bands on a gradient`);
+  if (!may.has('fade') && r.blackFloorAdded > bar.blackFloorAdded && r.blackFloor > bar.blackFloor) add('milky', 3, `lifts the blacks to a milky grey (the darkest part of the picture rises ${r.blackFloorAdded.toFixed(2)})`);
   if (!may.has('soft') && r.rangeBefore - r.rangeAfter > bar.rangeDrop) add('range-collapse', 2, `collapses the tonal range from ${r.rangeBefore.toFixed(2)} to ${r.rangeAfter.toFixed(2)}`);
   if (!may.has('tint') && !may.has('mono') && r.neutralCast > bar.neutralCast) add('neutral-cast', 2, `puts a colour cast on the greys (${r.neutralCast.toFixed(3)} where they had none)`);
 
