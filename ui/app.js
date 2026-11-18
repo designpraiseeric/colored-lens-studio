@@ -369,6 +369,12 @@ export async function startApp(host, root) {
     window.addEventListener && window.addEventListener('error', ev => reportCrash('handling a click or a timer', ev && (ev.error || ev)));
     window.addEventListener && window.addEventListener('unhandledrejection', ev => reportCrash('waiting for Premiere or the AI', ev && ev.reason));
   } catch { /* not every host has window events */ }
+  /** The panel is written in Premiere's words; a host may swap phrases (After Effects: comp, current time). Text only, never attributes. */
+  function hostWords(el) {
+    const W = host.words; if (!W || !W.length || !el) return;
+    const tw = document.createTreeWalker(el, 4 /* NodeFilter.SHOW_TEXT */); let n;
+    while ((n = tw.nextNode())) { let t = n.nodeValue, u = t; for (const [a, b] of W) u = u.replace(a, b); if (u !== t) n.nodeValue = u; }
+  }
   function renderUnsafe() {
     root.querySelectorAll('.tab').forEach(b => { const on = b.dataset.tab === S.tab; b.classList.toggle('on', on); b.setAttribute('aria-selected', on ? 'true' : 'false'); });
     // Same tab: keep the reader where they were (re-drawing must never throw them to the top or bottom of the page).
@@ -377,6 +383,7 @@ export async function startApp(host, root) {
     if (S.tab === 'tweak' && S.dockHidden && S.frame && !same) S.dockHidden = false; // tweaking blind is pointless
     renderDock();
     ({ shot: renderShot, scene: renderScene, tweak: renderTweak, presets: renderPresets, enc: renderEnc, smart: renderSmart, guide: renderGuide })[S.tab](body);
+    hostWords(body); hostWords(dockEl());
     body.scrollTop = keep;
     renderCoach();
   }

@@ -10,7 +10,7 @@ const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'))
 const cfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'studio.config.json'), 'utf8'));
 const SITE = path.join(ROOT, 'site', 'content');
 if (!fs.existsSync(path.join(SITE, 'manifest.json'))) { console.error('Run `npm run content` first.'); process.exit(1); }
-const which = process.argv.slice(2).length ? process.argv.slice(2) : ['web', 'premiere', 'aftereffects', 'resolve'];
+const which = process.argv.slice(2).length ? process.argv.slice(2) : ['web', 'premiere', 'aftereffects', 'cep', 'resolve'];
 const cp = (a, b) => { fs.mkdirSync(path.dirname(b), { recursive: true }); fs.cpSync(a, b, { recursive: true }); };
 
 function copyContent(dest, { frames = false } = {}) {
@@ -21,7 +21,7 @@ function copyContent(dest, { frames = false } = {}) {
 const html = (title, script, extraHead = '') => `<!DOCTYPE html>\n<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><link rel="stylesheet" href="style.css">${extraHead}</head>\n<body><div id="root"></div><script src="${script}"></script></body></html>\n`;
 async function bundle(entry, out, platform = 'browser') {
   await esbuild.build({ entryPoints: [entry], outfile: out, bundle: true, format: 'iife', target: ['es2020'], platform, minify: false, sourcemap: false, legalComments: 'none',
-    define: { 'process.env.NODE_ENV': '"production"' }, external: ['premierepro', 'aftereffects', 'uxp', 'os', 'fs', 'electron'], logLevel: 'warning' });
+    define: { 'process.env.NODE_ENV': '"production"' }, external: ['premierepro', 'aftereffects', 'uxp', 'path', 'os', 'fs', 'electron'], logLevel: 'warning' });
 }
 
 for (const h of which) {
@@ -50,6 +50,15 @@ for (const h of which) {
     man.version = pkg.version; man.id = cfg.ids.aePlugin;
     fs.writeFileSync(path.join(D, 'manifest.json'), JSON.stringify(man, null, 2));
     cp(path.join(ROOT, 'hosts/premiere/icons'), path.join(D, 'icons'));
+    copyContent(D);
+  }
+  if (h === 'cep') { // After Effects as a CEP panel: runs in today's AE releases (third-party UXP is AE Beta only)
+    await bundle(path.join(ROOT, 'hosts/cep/host.js'), path.join(D, 'app.js'));
+    cp(path.join(ROOT, 'ui/style.css'), path.join(D, 'style.css'));
+    fs.writeFileSync(path.join(D, 'index.html'), html('Colored Lens', 'app.js'));
+    fs.mkdirSync(path.join(D, 'CSXS'), { recursive: true }); fs.mkdirSync(path.join(D, 'host'), { recursive: true });
+    fs.writeFileSync(path.join(D, 'CSXS', 'manifest.xml'), fs.readFileSync(path.join(ROOT, 'hosts/cep/manifest.xml'), 'utf8').replace(/__VERSION__/g, pkg.version));
+    cp(path.join(ROOT, 'hosts/cep/cl.jsx'), path.join(D, 'host', 'cl.jsx'));
     copyContent(D);
   }
   if (h === 'resolve') {
