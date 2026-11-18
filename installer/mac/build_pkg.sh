@@ -13,6 +13,10 @@ if [ -d engine/build/LukulukuLook.plugin ]; then
   cp -R engine/build/LukulukuLook.plugin "$STAGE/Library/Application Support/Adobe/Common/Plug-ins/7.0/MediaCore/"
 fi
 cp "$OUT/ColoredLens-Premiere-$VERSION.ccx" "$STAGE/Library/Application Support/ColoredLens/"
+# The After Effects panel (CEP): the signed .zxp unpacked into the system extensions folder, else the unsigned build.
+CEPDIR="$STAGE/Library/Application Support/Adobe/CEP/extensions/com.designpraise.coloredlens.cep"; mkdir -p "$CEPDIR"
+if [ -f "$OUT/ColoredLens-AfterEffects-$VERSION.zxp" ]; then ditto -x -k "$OUT/ColoredLens-AfterEffects-$VERSION.zxp" "$CEPDIR"
+elif [ -d dist/cep ]; then echo "::warning::After Effects panel is unsigned in this installer"; cp -R dist/cep/. "$CEPDIR/"; else rmdir "$CEPDIR"; fi
 # The helper (Apple Intelligence + local models for the panel) and its per-user launch agent.
 ./helper/mac/build.sh "$ROOT/helper/build" "$VERSION"
 cp helper/build/ColoredLensHelper "$STAGE/Library/Application Support/ColoredLens/"

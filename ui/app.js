@@ -22,6 +22,7 @@ import { COACH, routes, helpPrompt } from './guide.js';
 import { decodeImage, makeFrame } from '../core/image.js';
 import { encodeJPEG } from '../core/jpeg.js';
 import { fingerprint, lookup as cacheLookup, remember as cacheRemember, ago } from '../core/aicache.js';
+import { parseRing, ringJSON, addKey, removeKey, keyOrder, restUntil, maskKey } from '../core/keyring.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -1164,7 +1165,26 @@ export async function startApp(host, root) {
   const httpPost = host.post || (async (url, headers, body) => { const r = await host.fetch(url, { method: 'POST', headers, body }); return { status: r.status, text: await r.text() }; });
   const httpGet = host.get || (async (url, headers = {}) => { const r = await host.fetch(url, { headers }); return { status: r.status, text: await r.text() }; });
   const secret = host.secret || { get: async k => settings.get('secret.' + k, ''), set: async (k, v) => settings.set('secret.' + k, v) };
-  async function smartCfg() { const c = { ...S.smart.cfg }; c.geminiKey = await secret.get('gemini'); c.claudeKey = await secret.get('claude'); c.openaiKey = await secret.get('openai'); return c; }
+  function gemKeysHTML() {
+    const ring = S.smart.gemRing || []; if (!ring.length) return '';
+    const now = Date.now(), when = t => { const d = new Date(t); return t - now < 90e3 ? 'about a minute' : 'until ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); };
+    return `<div class="small"><b>Saved keys</b> <span class="dim">(used in this order; when one reaches Google's free limit, the next takes over)</span></div>
+      ${ring.map((e, i) => `<div class="row tight"><span class="small grow">${i + 1}. <code>${esc(maskKey(e.k))}</code> ${e.rest > now ? `<span class="warn">resting ${esc(when(e.rest))}</span>` : '<span class="okmsg">ready</span>'}</span>
+        <button class="small" data-gemdel="${i}">${S.smart.gemDel === e.k ? 'Click again to remove' : 'Remove'}</button></div>`).join('')}`;
+  }
+  // Gemini keys are a ring: every saved key is kept, and when one reaches Google's free limit the next takes over
+  // while the tired one rests (a minute, or until the daily reset). 'gemini' still holds the first key, so older code
+  // paths and older builds keep working.
+  async function geminiRing() { return parseRing(await secret.get('gemini.ring'), await secret.get('gemini')); }
+  async function saveGeminiRing(ring) { await secret.set('gemini.ring', ringJSON(ring)); await secret.set('gemini', ring.length ? ring[0].k : ''); S.smart.gemRing = ring; S.smart.hasGemini = ring.length > 0; }
+  async function saveGeminiKey(k) { k = String(k || '').trim(); if (!k) return false; const ring = addKey(await geminiRing(), k); await saveGeminiRing(ring); return (await geminiRing()).some(e => e.k === k); }
+  async function smartCfg() {
+    const c = { ...S.smart.cfg }, ring = await geminiRing(), keys = keyOrder(ring);
+    c.geminiKeys = keys; c.geminiKey = keys[0] || ''; c.claudeKey = await secret.get('claude'); c.openaiKey = await secret.get('openai');
+    c.onKeyLimit = async (key, msg) => { const r = await geminiRing(), e = r.find(x => x.k === key); if (e) { e.rest = restUntil(msg); await secret.set('gemini.ring', ringJSON(r)); S.smart.gemRing = r; } };
+    c.onKeySwitch = (key, n) => toast(`Gemini key ${maskKey(key)} answered: ${n === 1 ? 'the previous key has' : n + ' keys have'} reached Google's free limit for now`);
+    return c;
+  }
   function saveSmart() { settings.set('smart', S.smart.cfg); }
   const provName = id => (PROVIDERS.find(p => p.id === id) || {}).n || id;
   let smartBusy = false;
@@ -1215,7 +1235,7 @@ export async function startApp(host, root) {
   }
   function renderSmart(body) {
     const c = S.smart.cfg, d = S.smart.detect || {};
-    if (S.smart.hasGemini == null) { S.smart.hasGemini = false; secret.get('gemini').then(k => { if (k) { S.smart.hasGemini = true; if (S.tab === 'smart') render(); } }); }
+    if (S.smart.hasGemini == null) { S.smart.hasGemini = false; geminiRing().then(r => { S.smart.gemRing = r; if (r.length) { S.smart.hasGemini = true; if (S.tab === 'smart') render(); } }); }
     if (S.smart.hasClaude == null) { S.smart.hasClaude = false; secret.get('claude').then(k => { if (k) { S.smart.hasClaude = true; if (S.tab === 'smart') render(); } }); }
     const field = (id, label, val, ph, type = 'text') => `<label class="fld"><span class="small dim">${label}</span><input id="${id}" type="${type}" value="${esc(val || '')}" placeholder="${esc(ph || '')}"></label>`;
     body.innerHTML = `<div class="row"><button id="smBack">← Back</button><b class="grow">The AI</b><button id="smGuide" class="small">Step-by-step setup</button></div>
@@ -1232,7 +1252,7 @@ export async function startApp(host, root) {
       ${c.provider === 'claude' || c.provider === 'auto' ? `<div class="card"><div class="k">Claude</div>${field('clKey', 'Your API key (from console.anthropic.com)', '', S.smart.hasClaude ? 'saved: paste to replace' : 'paste your key', 'password')}
         <label class="fld"><span class="small dim">Model</span><select id="clModel">${CLAUDE_MODELS.map(([id, n]) => `<option value="${id}" ${(c.claudeModel || SMART0.claudeModel) === id ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select></label>
         <p class="small dim">Your key stays on this computer. Claude API keys are paid by use and are <b>not</b> included in a Claude Pro subscription; add credits in the Claude Console. Anthropic does not train its models on what you send.</p><button id="clSave" class="small">Save key</button></div>` : ''}
-      ${c.provider === 'gemini' || c.provider === 'auto' ? `<div class="card"><div class="k">Google Gemini</div>${field('gmKey', 'Your API key (from aistudio.google.com)', '', S.smart.hasGemini ? 'saved: paste to replace' : 'paste your key', 'password')}
+      ${c.provider === 'gemini' || c.provider === 'auto' ? `<div class="card"><div class="k">Google Gemini</div>${gemKeysHTML()}${field('gmKey', S.smart.hasGemini ? 'Add another key (from aistudio.google.com)' : 'Your API key (from aistudio.google.com)', '', 'paste a key', 'password')}
         ${field('gmModel', 'Model', c.geminiModel, SMART0.geminiModel)}<p class="small dim">Your key stays on this computer. Check Google's pricing page for which models are free on your account.</p><button id="gmSave" class="small">Save key</button></div>` : ''}
       ${c.provider === 'apple' || (c.provider === 'auto' && host.bridge) ? `<div class="card"><div class="k">Apple Intelligence</div>
         ${d.apple ? (d.apple.ok ? `<p class="small okmsg">Ready on this Mac.${d.apple.image ? '' : ' This version does not see the picture itself: it gets Colored Lens\'s measurements and the names of things your Mac recognises in it.'}</p>` : `<p class="small warn">${esc(appleReason(d.apple.reason))}</p>`) : ''}
@@ -1251,7 +1271,11 @@ export async function startApp(host, root) {
     if ($('#oaTest', body)) $('#oaTest', body).onclick = () => busy('Looking for the server', async () => { keep(); if (v('oaKey')) await secret.set('openai', v('oaKey')); const r = await detectOpenAI(c.openaiUrl, await secret.get('openai'), httpGet);
       S.smart.detect = { ...d, openai: r }; if (r.ok && r.models.length && !r.models.includes(c.openaiModel)) { c.openaiModel = r.models[0]; saveSmart(); } render(); });
     if ($('#clSave', body)) $('#clSave', body).onclick = () => busy('Saving', async () => { keep(); if (v('clKey')) { await secret.set('claude', v('clKey').trim()); S.smart.hasClaude = (await secret.get('claude')) === v('clKey').trim(); toast(S.smart.hasClaude ? 'Claude key saved on this computer' : 'The key could not be saved on this computer'); } render(); });
-    if ($('#gmSave', body)) $('#gmSave', body).onclick = () => busy('Saving', async () => { keep(); if (v('gmKey')) { await secret.set('gemini', v('gmKey').trim()); S.smart.hasGemini = (await secret.get('gemini')) === v('gmKey').trim(); toast(S.smart.hasGemini ? 'Gemini key saved on this computer' : 'The key could not be saved on this computer'); } render(); });
+    if ($('#gmSave', body)) $('#gmSave', body).onclick = () => busy('Saving', async () => { keep(); if (v('gmKey')) { const ok = await saveGeminiKey(v('gmKey')); toast(ok ? `Gemini key saved on this computer (${S.smart.gemRing.length} saved)` : 'The key could not be saved on this computer'); } render(); });
+    body.querySelectorAll('[data-gemdel]').forEach(b => b.onclick = () => {
+      const k = (S.smart.gemRing || [])[+b.dataset.gemdel]; if (!k) return;
+      if (S.smart.gemDel !== k.k) { S.smart.gemDel = k.k; return render(); } // second click confirms
+      busy('Removing', async () => { await saveGeminiRing(removeKey(await geminiRing(), k.k)); S.smart.gemDel = null; toast('Key removed from this computer'); render(); }); });
     if ($('#smAuto', body)) $('#smAuto', body).onclick = () => { c.autoAsk = !c.autoAsk; saveSmart(); render(); };
   }
 
@@ -1311,8 +1335,8 @@ export async function startApp(host, root) {
         if ($('#gHelp', body)) $('#gHelp', body).onclick = () => { G.help = true; render(); };
         $('#gOther2', body).onclick = $('#gOther', body).onclick = () => { G.route = ''; G.step = 0; G.msg = ''; G.ok = false; G.help = false; render(); };
         if ($('#gGo', body)) $('#gGo', body).onclick = () => go('shot');
-        if ($('#gKeySave', body)) $('#gKeySave', body).onclick = async () => { const k = $('#gKey', body).value.trim(), which = st.key; if (!k) return toast('Paste your key first'); await secret.set(which, k);
-          const ok = (await secret.get(which)) === k; if (which === 'claude') S.smart.hasClaude = ok; else S.smart.hasGemini = ok; toast(ok ? 'Key saved on this computer' : 'The key could not be saved on this computer'); };
+        if ($('#gKeySave', body)) $('#gKeySave', body).onclick = async () => { const k = $('#gKey', body).value.trim(), which = st.key; if (!k) return toast('Paste your key first');
+          let ok; if (which === 'gemini') ok = await saveGeminiKey(k); else { await secret.set(which, k); ok = (await secret.get(which)) === k; } if (which === 'claude') S.smart.hasClaude = ok; else S.smart.hasGemini = ok; toast(ok ? 'Key saved on this computer' : 'The key could not be saved on this computer'); };
         if ($('#gCheck', body)) $('#gCheck', body).onclick = () => { if (st.check === 'settings') { S.smart.cfg.provider = 'openai'; saveSmart(); return go('smart'); }
           busy('Checking', async () => {
             const c = S.smart.cfg; G.ok = false;

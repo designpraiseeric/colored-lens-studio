@@ -46,7 +46,7 @@ function cl_grab(t, path, clean, hideCsv) {
       if (clean) { var fx = cl_lookFx(l); if (fx && fx.enabled) { fx.enabled = false; off.push(fx); } }
       if (hideCsv && hide.indexOf(',' + (n - i + 1) + ',') >= 0 && l.enabled) { l.enabled = false; hidden.push(l); } }
     var f = new File(path); c.saveFrameToPng(t, f);
-    return cl_ok({ t: t, fps: c.frameRate, name: c.name, id: String(c.id), off: off.length, hidden: hidden.length, bpc: app.project.bitsPerChannel });
+    return cl_ok({ t: t, start: c.displayStartTime || 0, fps: c.frameRate, name: c.name, id: String(c.id), off: off.length, hidden: hidden.length, bpc: app.project.bitsPerChannel });
   } catch (e) { return cl_err(e); }
   finally { for (var a = 0; a < off.length; a++) try { off[a].enabled = true; } catch (e2) {} for (var b = 0; b < hidden.length; b++) try { hidden[b].enabled = true; } catch (e3) {} }
 }

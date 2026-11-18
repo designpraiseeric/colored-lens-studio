@@ -4,6 +4,7 @@
 //
 // Providers are all free to the editor: a model on their own machine (Ollama, or any OpenAI-compatible local
 // server such as Microsoft Foundry Local or LM Studio) or their own API key (Google Gemini has a free tier).
+import { isLimit } from './keyring.js';
 import { srgbToOklab } from './color.js';
 import { RECIPES, GENRES, FEELINGS, ROLES } from './directions.js';
 
@@ -102,9 +103,12 @@ export function validate(o) {
 const withTimeout = (p, ms, what) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(what + ' took too long (over ' + Math.round(ms / 1000) + ' s)')), ms))]);
 async function postJSON(post, url, headers, body, ms = 120000) {
   const r = await withTimeout(post(url, { 'content-type': 'application/json', ...headers }, JSON.stringify(body)), ms, 'The model');
-  if (r.status < 200 || r.status >= 300) { let msg = String(r.text).slice(0, 200); try { const j = JSON.parse(r.text); msg = (j.error && (j.error.message || j.error)) || msg; } catch { /* not JSON */ }
+  if (r.status < 200 || r.status >= 300) { let msg = String(r.text).slice(0, 200); try { const j = JSON.parse(r.text); msg = (j.error && (j.error.message || j.error)) || msg;
+      if (r.status === 429 && j.error && Array.isArray(j.error.details)) { // Google: which quota (per minute / per day) and when to retry
+        const q = j.error.details.flatMap(d => (d.violations || []).map(v => v.quotaId)).filter(Boolean), ra = j.error.details.map(d => d.retryDelay).filter(Boolean);
+        msg = String(msg).slice(0, 160) + (q.length ? ' [quota ' + q.join(',') + ']' : '') + (ra.length ? ' [retryDelay ' + ra[0] + ']' : ''); } } catch { /* not JSON */ }
     if (/repeat limit|prediction aborted/i.test(msg)) throw new Error('REPEAT: the AI on this computer got stuck repeating itself and stopped.');
-    throw new Error(`The model answered ${r.status}: ${String(msg).slice(0, 200)}`); }
+    throw new Error(`The model answered ${r.status}: ${String(msg).slice(0, r.status === 429 ? 400 : 200)}`); }
   return JSON.parse(r.text);
 }
 const trim = u => String(u || '').replace(/\/+$/, '');
@@ -157,22 +161,31 @@ export async function ask(cfg, { prompt, imageB64, images = [], history = [], sy
     return '{' + (j.content || []).map(p => p.text || '').join('');
   }
   if (cfg.provider === 'gemini') {
-    if (!cfg.geminiKey) throw new Error('Colored Lens could not find your Gemini key. Open “AI” at the top, paste the key again and press “Save key”.');
+    const keys = (cfg.geminiKeys && cfg.geminiKeys.length ? cfg.geminiKeys : [cfg.geminiKey]).filter(Boolean);
+    if (!keys.length) throw new Error('Colored Lens could not find your Gemini key. Open “AI” at the top, paste the key again and press “Save key”.');
     const contents = [...hist.map(h => ({ role: h.role === 'assistant' ? 'model' : 'user', parts: [{ text: h.text }] })),
       { role: 'user', parts: [{ text: prompt }, ...[imageB64, ...more].map(b => ({ inline_data: { mime_type: mime, data: b } }))] }];
-    const call = model => postJSON(post, `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, { 'x-goog-api-key': cfg.geminiKey },
+    const call = (model, key) => postJSON(post, `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, { 'x-goog-api-key': key },
       { systemInstruction: { parts: [{ text: SYS }] }, contents, generationConfig: { responseMimeType: 'application/json', temperature: 0.4 } }, 90000);
     // Google retires model names and its models are sometimes overloaded: wait and retry once, then move down a
-    // list of current Flash models until one answers.
+    // list of current Flash models until one answers. When a key reaches its free limit, the next saved key takes
+    // over (cfg.onKeyLimit lets the panel rest the tired one until its limit resets).
     const first = cfg.geminiModel || DEFAULTS.geminiModel, order = [first, ...GEMINI_FALLBACKS.filter(m => m !== first)];
-    const wait = ms => new Promise(r => setTimeout(r, ms)); let j = null, lastErr = null;
-    for (let i = 0; i < order.length && !j; i++) {
-      for (let attempt = 0; attempt < (i === 0 ? 2 : 1) && !j; attempt++) {
-        try { j = await call(order[i]); } catch (e) { lastErr = e; const m = String(e.message);
-          if (/answered (503|500|502|504)/.test(m) || /took too long/.test(m)) { if (i === 0 && attempt === 0) await wait(4000); continue; } // busy: retry, then next model
-          if (/answered 404/.test(m)) break; // this name is gone: next model
-          throw geminiError(e); } } }
-    if (!j) throw geminiError(lastErr);
+    const wait = ms => new Promise(r => setTimeout(r, ms)); let j = null, lastErr = null, limited = 0;
+    for (const key of keys) {
+      let keyLimited = false;
+      for (let i = 0; i < order.length && !j && !keyLimited; i++) {
+        for (let attempt = 0; attempt < (i === 0 ? 2 : 1) && !j; attempt++) {
+          try { j = await call(order[i], key); } catch (e) { lastErr = e; const m = String(e.message);
+            if (isLimit(m)) { keyLimited = true; limited++; try { cfg.onKeyLimit && cfg.onKeyLimit(key, m); } catch {} break; } // this key is spent: next key
+            if (/answered (503|500|502|504)/.test(m) || /took too long/.test(m)) { if (i === 0 && attempt === 0) await wait(4000); continue; } // busy: retry, then next model
+            if (/answered 404/.test(m)) break; // this name is gone: next model
+            throw geminiError(e); } } }
+      if (j) { if (limited) try { cfg.onKeySwitch && cfg.onKeySwitch(key, limited); } catch {} break; }
+      if (!keyLimited) break; // the failure was not about this key's limit, so another key would not help
+    }
+    if (!j) { if (limited && limited === keys.length && keys.length > 1) throw new Error(`Google says all ${keys.length} of your Gemini keys have reached their free limit for now. Per-minute limits clear within a minute; daily limits reset at midnight Pacific time. You can add another key under “AI”.`);
+      throw geminiError(lastErr); }
     const parts = j.candidates && j.candidates[0] && j.candidates[0].content ? j.candidates[0].content.parts : [];
     return (parts || []).map(p => p.text || '').join('');
   }
@@ -193,7 +206,7 @@ function claudeError(e) { const m = String((e && e.message) || e);
 /** Google's errors, in words an editor can act on. */
 function geminiError(e) { const m = String(e.message || e);
   if (/API key not valid|API_KEY_INVALID|answered 400.*key/i.test(m)) return new Error('Google says this API key is not valid. Copy the key again from aistudio.google.com/apikey and save it under “AI”.');
-  if (/answered 429/.test(m)) return new Error('Google says the free limit for this key has been reached for now. Wait a minute and try again (the daily limit resets overnight, Pacific time).');
+  if (isLimit(m)) return new Error('Google says the free limit for this key has been reached for now. Wait a minute and try again (the daily limit resets at midnight Pacific time), or add another key under “AI”: Colored Lens moves on to the next saved key by itself.');
   if (/answered 403|location is not supported|FAILED_PRECONDITION/i.test(m)) return new Error('Google does not allow this key to be used from here (the free Gemini API is not offered in every country, or the key is restricted). Details: ' + m.slice(0, 160));
   if (/answered (503|500|502|504)/.test(m)) return new Error('Google\'s AI is very busy right now and turned the request away, on every model Colored Lens tried. This is on Google\'s side and usually passes within a few minutes: press the button again shortly.');
   if (/took too long/.test(m)) return new Error('Google did not answer in time. Check your internet connection and try again.');

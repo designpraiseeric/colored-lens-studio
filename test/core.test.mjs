@@ -373,3 +373,48 @@ test('picked colours get plain names', () => {
   assert.equal(name('#6b6b3a'), 'olive'); assert.equal(name('#c3b48a'), 'khaki'); assert.equal(name('#5a3d2b'), 'brown');
   assert.equal(name('#ffd100'), 'yellow'); assert.equal(name('#1f8f8a'), 'teal'); assert.equal(name('#e31837'), 'red'); assert.equal(name('#7a7a7a'), 'grey');
 });
+
+// ---------- Gemini key ring ----------
+import { parseRing, ringJSON, addKey, removeKey, keyOrder, restUntil, isLimit, nextPacificMidnight, maskKey } from '../core/keyring.js';
+import { ask as askAI } from '../core/smart.js';
+
+test('key ring: keeps every saved key, adds to the front, rests a tired key, and migrates the old single key', () => {
+  let r = parseRing('', 'OLDKEY-1111');
+  assert.deepEqual(r.map(e => e.k), ['OLDKEY-1111']);
+  r = addKey(r, ' NEWKEY-2222 '); r = addKey(r, 'THIRD-3333'); r = addKey(r, 'NEWKEY-2222');
+  assert.deepEqual(r.map(e => e.k), ['NEWKEY-2222', 'THIRD-3333', 'OLDKEY-1111']);
+  const now = Date.UTC(2026, 10, 18, 12);
+  r[0].rest = now + 60e3;
+  assert.deepEqual(keyOrder(r, now), ['THIRD-3333', 'OLDKEY-1111', 'NEWKEY-2222'], 'a resting key goes to the back');
+  assert.deepEqual(keyOrder(r, now + 61e3)[0], 'NEWKEY-2222', 'and comes back when it wakes');
+  assert.deepEqual(parseRing(ringJSON(r)).map(e => e.k), r.map(e => e.k));
+  assert.deepEqual(removeKey(r, 'THIRD-3333').map(e => e.k), ['NEWKEY-2222', 'OLDKEY-1111']);
+  assert.equal(maskKey('AIzaSyABCDEFGHIJ1234'), 'AIza…1234');
+});
+
+test('key ring: per-minute limits rest a key briefly, daily limits until midnight Pacific', () => {
+  const now = Date.UTC(2026, 10, 18, 12, 0); // 18 Nov 12:00 UTC = 04:00 PST
+  assert.ok(isLimit('The model answered 429: quota exceeded') && !isLimit('The model answered 400: API key not valid'));
+  assert.equal(restUntil('answered 429 [quota GenerateRequestsPerMinutePerProjectPerModel-FreeTier] [retryDelay 41s]', now), now + 41e3);
+  assert.equal(restUntil('answered 429 Please retry in 12.5s.', now), now + 13e3);
+  assert.equal(restUntil('answered 429', now), now + 60e3);
+  assert.equal(restUntil('answered 429 [quota GenerateRequestsPerDayPerProjectPerModel-FreeTier]', now), Date.UTC(2026, 10, 19, 8), 'midnight PST = 08:00 UTC');
+  assert.equal(nextPacificMidnight(Date.UTC(2026, 6, 1, 12)), Date.UTC(2026, 6, 2, 7), 'summer: midnight PDT = 07:00 UTC');
+});
+
+test('Gemini moves on to the next saved key when one reaches its limit, and says so when all have', async () => {
+  const used = [], tired = [];
+  const post = async (url, headers) => { const k = headers['x-goog-api-key']; used.push(k);
+    if (k === 'KEY-A') return { status: 429, text: JSON.stringify({ error: { message: 'You exceeded your current quota.', details: [{ violations: [{ quotaId: 'GenerateRequestsPerDayPerProjectPerModel-FreeTier' }] }] } }) };
+    return { status: 200, text: JSON.stringify({ candidates: [{ content: { parts: [{ text: '{"ok":1}' }] } }] }) }; };
+  const cfg = { provider: 'gemini', geminiKeys: ['KEY-A', 'KEY-B'], onKeyLimit: (k, m) => tired.push([k, /PerDay/.test(m)]) };
+  const out = await askAI(cfg, { prompt: 'hi', imageB64: 'AAAA' }, post);
+  assert.equal(out, '{"ok":1}');
+  assert.deepEqual(used, ['KEY-A', 'KEY-B'], 'one try on the tired key, not one per fallback model');
+  assert.deepEqual(tired, [['KEY-A', true]]);
+  const allTired = async () => ({ status: 429, text: JSON.stringify({ error: { message: 'quota' } }) });
+  await assert.rejects(askAI({ provider: 'gemini', geminiKeys: ['KEY-A', 'KEY-B'] }, { prompt: 'hi', imageB64: 'AAAA' }, allTired), /all 2 of your Gemini keys/);
+  const bad = async () => ({ status: 400, text: JSON.stringify({ error: { message: 'API key not valid' } }) }); let n = 0;
+  await assert.rejects(askAI({ provider: 'gemini', geminiKeys: ['KEY-A', 'KEY-B'] }, { prompt: 'hi', imageB64: 'AAAA' }, async (...a) => { n++; return bad(...a); }), /not valid/);
+  assert.equal(n, 1, 'a bad key is reported, not silently skipped');
+});

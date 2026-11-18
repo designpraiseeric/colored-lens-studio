@@ -1,5 +1,15 @@
 # Release notes
-Each `## <version>` block becomes the text of the in-app update banner and the GitHub Release.
+Each `## 0.16.0
+
+**Several Gemini keys, used in turn.** Saving a Gemini key under “AI” now adds it to your saved keys instead of replacing the last one. When Google says a key has reached its free limit, Colored Lens moves on to the next saved key by itself and lets the tired one rest: about a minute for a per-minute limit, until midnight Pacific time for the daily one. The AI settings list your keys (shown as AIza…1234) with when each is ready again, and each can be removed. Your current key is kept as the first one.
+
+**After Effects panel, installed with Colored Lens Studio.** After Effects 2027 does not load the new kind of panel yet, so the After Effects panel is now the classic kind that every recent After Effects runs: open it from Window › Extensions › Colored Lens. It reads the comp at the current time, studies it, and applies the Lukuluku Look to the selected layer (or the one at the current time) in one undo step. Fixed while testing it in a real project:
+- every setting of the look is set, including the two that share their name with a group (“Skin Guard”, “Lift the face”); if a setting ever cannot be set, the panel names it;
+- the panel speaks After Effects (current time, comp, precomp, layer);
+- the timecode follows the comp's own start time;
+- if After Effects stops answering scripts, the panel says so after 90 seconds instead of waiting forever.
+
+## <version>` block becomes the text of the in-app update banner and the GitHub Release.
 
 ## 0.15.0
 **Colored Lens for After Effects, first preview** — and more fixes from going through every tab in Premiere.

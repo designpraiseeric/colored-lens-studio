@@ -30,7 +30,6 @@ if (process.argv[1] && process.argv[1].endsWith('package.mjs')) {
   const src = path.join(ROOT, 'dist', 'premiere'), out = path.join(ROOT, 'dist', 'release', `ColoredLens-Premiere-${pkg.version}.ccx`);
   if (!fs.existsSync(path.join(src, 'manifest.json'))) { console.error('Build the Premiere panel first (npm run build)'); process.exit(1); }
   const n = zipDir(src, out); console.log(`${path.relative(ROOT, out)}: ${n} files, ${(fs.statSync(out).size / 1e6).toFixed(1)} MB`);
-  // The After Effects panel (AE 2027+), a separate plugin, shipped as a preview .ccx until it is proven live
-  const ae = path.join(ROOT, 'dist', 'aftereffects'), aeOut = path.join(ROOT, 'dist', 'release', `ColoredLens-AfterEffects-preview-${pkg.version}.ccx`);
-  if (fs.existsSync(path.join(ae, 'manifest.json'))) { const m = zipDir(ae, aeOut); console.log(`${path.relative(ROOT, aeOut)}: ${m} files`); }
+  // After Effects ships as a CEP panel (tools/sign_cep.sh signs it as a .zxp on macOS). The UXP build in
+  // hosts/aftereffects stays in the repo for the day AE releases load third-party UXP; it is no longer packaged.
 }

@@ -47,7 +47,17 @@ if [ -n "$CCX" ] && [ -n "$USER_ID" ] && [ "$USER_NAME" != "root" ]; then
   else echo "Creative Cloud installer agent not found; opening the .ccx"; launchctl asuser "$USER_ID" sudo -u "$USER_NAME" open "$CCX"; fi
 fi
 
-# 4. Resolve loads WorkflowIntegration.node from its own Developer folder (nothing to copy). Clear quarantine on our bundles.
+# 4. After Effects: a hand-installed copy of the panel in the user's own CEP folder has the same id and would compete
+# with the one just installed, so it is moved aside (never deleted).
+if [ -n "$USER_NAME" ] && [ "$USER_NAME" != "root" ]; then
+  for d in "/Users/$USER_NAME/Library/Application Support/Adobe/CEP/extensions/"*; do
+    [ -f "$d/CSXS/manifest.xml" ] && grep -q 'ExtensionBundleId="com.designpraise.coloredlens.cep"' "$d/CSXS/manifest.xml" || continue
+    mv "$d" "/Users/$USER_NAME/Library/Application Support/ColoredLens/replaced-AE-panel-$(date +%Y%m%d-%H%M%S)" && echo "moved aside an older hand-installed AE panel: $d"
+  done
+fi
+xattr -dr com.apple.quarantine "/Library/Application Support/Adobe/CEP/extensions/com.designpraise.coloredlens.cep" 2>/dev/null
+
+# 5. Resolve loads WorkflowIntegration.node from its own Developer folder (nothing to copy). Clear quarantine on our bundles.
 xattr -dr com.apple.quarantine "/Library/OFX/Plugins/LukulukuLook.ofx.bundle" 2>/dev/null
 xattr -dr com.apple.quarantine "/Library/Application Support/Adobe/Common/Plug-ins/7.0/MediaCore/LukulukuLook.plugin" 2>/dev/null
 xattr -dr com.apple.quarantine "/Library/Application Support/Blackmagic Design/DaVinci Resolve/Workflow Integration Plugins/com.designpraise.coloredlens" 2>/dev/null

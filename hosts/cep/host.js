@@ -60,7 +60,7 @@ const host = {
     if (!bytes) throw new Error('After Effects did not write the frame. If the comp is heavy, wait for it to render and read again.');
     try { fs.unlinkSync(p); } catch {}
     const frame = await decodePng(bytes);
-    return { frame, seconds: r.t, timecode: timecode(r.t, r.fps), clipName: sub ? sub.name : r.name, sequenceId: r.id, sequenceName: r.name, withoutLook: r.off > 0, hiddenLayers: r.hidden,
+    return { frame, seconds: r.t, timecode: timecode(r.t + (r.start || 0), r.fps), clipName: sub ? sub.name : r.name, sequenceId: r.id, sequenceName: r.name, withoutLook: r.off > 0, hiddenLayers: r.hidden,
       note: r.bpc > 8 ? `This project is ${r.bpc}-bit; After Effects saves such frames darker than they are, so the reading may be off until the project is set to 8-bit.` : '' };
   },
   async sequenceDuration() { await ready(); return (await es('cl_context()')).duration; },
