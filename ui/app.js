@@ -4,7 +4,7 @@
 // The loop: read the frame -> say what it is for -> get directions -> preview them on the frame -> tweak live ->
 // apply to clips -> save as a preset -> apply the preset to other shots.
 import { readFrame, frameStats, labPixels } from '../core/analysis.js';
-import { srgbToOklab, oklabToSrgb, hueDist, rgbToHex } from '../core/color.js';
+import { srgbToOklab, oklabToSrgb, hueDist, rgbToHex, plainColourName } from '../core/color.js';
 import { checkSkin, vectorscope } from '../core/skin.js';
 import { pngDataUrl, encodePNG, downsample, toBase64 } from '../core/image.js';
 import { structures, zoneItems, dealPalette, applyDeal, assign as palAssign, bestDeal } from '../core/palette.js';
@@ -531,10 +531,12 @@ export async function startApp(host, root) {
   const aiScope = () => `${(S.layerOff || []).slice().sort().join(',')}|${S.range || 'shot'}`;
   function aiSave() { if (!S.frame || !S.study) return;
     try { const fp = S.fp || (S.fp = fingerprint(S.frame));
-      settings.set('aiCache', cacheRemember(settings.get('aiCache', []), fp, aiScope(), { study: S.study, sugg: S.sugg, chat: S.ai.chat })); } catch (e) { console.warn('ai cache', e); } }
+      settings.set('aiCache', cacheRemember(settings.get('aiCache', []), fp, aiScope(), { study: S.study, sugg: S.sugg, chat: S.ai.chat, vision: S.ai.vision, stale: !!S.suggStale })); } catch (e) { console.warn('ai cache', e); } }
   async function aiRestore() { if (!S.frame) return false;
     try { S.fp = fingerprint(S.frame); const hit = cacheLookup(settings.get('aiCache', []), S.fp, aiScope()); if (!hit || !hit.study) return false;
-      S.study = hit.study; S.ai.chat = hit.chat || []; S.ai.restored = hit.t; await setSuggestions(hit.sugg || []); return true; } catch (e) { console.warn('ai restore', e); return false; } }
+      S.study = hit.study; S.ai.chat = hit.chat || []; S.ai.restored = hit.t; await setSuggestions(hit.sugg || []);
+      // what was true when it was saved: whether that AI saw the picture, and whether the editor has said something since
+      if (hit.vision != null) S.ai.vision = hit.vision; S.suggStale = !!hit.stale; return true; } catch (e) { console.warn('ai restore', e); return false; } }
   /** Suggestions on screen, and the Smart picks built from their recipes. */
   async function setSuggestions(list) {
     S.sugg = list; S.suggOpen = -1; S.suggHow = -1; S.suggOn = -1; S.suggZ = null; S.suggStale = false;
@@ -949,8 +951,7 @@ export async function startApp(host, root) {
     const n = into > 0 ? into : zoneList().find(i => !((S.extra[`z${i}Amt`] || 0) > 0)); if (!n) return 0;
     const neutral = C < 0.035, P = (k, v) => { S.extra[`z${n}${k}`] = +(+v).toFixed(4); };
     // Say what was picked, so a zone is never just "Zone 3" in the list
-    const named = nearestHue(enc(), rgbToHex(rgb[0], rgb[1], rgb[2]));
-    S.zoneName[n] = neutral ? 'The greys and neutrals' : `The ${(named ? named.name.split(' / ')[0] : 'colour').toLowerCase()} you picked`;
+    S.zoneName[n] = neutral ? 'The greys and neutrals' : `The ${plainColourName(lab[0], C, h)} you picked`;
     P('Amt', 0.8); P('Hue', h); P('Wid', 24); P('Cmin', neutral ? 0 : Math.max(0.025, C * 0.45)); P('Cmax', neutral ? 0.03 : 0.5);
     P('Lmin', Math.max(0, lab[0] - (neutral ? 0.14 : 0.32))); P('Lmax', Math.min(1, lab[0] + (neutral ? 0.14 : 0.32)));
     if (!(into > 0)) { P('ToHue', h); P('ToC', Math.min(0.4, Math.max(0.03, C))); P('dL', 0); }
@@ -1095,24 +1096,29 @@ export async function startApp(host, root) {
         <div class="row"><button id="pshot" class="primary">Go to Shot</button></div></div>`}
       ${list.length ? `<div class="row wrap"><div role="button" tabindex="0" class="chip ${S.adapt ? 'on' : ''}" id="adapt">${S.adapt ? '✓ ' : ''}Adapt to each shot: ${S.adapt ? 'on' : 'off'}</div></div>
       <p class="small dim">${S.adapt ? 'A preset is matched to the shot under the playhead first (exposure, contrast, balance), so the look lands the same way it did on the shot it was made on. Read the frame in Shot first.' : 'Presets are applied exactly as saved.'}</p>` : ''}
-      ${S.shownCode ? `<div class="card"><div class="k">Preset code</div><p class="small dim">Copy this and paste it into Colored Lens on another machine.</p><textarea id="codeOut" rows="3" readonly>${esc(S.shownCode)}</textarea><div class="row"><button id="hideCode">Done</button></div></div>` : ''}
+
       ${list.length ? list.map(p => `<div class="preset">${p.thumb ? `<img src="${p.thumb}">` : '<div class="nothumb"></div>'}<div class="dtext">
           <b>${esc(p.name)}</b><div class="small dim">${esc(intentText(p.intent || {}) || 'No intent recorded')}${p.from ? ' · made on ' + esc(p.from) : ''}</div>
           <div class="small dim mono">${esc(lookCode(p.look, p.matte))}${p.input === 'logc3' ? ' · log footage' : ''}${p.extra && p.extra.skinGuard ? ' · Skin Guard ' + p.extra.skinGuard : ''}</div>
           ${p.intent && p.intent.note ? `<p class="small">${esc(p.intent.note)}</p>` : ''}
           <div class="row wrap"><button class="primary" data-papply="${p.id}">${esc(applyLabel())}</button><button data-popen="${p.id}">Open in Tweak</button><button data-pcode="${p.id}">Share code</button><button data-pdup="${p.id}">Duplicate</button><button data-pdel="${p.id}">${S.confirmDel === p.id ? 'Confirm delete' : 'Delete'}</button></div>
+          ${S.shownCode && S.shownCodeId === p.id ? `<div class="card"><div class="k">Preset code</div><p class="small dim">${S.codeCopied ? 'Copied. ' : 'Select it and copy it. '}Paste it into Colored Lens on another machine.</p><textarea id="codeOut" rows="3" readonly>${esc(S.shownCode)}</textarea><div class="row"><button id="hideCode">Done</button></div></div>` : ''}
         </div></div>`).join('') : '<p class="dim">No presets yet. Pick a direction in Shot or build a look in Tweak, then save it. Presets keep the look, the colour configuration, Skin Guard and what the shot was for, so you can reuse them on other scenes.</p>'}
       <div class="card"><div class="k">Add a preset from a code</div><div class="row"><input id="pcode" placeholder="Paste a preset code (CLP1:…)"><button id="pimport">Add</button></div></div>`;
     if ($('#pshot', body)) $('#pshot', body).onclick = () => go('shot');
     if ($('#adapt', body)) $('#adapt', body).onclick = () => { S.adapt = !S.adapt; settings.set('adapt', S.adapt); render(); };
-    if ($('#hideCode', body)) $('#hideCode', body).onclick = () => { S.shownCode = ''; render(); };
+    if ($('#hideCode', body)) $('#hideCode', body).onclick = () => { S.shownCode = ''; S.shownCodeId = ''; render(); };
     const byId = id => listPresets().find(p => p.id === id);
     body.querySelectorAll('[data-papply]').forEach(b => b.onclick = () => busy('Applying', async () => { const p = byId(b.dataset.papply);
       if (S.adapt && !S.frame) toast('Read a frame in Shot first to adapt the preset; applying it as saved.');
       await applyLookToClips(p.look, presetExtra(p), p.input, p.matte); }));
     body.querySelectorAll('[data-popen]').forEach(b => b.onclick = () => { const p = byId(b.dataset.popen);
       S.look = clone(p.look); S.extra = presetExtra(p); S.input = p.input || S.input; S.matte = !!p.matte; S.recipe = { name: p.name, presetId: p.id }; S.chosen = -1; S.view = 'split'; go('tweak'); });
-    body.querySelectorAll('[data-pcode]').forEach(b => b.onclick = () => { S.shownCode = presetCode(byId(b.dataset.pcode)); copyText(S.shownCode).then(ok => ok && toast('Preset code copied')); render(); });
+    // The code opens under the preset that was clicked: at the top of a long list it looked like nothing happened.
+    body.querySelectorAll('[data-pcode]').forEach(b => b.onclick = () => { const id = b.dataset.pcode;
+      if (S.shownCodeId === id && S.shownCode) { S.shownCode = ''; S.shownCodeId = ''; return render(); }
+      S.shownCode = presetCode(byId(id)); S.shownCodeId = id; S.codeCopied = false; render();
+      copyText(S.shownCode).then(ok => { if (ok) { S.codeCopied = true; toast('Preset code copied'); render(); } }); });
     body.querySelectorAll('[data-pdup]').forEach(b => b.onclick = () => { duplicatePreset(b.dataset.pdup); render(); });
     body.querySelectorAll('[data-pdel]').forEach(b => b.onclick = () => { const id = b.dataset.pdel; if (S.confirmDel === id) { deletePreset(id); S.confirmDel = ''; toast('Preset deleted'); } else S.confirmDel = id; render(); });
     $('#pimport', body).onclick = () => { try { const p = importPresetCode($('#pcode', body).value); toast(`Added “${p.name}”`); render(); } catch (e) { toast(e.message, 4000); } };

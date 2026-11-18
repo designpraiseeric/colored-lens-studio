@@ -152,6 +152,9 @@ const TWEAK_NAMES = { exp: 'exposure', con: 'contrast', sat: 'saturation', vib: 
 // None of it stays on the picture: measured on the founder's frame, even 0.15 stops blew 5% of a wall that was already
 // at the ceiling, while the same brightening through skinLift blew nothing.
 export const EXP_CAP_FACE = 0;
+/** A tweak that changes nothing ("exposure 0", "contrast 1") is not worth telling the editor about. */
+const NEUTRAL_TWEAK = { exp: 0, temp: 0, tint: 0, con: 1, sat: 1, vib: 0, hi: 0, sh: 0, bk: 0, wh: 0, bri: 0, gam: 0 };
+const isNoOp = (k, v) => NEUTRAL_TWEAK[k] != null && Math.abs(+v - NEUTRAL_TWEAK[k]) < 0.005;
 export function routeExposure(tweaks, skin) {
   const t = { ...(tweaks || {}) }, e = +t.exp || 0;
   const f = skin && skin.found && skin.faces && skin.faces.length ? skin.faces[Math.max(0, Math.min(skin.lead || 0, skin.faces.length - 1))] : null;
@@ -168,7 +171,7 @@ export function directionsFromPicks(picks, intent, ctx) {
       notes.push(`The AI asked for ${(+p.tweaks.exp).toFixed(2)} stops of exposure to brighten the face. That much on the whole picture blows what is already bright, so it went to “Lift the face” instead.`); }
     for (const [k, v] of Object.entries(ex.tweaks)) { if (k === 'skinGuard') Object.assign(extra, { skinGuard: v, skinHue: extra.skinHue ?? 0.8, skinDensity: extra.skinDensity ?? 0.7, skinLight: extra.skinLight ?? 0.5 }); else G[k] = v; }
     return { id: r.id, name: r.name, line: p.why || r.line, kind: 'smart', pal: r.pal, hues: r.hues, feel: r.feel, smartWhy: p.why,
-      look: { L: 'L1', O: 'O1', H: 'H0', A: '2.39', ...r.look, G: fullGrade(G) }, extra, notes: [...(Object.keys(ex.tweaks).length ? [`Adjusted for this frame: ${Object.entries(ex.tweaks).map(([k, v]) => `${TWEAK_NAMES[k] || k} ${+v.toFixed(2)}`).join(', ')}.`] : []), ...notes] };
+      look: { L: 'L1', O: 'O1', H: 'H0', A: '2.39', ...r.look, G: fullGrade(G) }, extra, notes: [...(Object.entries(ex.tweaks).filter(([k, v]) => !isNoOp(k, v)).length ? [`Adjusted for this frame: ${Object.entries(ex.tweaks).filter(([k, v]) => !isNoOp(k, v)).map(([k, v]) => `${TWEAK_NAMES[k] || k} ${+v.toFixed(2)}`).join(', ')}.`] : []), ...notes] };
   }).filter(Boolean);
 }
 

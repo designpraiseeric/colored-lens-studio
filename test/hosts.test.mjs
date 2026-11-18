@@ -24,6 +24,37 @@ function serve(dir) {
   return new Promise(res => { const s = http.createServer((req, rsp) => { const f = path.join(dir, decodeURIComponent(req.url.split('?')[0])); if (fs.existsSync(f) && fs.statSync(f).isFile()) { rsp.writeHead(200); rsp.end(fs.readFileSync(f)); } else { rsp.writeHead(404); rsp.end(); } }).listen(0, () => res(s)); });
 }
 
+test('After Effects panel: read the comp frame, see the layers, apply the effect in one undo group', { skip: !chrome && 'no Chrome' }, async () => {
+  const { chromium } = await import('playwright-core');
+  const server = await serve(path.join(ROOT, 'dist', 'aftereffects')), port = server.address().port;
+  const browser = await chromium.launch({ executablePath: chrome, args: ['--no-sandbox'] });
+  try {
+    const page = await browser.newPage({ viewport: { width: 420, height: 1200 } });
+    const errors = []; page.on('pageerror', e => errors.push(e.message)); page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
+    await page.route('https://designpraiseeric.github.io/**', async route => { const rel = route.request().url().split('/colored-lens-studio/')[1].split('?')[0], f = path.join(ROOT, 'site', rel);
+      return fs.existsSync(f) ? route.fulfill({ path: f }) : route.fulfill({ status: 404, body: '' }); });
+    const html = fs.readFileSync(path.join(ROOT, 'dist/aftereffects/index.html'), 'utf8').replace('<script src="app.js">', '<script src="mock.js"></script><script src="app.js">');
+    await page.route(`http://127.0.0.1:${port}/test.html`, r => r.fulfill({ body: html, contentType: 'text/html' }));
+    await page.route(`http://127.0.0.1:${port}/mock.js`, r => r.fulfill({ path: path.join(ROOT, 'test/mocks/aftereffects_mock.js') }));
+    await page.addInitScript(({ bmp, params }) => { window.__bmp = new Uint8Array(bmp); window.__effectParams = params; localStorage.setItem('cl.tour', '1'); }, { bmp: [...fs.readFileSync(FRAME)], params: kParams });
+    await page.goto(`http://127.0.0.1:${port}/test.html`);
+    await page.waitForSelector('#grab', { timeout: 15000 });
+    if (await page.locator('#coach #cEnd').count()) await page.click('#coach #cEnd');
+    await page.click('#modeBtn'); // the detailed view, as in the Premiere test
+    await page.click('#grab'); await page.waitForSelector('#reading .card', { timeout: 15000 });
+    assert.ok((await page.evaluate(() => window.__ae.calls)).some(c => /^saveFrameToPng @12.5/.test(c)), 'the comp frame at the current time was rendered');
+    const ctx = await page.innerText('.card.ctx'); assert.match(ctx, /A001_C003/, 'the selected footage layer is the shot'); assert.match(ctx, /Lower third/, 'the title above it is named');
+    // apply: the selected layer gets the effect, all parameters set, inside one undo group
+    await page.click('[data-intent="feeling:tense"]'); await page.waitForSelector('.dir', { timeout: 20000 });
+    await page.locator('.dir .dtext b').first().click(); await page.waitForSelector('[data-dapply]');
+    await page.click('[data-dapply]'); await page.waitForFunction(() => window.__ae.calls.some(c => c === 'addEffect A001_C003'), null, { timeout: 15000 });
+    const st = await page.evaluate(() => ({ undo: window.__ae.undo, n: Object.keys(window.__ae.params).length }));
+    assert.deepEqual(st.undo.slice(-2), ['begin Colored Lens: apply look', 'end'], 'one undo step');
+    assert.ok(st.n > 100, 'every parameter set (' + st.n + ')');
+    assert.deepEqual(errors.filter(e => !/favicon|404/.test(e)), [], 'no errors in the panel');
+  } finally { await browser.close(); server.close(); }
+});
+
 test('Premiere panel: grab, mark, read markers, apply the effect, update', { skip: !chrome && 'no Chrome' }, async () => {
   const { chromium } = await import('playwright-core');
   const server = await serve(path.join(ROOT, 'dist', 'premiere')), port = server.address().port;
@@ -134,6 +165,11 @@ test('Premiere panel: grab, mark, read markers, apply the effect, update', { ski
     { const a = await page.evaluate(() => ({ n: window.__pp.apple.imageB64.length, p: window.__pp.apple.prompt, s: window.__pp.apple.system, plain: window.__pp.apple.plain })); assert.ok(a.n > 1000, 'the frame goes to Apple Intelligence'); assert.match(a.p, /and warmer/); assert.equal(a.plain, true); assert.match(a.s, /JSON only/); }
     await page.waitForFunction(() => { const t = document.querySelector('#aicard').innerText; return /apple intelligence/i.test(t) && /and warmer/.test(t); }, null, { timeout: 15000 });
     await page.click('[data-tab=presets]'); await page.waitForSelector('.preset');
+    // Share code opens under the preset that was clicked (it threw in UXP in 0.14.0: no btoa/TextEncoder there)
+    await page.evaluate(() => { window.__saved = { btoa: window.btoa, TE: window.TextEncoder }; delete window.btoa; window.TextEncoder = undefined; });
+    await page.locator('[data-pcode]').first().click(); await page.waitForSelector('.preset #codeOut');
+    assert.match(await page.inputValue('#codeOut'), /^CLP1:[A-Za-z0-9_-]+$/); await page.click('#hideCode');
+    await page.evaluate(() => { window.btoa = window.__saved.btoa; window.TextEncoder = window.__saved.TE; });
     await page.click('[data-tab=scene]'); await page.fill('#tags', 'Ada'); await page.click('#add'); await page.waitForSelector('.shot');
     await page.click('#clear'); await page.click('#load'); await page.waitForSelector('.shot');
     // Scan the sequence. It died with "addShot is not defined" in 0.14.0 (founder's log, 18 Nov) and no test pressed it.

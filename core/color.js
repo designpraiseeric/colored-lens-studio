@@ -58,3 +58,19 @@ export function rgbToHex(r, g, b) {
 export const hexToOklab = hex => srgbToOklab(...hexToRgb(hex));
 export const luma = (r, g, b) => WV[0] * r + WV[1] * g + WV[2] * b;
 export const oklabDist = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
+
+/**
+ * A plain name for a colour, from OkLCh: what an editor would call it. Zone names used the encyclopedia's thirteen
+ * hues, which have no olive, khaki or brown, so an olive jacket was announced as "the amber you picked" (18 Nov).
+ * L 0..1, C chroma, h degrees.
+ */
+export function plainColourName(L, C, h) {
+  if (C < 0.03) return L < 0.25 ? 'black' : L > 0.88 ? 'white' : L > 0.65 ? 'light grey' : L < 0.42 ? 'dark grey' : 'grey';
+  h = ((h % 360) + 360) % 360;
+  if (h >= 30 && h < 85 && L < 0.58 && C < 0.13) return L < 0.38 ? 'dark brown' : 'brown';
+  if (h >= 75 && h < 125 && C < 0.1) return L >= 0.62 ? 'khaki' : 'olive';
+  const base = h < 15 || h >= 350 ? (L > 0.72 ? 'pink' : 'red') : h < 40 ? 'red' : h < 70 ? 'orange' : h < 88 ? 'amber' : h < 112 ? 'yellow'
+    : h < 165 ? 'green' : h < 210 ? 'teal' : h < 265 ? 'blue' : h < 315 ? 'purple' : 'magenta';
+  const tone = L < 0.4 ? 'dark ' : L > 0.82 && C < 0.12 ? 'pale ' : '', mute = C < 0.07 ? 'muted ' : '';
+  return (mute + tone + base).trim();
+}

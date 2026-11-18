@@ -2,6 +2,7 @@
 // The per-pixel part below is a line-for-line port of Lukuluku's FS_COMP shader (the same subset its
 // .cube export uses), so a LUT baked here matches a LUT exported from the Lukuluku web app.
 // Two new stages are added at the end: Match to Reference (before the look) and Skin Guard (after).
+import { unb64u, utf8 } from './b64.js';
 import { srgb2lin, lin2log, log2lin, linToOklab, oklabToLin, lin2srgb, toLCh, srgbToOklab } from './color.js';
 
 export const AXES = ['L', 'O', 'H', 'K', 'D', 'C', 'M', 'A'];
@@ -40,9 +41,7 @@ export const formatCode = l => AXES.map(k => l[k]).join('·');
 export function parseLookInput(input, cat) {
   const s = String(input).trim(), i = s.indexOf('#look=');
   if (i < 0 && !s.startsWith('look=')) return parseCode(s, cat);
-  const b64 = decodeURIComponent(s.slice(i >= 0 ? i + 6 : 5)).replace(/-/g, '+').replace(/_/g, '/');
-  const bin = typeof atob === 'function' ? atob(b64) : Buffer.from(b64, 'base64').toString('binary');
-  const json = new TextDecoder().decode(Uint8Array.from(bin, c => c.charCodeAt(0)));
+  const json = utf8.dec(unb64u(decodeURIComponent(s.slice(i >= 0 ? i + 6 : 5))));
   const o = JSON.parse(json), look = { L: 'L1', O: 'O1', H: 'H0', K: 'K0', D: 'D0', C: 'C0', M: 'M0', A: '2.39' };
   if (o.a) for (const k of AXES) if (o.a[k] != null) look[k] = String(o.a[k]);
   look.G = fullGrade(o.G || {});

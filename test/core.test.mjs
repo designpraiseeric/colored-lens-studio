@@ -354,3 +354,22 @@ test('parameter groups are contiguous and uniquely named', () => {
   const runs = groups.filter((g, i) => i === 0 || groups[i - 1] !== g);
   assert.deepEqual(runs, [...new Set(runs)], `a group name appears in two places: ${runs.join(' › ')}`);
 });
+
+// "Share code" threw in the founder's Premiere (18 Nov): UXP does not guarantee btoa/atob/TextEncoder/TextDecoder.
+test('preset share codes work with none of btoa, atob, TextEncoder or TextDecoder', () => {
+  const saved = { btoa: globalThis.btoa, atob: globalThis.atob, TE: globalThis.TextEncoder, TD: globalThis.TextDecoder };
+  try { delete globalThis.btoa; delete globalThis.atob; delete globalThis.TextEncoder; delete globalThis.TextDecoder;
+    const p = savePreset({ name: 'Amber Honey — café ☕ 色', look: { C: 'C1', K: 'K0' } });
+    const code = presetCode(p); assert.match(code, /^CLP1:[A-Za-z0-9_-]+$/);
+    const back = importPresetCode(code); assert.equal(back.name, 'Amber Honey — café ☕ 色');
+  } finally { Object.assign(globalThis, { btoa: saved.btoa, atob: saved.atob, TextEncoder: saved.TE, TextDecoder: saved.TD }); }
+});
+
+// A zone is named for what was picked. The encyclopedia's thirteen hues have no olive or brown, so an olive jacket
+// was announced as "the amber you picked" in the founder's Premiere (18 Nov).
+import { plainColourName, srgbToOklab as toLab } from '../core/color.js';
+test('picked colours get plain names', () => {
+  const name = hex => { const [r, g, b] = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255), l = toLab(r, g, b), C = Math.hypot(l[1], l[2]); let h = Math.atan2(l[2], l[1]) * 57.29578; if (h < 0) h += 360; return plainColourName(l[0], C, h); };
+  assert.equal(name('#6b6b3a'), 'olive'); assert.equal(name('#c3b48a'), 'khaki'); assert.equal(name('#5a3d2b'), 'brown');
+  assert.equal(name('#ffd100'), 'yellow'); assert.equal(name('#1f8f8a'), 'teal'); assert.equal(name('#e31837'), 'red'); assert.equal(name('#7a7a7a'), 'grey');
+});

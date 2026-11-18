@@ -28,9 +28,9 @@ export function deletePreset(id) { return saveAll(listPresets().filter(p => p.id
 export function duplicatePreset(id) { const p = listPresets().find(x => x.id === id); return p ? savePreset({ ...p, id: null, created: null, name: p.name + ' copy' }) : null; }
 
 // Share codes: "CLP1:" + base64url(JSON) without the thumbnail.
-const b64u = s => (typeof btoa === 'function' ? btoa(s) : Buffer.from(s, 'binary').toString('base64')).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-const unb64u = s => { const t = s.replace(/-/g, '+').replace(/_/g, '/'); return typeof atob === 'function' ? atob(t) : Buffer.from(t, 'base64').toString('binary'); };
-const utf8 = { enc: s => { let b = ''; for (const x of new TextEncoder().encode(s)) b += String.fromCharCode(x); return b; }, dec: b => new TextDecoder().decode(Uint8Array.from(b, c => c.charCodeAt(0))) };
+// Pure JavaScript on purpose: UXP does not guarantee btoa, atob, TextEncoder or TextDecoder, and "Share code" threw
+// in the founder's Premiere (18 Nov) because one of them was missing.
+import { b64u, unb64u, utf8 } from './b64.js';
 export function presetCode(p) { const { thumb, id, created, updated, ...rest } = p; return 'CLP1:' + b64u(utf8.enc(JSON.stringify(rest))); }
 export function importPresetCode(code) {
   const s = String(code).trim(), i = s.indexOf('CLP1:'); if (i < 0) throw new Error('That is not a Colored Lens preset code (it starts with CLP1:)');

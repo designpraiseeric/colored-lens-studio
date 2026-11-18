@@ -31,7 +31,7 @@ jobs:
         with: { node-version: 22, cache: npm }
       - run: npm ci
       - run: node tools/build_content.mjs --enc sources/chroma-encyclopedia --luk sources/lukuluku && node tools/gen_engine.mjs
-      - run: node tools/build_hosts.mjs premiere resolve && node tools/package.mjs
+      - run: node tools/build_hosts.mjs premiere aftereffects resolve && node tools/package.mjs
       - run: ./tools/fetch_sdks.sh
       - name: After Effects SDK (enables the Premiere Pro effect)
         env: { AE_SDK_PASSPHRASE: '${{ secrets.AE_SDK_PASSPHRASE }}' }
@@ -73,7 +73,7 @@ jobs:
         with: { node-version: 22, cache: npm }
       - run: npm ci
       - run: node tools/build_content.mjs --enc sources/chroma-encyclopedia --luk sources/lukuluku && node tools/gen_engine.mjs
-      - run: node tools/build_hosts.mjs premiere resolve && node tools/package.mjs
+      - run: node tools/build_hosts.mjs premiere aftereffects resolve && node tools/package.mjs
       - run: bash tools/fetch_sdks.sh
       - name: After Effects SDK (enables the Premiere Pro effect)
         shell: bash
@@ -107,5 +107,5 @@ jobs:
         env: { GH_TOKEN: '${{ github.token }}', V: '${{ needs.check.outputs.version }}' }
         run: |
           awk -v v="## $V" '$0==v{f=1;next} /^## /{f=0} f' RELEASE_NOTES.md > notes.md
-          printf '\n\n**Install:** macOS: ColoredLensStudio-%s-mac.pkg · Windows: ColoredLensStudio-%s-win.exe · Premiere panel only: ColoredLens-Premiere-%s.ccx\nAlready installed? Open the Colored Lens panel: it offers this update with one click.\n' "$V" "$V" "$V" >> notes.md
+          printf '\n\n**Install:** macOS: ColoredLensStudio-%s-mac.pkg · Windows: ColoredLensStudio-%s-win.exe · Premiere panel only: ColoredLens-Premiere-%s.ccx · After Effects 2027 (preview): ColoredLens-AfterEffects-preview-%s.ccx\nAlready installed? Open the Colored Lens panel: it offers this update with one click.\n' "$V" "$V" "$V" "$V" >> notes.md
           gh release create "v$V" out/* --repo "$GITHUB_REPOSITORY" --title "Colored Lens Studio $V" --notes-file notes.md

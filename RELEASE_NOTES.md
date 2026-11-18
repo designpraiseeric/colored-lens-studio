@@ -1,6 +1,14 @@
 # Release notes
 Each `## <version>` block becomes the text of the in-app update banner and the GitHub Release.
 
+## 0.15.0
+**Colored Lens for After Effects, first preview** — and more fixes from going through every tab in Premiere.
+- **After Effects 2027 gets its own Colored Lens panel**, the same panel as Premiere working on a composition: it reads the frame at the current time, sees the layer stack, and Apply puts the Lukuluku Look on the selected layers (or on a "Colored Lens" adjustment layer it creates), all in one undo step. Install `ColoredLens-AfterEffects-preview-0.15.0.ccx` from this release. It is a preview: it has not yet been run on a real After Effects, and reading a frame in particular may not work yet.
+- **"Share code" on a preset did nothing.** It now opens the code right under the preset you clicked, copied and ready to paste. Pasting a Lukuluku link had the same weakness and is fixed too.
+- **A colour you pick is named for what it is.** An olive jacket was announced as "the amber you picked", because the encyclopedia has no olive or brown; zones are now named olive, khaki, brown, teal and so on.
+- **A reading brought back from earlier now keeps its notes**: whether that AI could see the picture, and whether its suggestions were made before something you told it.
+- "Adjusted for this frame" no longer lists adjustments that change nothing ("exposure 0").
+
 ## 0.14.1
 Fixes from going through every tab of 0.14.0 in a real project.
 - **"Scan the sequence" was broken.** It stopped on its first frame with an error. It scans again.

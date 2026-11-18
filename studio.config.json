@@ -1,16 +1,30 @@
 {
   "name": "Colored Lens Studio",
   "publisher": "DesignPraise Studio",
-  "github": { "owner": "designpraiseeric", "repo": "colored-lens-studio" },
+  "github": {
+    "owner": "designpraiseeric",
+    "repo": "colored-lens-studio"
+  },
   "pagesBase": "https://designpraiseeric.github.io/colored-lens-studio/",
   "sources": {
-    "encyclopedia": { "repo": "designpraiseeric/chroma-encyclopedia", "html": "src/colored_lens.html", "frames": "src/frames", "app": "https://designpraiseeric.github.io/chroma-encyclopedia/" },
-    "lukuluku": { "repo": "designpraiseeric/lukuluku", "catalog": "src/catalog.js", "luts": "src/luts", "app": "https://designpraiseeric.github.io/lukuluku/" }
+    "encyclopedia": {
+      "repo": "designpraiseeric/chroma-encyclopedia",
+      "html": "src/colored_lens.html",
+      "frames": "src/frames",
+      "app": "https://designpraiseeric.github.io/chroma-encyclopedia/"
+    },
+    "lukuluku": {
+      "repo": "designpraiseeric/lukuluku",
+      "catalog": "src/catalog.js",
+      "luts": "src/luts",
+      "app": "https://designpraiseeric.github.io/lukuluku/"
+    }
   },
   "ids": {
     "premierePlugin": "com.designpraise.coloredlens",
     "resolvePlugin": "com.designpraise.coloredlens",
     "ofxPlugin": "com.designpraise.lukuluku.look",
-    "adobeMatchName": "DesignPraise Lukuluku Look"
+    "adobeMatchName": "DesignPraise Lukuluku Look",
+    "aePlugin": "com.designpraise.coloredlens.ae"
   }
 }

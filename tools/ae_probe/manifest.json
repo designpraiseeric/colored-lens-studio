@@ -1,0 +1,11 @@
+{
+  "manifestVersion": 6,
+  "id": "com.designpraise.coloredlens.aeprobe",
+  "name": "Colored Lens AE Probe",
+  "version": "0.0.1",
+  "main": "index.html",
+  "host": [{ "app": "aftereffects", "minVersion": "27.0" }],
+  "requiredPermissions": { "localFileSystem": "fullAccess" },
+  "entrypoints": [{ "type": "panel", "id": "probe", "label": { "default": "Colored Lens AE Probe" },
+    "minimumSize": { "width": 240, "height": 200 }, "preferredDockedSize": { "width": 320, "height": 400 }, "preferredFloatingSize": { "width": 320, "height": 400 } }]
+}
