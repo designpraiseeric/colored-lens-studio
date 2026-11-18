@@ -500,7 +500,10 @@ export function zonesFor(sg, study, swatches = [], frame = null) {
     // two items that have the same colour now cannot be told apart by colour alone...
     // ...unless each has its own place in the frame and the two places do not overlap
     const apart = (a, b) => a && b && (a.x1 <= b.x0 || b.x1 <= a.x0 || a.y1 <= b.y0 || b.y1 <= a.y0);
-    const same = u => (u.from.C < 0.035) === (c.from.C < 0.035) && (c.from.C < 0.035 ? Math.abs(u.from.L - c.from.L) < 0.12 : Math.min(Math.abs(u.from.h - c.from.h), 360 - Math.abs(u.from.h - c.from.h)) < 18 && Math.abs(u.from.L - c.from.L) < 0.25);
+    // Two zones reach the same pixels when their hues are closer than a zone's own reach (24-34 degrees, fading to
+    // 1.2x that). The old 18 degrees missed a vest at 86 degrees against a forest at 104 (seen 18 Nov): the forest's
+    // teal landed on the vest.
+    const same = u => (u.from.C < 0.035) === (c.from.C < 0.035) && (c.from.C < 0.035 ? Math.abs(u.from.L - c.from.L) < 0.12 : Math.min(Math.abs(u.from.h - c.from.h), 360 - Math.abs(u.from.h - c.from.h)) < 32 && Math.abs(u.from.L - c.from.L) < 0.25);
     const clashes = used.filter(u => !apart(u.box, c.place) && same(u));
     // ...or the newcomer is the background and every item it shares a colour with has a place: then the background
     // acts everywhere EXCEPT those places (the forest goes slate, the vest in it mustard, the jacket rust).
@@ -519,7 +522,11 @@ export function zonesFor(sg, study, swatches = [], frame = null) {
         if (n ? C < 0.015 && Math.abs(lab[0] - c.from.L) < 0.14 : dh < wid && C > Math.max(0.010, c.from.C * 0.45) && Math.abs(lab[0] - c.from.L) < 0.32) hit++; tot++; }
       const share = hit / Math.max(1, tot), small = /\b(glare|reflection|stud|earring|button|trim|frame|frames|text|logo|subtitle|ring|watch|lip|eye)/i.test(c.it.item);
       // skin is exempt: a face is meant to be a large part of the frame, and its zone only moves exposure
-      if (!c.skin && !c.broad && (share > (n ? 0.12 : 0.5) || (small && share > 0.08))) {
+      // An item with a place in the frame is now always kept to that place, not only when its colour is everywhere:
+      // on a muted shot a vest, a jacket and a forest can all sit within 30 degrees of one olive, and three zones
+      // reaching for the same olive everywhere fight over every pixel of it (seen 18 Nov).
+      const crowded = share > (n ? 0.12 : 0.5) || (small && share > 0.08);
+      if (!c.skin && !c.broad && (crowded || c.place)) {
         // Colour alone cannot pick it out: on a muted frame one olive covers most of a forest. But the item has a
         // place, and inside that place its colour may well be the thing. Give the zone a box (padded a little) if
         // the box is a modest part of the frame and the colour really is there inside it.
@@ -530,15 +537,22 @@ export function zonesFor(sg, study, swatches = [], frame = null) {
           const lab = srgbToOklab(frame.data[q * 4] / 255, frame.data[q * 4 + 1] / 255, frame.data[q * 4 + 2] / 255), C = Math.hypot(lab[1], lab[2]); let h = Math.atan2(lab[2], lab[1]) * 57.29578; if (h < 0) h += 360; let dh = Math.abs(h - c.from.h); if (dh > 180) dh = 360 - dh;
           if (n ? C < 0.015 && Math.abs(lab[0] - c.from.L) < 0.14 : dh < (c.from.C < 0.035 ? 34 : 24) && C > Math.max(0.010, c.from.C * 0.45) && Math.abs(lab[0] - c.from.L) < 0.32) inHit++; inTot++; }
         const inShare = inHit / Math.max(1, inTot);
-        if (!bx || area > (pl.rough ? 0.2 : 0.45) || inShare < 0.08) { skipped.push({ item: c.it.item, why: `about ${Math.round(share * 100)}% of the picture has that same colour${bx ? ', and its place in the frame is too large or too vague to isolate it' : ''}, so it needs a mask` }); continue; }
-        c.box = bx; c.boxShare = inShare; c.wholeShare = share;
+        const placeOk = bx && area <= (pl.rough ? 0.2 : 0.45) && inShare >= 0.08;
+        if (!placeOk && !crowded) { /* not crowded and no usable place: colour alone will do */ }
+        else if (!placeOk) { skipped.push({ item: c.it.item, why: `about ${Math.round(share * 100)}% of the picture has that same colour${bx ? ', and its place in the frame is too large or too vague to isolate it' : ''}, so it needs a mask` }); continue; }
+        else { c.box = bx; c.boxShare = inShare; c.wholeShare = share; }
       }
       if (share < 0.002) { skipped.push({ item: c.it.item, why: 'that colour could not be found in the frame' }); continue; } }
     used.push(c); const i = used.length, P = (k, v) => { params[`z${i}${k}`] = +(+v).toFixed(4); };
     // An item keeps a little of itself (0.85) so its edges sit in the picture. The background is the field everything
     // sits on, and toward a quiet target (slate) even 15% of the old olive pulls the hue about 35° back toward it.
     P('Amt', c.broad ? 1 : 0.85); P('Hue', c.from.h); P('Wid', c.from.C < 0.035 ? 34 : 24);
-    P('Cmin', n ? 0 : Math.max(0.010, c.from.C * 0.45)); P('Cmax', n ? 0.015 : 0.5);
+    // The zone scales its target colourfulness by (pixel's / the middle of Cmin..Cmax), to keep the item's own
+    // texture. With Cmax at 0.5 that middle sat near 0.26, eight times an olive's 0.033, so every target landed at
+    // half strength (the scale bottoms out at 0.5). Cmax at about 1.55x the item's colourfulness puts the middle on
+    // the item itself; a place in the frame, not a wide colour window, is what isolates it now.
+    const cmin = n ? 0 : Math.max(0.010, c.from.C * 0.45);
+    P('Cmin', cmin); P('Cmax', n ? 0.015 : Math.max(c.from.C * 1.55, cmin + 0.04, c.broad ? 0 : 0));
     P('Lmin', Math.max(0, c.from.L - (n ? 0.14 : 0.32))); P('Lmax', Math.min(1, c.from.L + (n ? 0.14 : 0.32)));
     P('ToHue', c.to.h); P('ToC', Math.min(0.4, c.to.C));
     // A skin zone exists to answer "the face is underexposed", so it carries the whole move rather than half of it.
@@ -547,6 +561,9 @@ export function zonesFor(sg, study, swatches = [], frame = null) {
     c.zone = i;
     if (c.box) { P('X', (c.box.x0 + c.box.x1) / 2); P('Y', (c.box.y0 + c.box.y1) / 2); P('BW', (c.box.x1 - c.box.x0) / 2); P('BH', (c.box.y1 - c.box.y0) / 2); }
     // the places this zone keeps out of: the items of its colour that have their own zone (bit j-1 = zone j)
+    // The background keeps out of every item that has its own place, whatever its colour: inside a jacket's place the
+    // jacket's own colour is what was asked for, and a forest's teal acting there as well muddies both.
+    if (c.broad) { const placed = used.filter(u => u !== c && u.box); if (placed.length) c.avoid = placed; }
     if (c.avoid) P('Avoid', c.avoid.reduce((m, u) => m | (1 << (u.zone - 1)), 0));
     mapped.push({ item: c.it.item, to: c.it.colour, zone: i, ...(c.box ? { placed: c.place.rough ? 'rough' : 'box', wholeShare: c.wholeShare } : {}), ...(c.avoid ? { except: c.avoid.map(u => u.it.item) } : {}) });
   }

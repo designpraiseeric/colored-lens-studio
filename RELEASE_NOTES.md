@@ -1,5 +1,16 @@
 # Release notes
-Each `## 0.20.1
+Each `## 0.20.2
+
+**Three colour families on one olive now land.** Tried live on the forest shot ("mustard vest, terracotta camo, dark teal forest"), 0.20.0 barely moved anything. Four causes, all fixed:
+- Two colours count as the same when they are within 32° (a zone's own reach), not 18°. The vest (86°) and the forest (104°) were treated as different, and the forest's teal landed on the vest.
+- An item with a place in the frame is always kept to that place, not only when its colour fills half the frame. Three zones reaching for one olive everywhere fought over every pixel of it.
+- The background keeps out of every placed item, whatever its colour.
+- Each zone's colour window is now centred on the item's own colourfulness. It was centred far above it, so every target landed at half strength.
+On the real forest frame: vest 86° → 81° (mustard, asked 84°), camo 74° → 44° (terracotta, asked 40°), forest 104° → 186° (teal, asked 189°), each two to three times as colourful as before.
+
+Known limit: inside the jacket's place, her hair and beige shirt share the camo's olive-brown and change with it. Colour and a box cannot separate them; that needs a matte of the item.
+
+## 0.20.1
 
 - A garbled answer from the AI is repaired where possible (a quote inside a sentence, a trailing comma, a reply cut off part-way), and otherwise asked for once more, instead of showing an error like "Expected ',' or ']' after array element".
 - Waiting on a busy Gemini now stops at about three minutes, as intended; slow calls could stretch it longer.

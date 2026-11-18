@@ -571,3 +571,24 @@ test('a model\'s broken JSON is repaired where it can be, and reported as garble
   assert.equal(typeof repairJSON('{"a":1}'), 'string');
   assert.throws(() => parseReply('{"a": 1 "b": }'), e => e.garbled === true);
 });
+
+test('three olives within 30 degrees: each item keeps to its place, the forest keeps out of both, and the colour lands at full strength', () => {
+  // a 240×120 forest at hue ~104, a vest at ~86 (left) and a jacket at ~74 (right): the forest shot of 18 Nov
+  const f = makeFrame(240, 120), put = (x, y, c) => { const i = (y * 240 + x) * 4; f.data.set([...c, 255], i); };
+  for (let y = 0; y < 120; y++) for (let x = 0; x < 240; x++) put(x, y, [92 + (x * 7 + y * 3) % 6, 90 + (x * 3 + y * 5) % 5, 63]);
+  for (let y = 40; y < 80; y++) for (let x = 95; x < 125; x++) put(x, y, [114, 106, 84]);
+  for (let y = 30; y < 75; y++) for (let x = 155; x < 185; x++) put(x, y, [98, 88, 69]);
+  const sw = ['#726a54', '#625845', '#5c5a3f'];
+  const study = { items: [{ name: 'vest', hex: '#726a54', box: { x0: 0.38, y0: 0.32, x1: 0.53, y1: 0.68 } }, { name: 'camo jacket', hex: '#625845', box: { x0: 0.63, y0: 0.24, x1: 0.78, y1: 0.64 } }, { name: 'forest foliage', where: 'background', hex: '#5c5a3f' }] };
+  const sg = { items: [{ item: 'vest', colour: 'mustard', hex: '#d4a017' }, { item: 'camo jacket', colour: 'terracotta', hex: '#b5532f' }, { item: 'forest foliage', colour: 'dark teal', hex: '#1f5f5b' }] };
+  const z = zonesFor(sg, study, sw, f), by = Object.fromEntries(z.mapped.map(m => [m.item, m]));
+  assert.equal(z.mapped.length, 3, JSON.stringify(z.skipped));
+  assert.ok(z.params[`z${by.vest.zone}BW`] > 0 && z.params[`z${by['camo jacket'].zone}BW`] > 0, 'both items keep to their places');
+  assert.deepEqual([...by['forest foliage'].except].sort(), ['camo jacket', 'vest']);
+  const pf = makePixelFn(parseCode('C0', cat), cat, luts, { extra: { ...zDefs(), ...z.params } });
+  const at = (x, y) => { const i = (y * 240 + x) * 4, l = srgbToOklab(...pf([f.data[i] / 255, f.data[i + 1] / 255, f.data[i + 2] / 255], (x + .5) / 240, (y + .5) / 120)); return { C: Math.hypot(l[1], l[2]), h: (Math.atan2(l[2], l[1]) * 57.29578 + 360) % 360 }; };
+  const d = (a, b) => Math.min(Math.abs(a - b), 360 - Math.abs(a - b));
+  const v = at(110, 60), j = at(170, 50), fo = at(30, 100);
+  assert.ok(d(v.h, 84) < 25 && d(j.h, 40) < 25 && d(fo.h, 189) < 25, `vest ${v.h.toFixed(0)}, jacket ${j.h.toFixed(0)}, forest ${fo.h.toFixed(0)}`);
+  assert.ok(v.C > 0.07 && j.C > 0.07, `colour lands at strength: vest ${v.C.toFixed(3)}, jacket ${j.C.toFixed(3)}`);
+});
