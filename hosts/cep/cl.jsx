@@ -82,7 +82,9 @@ function cl_apply(params, scope, subjectTrack) {
       var byName = cl_controls(fx);
       for (var p = 0; p < params.length; p++) { var pr = byName['@' + params[p][0]]; if (!pr) { cl_miss(missed, params[p][0]); continue; }
         var v = params[p][2], k = params[p][1]; v = k === 'B' ? (v ? 1 : 0) : k === 'P' ? Math.round(v) + 1 : Number(v); // AE popups are 1-based
-        try { if (k === 'F' && pr.hasMin && v < pr.minValue) v = pr.minValue; if (k === 'F' && pr.hasMax && v > pr.maxValue) v = pr.maxValue; pr.setValue(v); } catch (e) { cl_miss(missed, params[p][0]); } } }
+        try { if (k === 'F' && pr.hasMin && v < pr.minValue) v = pr.minValue; if (k === 'F' && pr.hasMax && v > pr.maxValue) v = pr.maxValue; var cur = null; try { cur = pr.value; } catch (e0) {} if (pr.numKeys === 0 && cur === v) continue; // already right: nothing to change
+          try { pr.setValue(v); } catch (e1) { if (k !== 'B') throw e1; pr.setValue(!!v); } } catch (e) { var dv = ''; try { dv = '; was ' + pr.value + ', sent ' + v + ', ' + pr.matchName; } catch (e2) {}
+          cl_miss(missed, params[p][0] + ' (' + String(e && e.message ? e.message : e).replace(/^.*?:\s*/, '').slice(0, 120) + dv + ')'); } } }
     return cl_ok({ added: added, updated: updated, missing: missed.length, missed: missed, where: where });
   } catch (e) { return cl_err(e); } finally { if (open) app.endUndoGroup(); }
 }
