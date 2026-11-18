@@ -32,6 +32,11 @@ for (const [where, u, v] of [['inside the hole', 0.32, 0.55], ['on the hole\'s e
 const AVOID = { ...BOXED, z5X: 0.7, z5Y: 0.5, z5BW: 0.12, z5BH: 0.2, z5Cmin: 0.03, z5Cmax: 0.4, z5Hue: 120, z5Wid: 40, z2Hue: 120, z2Wid: 40, z2Avoid: 1 | 16 };
 for (const [where, u, v] of [['inside the first place', 0.32, 0.55], ['inside the second place', 0.7, 0.5], ['between them', 0.5, 0.2], ['without a position', undefined, undefined]])
   CASES.push([`a zone keeping out of other zones, ${where}`, 'C1·M2', {}, AVOID, u, v]);
+// a zone with an outline (a diamond around its centre), and the forest keeping out of that outline
+const DIAMOND = { o1Zone: 1, o1N: 4, o1x1: 0, o1y1: -0.2, o1x2: 0.1, o1y2: 0, o1x3: 0, o1y3: 0.2, o1x4: -0.1, o1y4: 0 };
+const OUTL = { ...AVOID, ...DIAMOND };
+for (const [where, u, v] of [['inside the outline', 0.3, 0.6], ['inside the box but outside the outline', 0.39, 0.42], ['on the outline\'s edge', 0.35, 0.6], ['without a position', undefined, undefined]])
+  CASES.push([`a zone with an outline, ${where}`, 'C1·M2', {}, OUTL, u, v]);
 for (const [name, code, G, extra, u, v] of CASES) test(`engine parity: ${name}`, { skip: !fs.existsSync(bin) && 'engine not built' }, () => {
   const look = parseCode(code, cat); look.G = fullGrade(G);
   const params = lookToEngineParams(look, cat, { params: extra });

@@ -259,7 +259,7 @@ export const summarise = r => ({
 // down until the picture can carry it. This does the same thing, by measuring.
 
 /** Scale a look's distance from neutral. Mirrors setStrength in ui/app.js, which drives the Strength slider. */
-export function scaleLook(look, extra, k, GRADE0, fullGrade) {
+export function scaleLook(look, extra, k, GRADE0, fullGrade, opts = {}) {
   const L = JSON.parse(JSON.stringify(look)), X = { ...extra }, G = L.G, B = fullGrade(look.G);
   G.lutMix = Math.min(1, (B.lutMix == null ? 1 : B.lutMix) * k);
   for (const key of ['exp', 'con', 'sat', 'vib', 'temp', 'tint', 'hi', 'sh', 'bk', 'wh', 'bri', 'gam']) {
@@ -267,7 +267,9 @@ export function scaleLook(look, extra, k, GRADE0, fullGrade) {
     G[key] = d0 + (B[key] - d0) * k; }
   for (const key of ['grainK', 'halK', 'diffK', 'vigK']) if (typeof B[key] === 'number') G[key] = B[key] * Math.min(1.35, k);
   X.ambAmt = Math.min(1, (extra.ambAmt || 0) * k);
-  for (let n = 1; n <= 8; n++) { const a = extra[`z${n}Amt`] || 0; if (a > 0) X[`z${n}Amt`] = Math.min(1, a * k); }
+  // opts.keepZones: the fitter turns the LOOK down for faults the colour zones do not cause (they roll off near white
+  // on their own), so it leaves the item colours at full. Seen 18 Nov: fitted to 68%, the mustard vest went khaki.
+  if (!opts.keepZones) for (let n = 1; n <= 8; n++) { const a = extra[`z${n}Amt`] || 0; if (a > 0) X[`z${n}Amt`] = Math.min(1, a * k); }
   // "Lift the face" is part of the direction like everything else, so Strength scales it too. It did not, which left
   // the fitter unable to bring down the one move most likely to be asked of a dark face.
   if (extra.skinLift) X.skinLift = extra.skinLift * Math.min(1, k);

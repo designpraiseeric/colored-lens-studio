@@ -1,5 +1,15 @@
 # Release notes
-Each `## 0.20.2
+Each `## 0.21.0
+
+**Outline the items with AI masks.** A place is a box, so everything of a similar colour inside it changed too: on the forest shot, the woman's golden-brown hair and beige shirt went terracotta with her camo jacket. After trying a suggestion, "Outline the items with AI masks" asks Gemini for a segmentation mask of each placed item and turns it into an outline of up to 24 points on the effect.
+- Each colour then stops at its item's edge, in the preview and on the clip (the effect has up to four outlines, in a new "Zone outlines" group).
+- An outline is stored relative to its place, so when a place is followed through the shot (keyframed in After Effects), the outline moves with it.
+- The background keeps out of the outline, not the whole box, so the forest's colour comes right up to the jacket.
+- It needs Gemini (it draws the masks); other AIs keep the boxes.
+
+**Fitting a look no longer weakens the item colours.** When a look is brought down to fit a shot (blown highlights, say), the item colour changes stay at full: they already roll off near white and do not cause those faults. Fitted to 68%, the mustard vest had come out khaki. The Strength slider still scales everything.
+
+## 0.20.2
 
 **Three colour families on one olive now land.** Tried live on the forest shot ("mustard vest, terracotta camo, dark teal forest"), 0.20.0 barely moved anything. Four causes, all fixed:
 - Two colours count as the same when they are within 32° (a zone's own reach), not 18°. The vest (86°) and the forest (104°) were treated as different, and the forest's teal landed on the vest.

@@ -592,3 +592,20 @@ test('three olives within 30 degrees: each item keeps to its place, the forest k
   assert.ok(d(v.h, 84) < 25 && d(j.h, 40) < 25 && d(fo.h, 189) < 25, `vest ${v.h.toFixed(0)}, jacket ${j.h.toFixed(0)}, forest ${fo.h.toFixed(0)}`);
   assert.ok(v.C > 0.07 && j.C > 0.07, `colour lands at strength: vest ${v.C.toFixed(3)}, jacket ${j.C.toFixed(3)}`);
 });
+
+test('an AI mask becomes an outline the zone keeps to, and the background keeps out of', async () => {
+  const { maskOutline, maskAt, matchMask, parseSegments } = await import('../core/segment.js');
+  const { outlinesOf, outlineInside } = await import('../core/look.js');
+  // a 40x40 mask of a disc in the box 0.2..0.6 x 0.3..0.7
+  const W = 40, a = new Float32Array(W * W); for (let y = 0; y < W; y++) for (let x = 0; x < W; x++) a[y * W + x] = Math.hypot(x - 19.5, y - 19.5) < 14 ? 1 : 0;
+  const m = { label: 'camo jacket', box: { x0: 0.2, y0: 0.3, x1: 0.6, y1: 0.7 }, w: W, h: W, a };
+  assert.ok(maskAt(m, 0.4, 0.5) > 0.99 && maskAt(m, 0.21, 0.31) === 0);
+  const poly = maskOutline(m, 24); assert.ok(poly.length >= 8 && poly.length <= 24, `points: ${poly.length}`);
+  const cx = 0.4, cy = 0.5, rel = poly.map(p => [p.x - cx, p.y - cy]);
+  assert.ok(outlineInside(rel, cx, cy, 0.4, 0.5) > 0.99, 'centre inside'); assert.equal(outlineInside(rel, cx, cy, 0.22, 0.32), 0, 'corner of the box outside');
+  const p = { o1Zone: 2, o1N: rel.length }; rel.forEach(([x, y], k) => { p[`o1x${k + 1}`] = x; p[`o1y${k + 1}`] = y; });
+  assert.ok(outlinesOf(p)[2] && outlinesOf(p)[2].pts.length === rel.length);
+  assert.equal(matchMask([m, { ...m, label: 'vest' }], "woman's camouflage jacket"), null, 'not enough shared words');
+  assert.equal(matchMask([m, { ...m, label: 'vest' }], 'camo jacket'), m);
+  assert.deepEqual(parseSegments('not json'), []);
+});

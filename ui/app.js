@@ -10,6 +10,7 @@ import { pngDataUrl, encodePNG, downsample, toBase64 } from '../core/image.js';
 import { structures, zoneItems, dealPalette, applyDeal, assign as palAssign, bestDeal } from '../core/palette.js';
 import { PROVIDERS, CLAUDE_MODELS, DEFAULTS as SMART0, buildPrompt, parseReply, validate, ask, buildStudy, buildTell, buildSuggest, validateStudy, validateSuggest, howTo, zonesFor, picture, SYSTEM_STUDY, SYSTEM_TELL, SYSTEM_SUGGEST, detectOllama, detectOpenAI, detectApple, appleReason, resolveProvider, nearestHue } from '../core/smart.js';
 import { shotRecord, encodeShot, decodeShot, renderStrip, readSequence, scriptCSV } from '../core/script.js';
+import { buildSegment, SEGMENT_SYSTEM, parseSegments, matchMask, maskOutline } from '../core/segment.js';
 import { fitStrength, holdBlacks, scaleLook, gradeReport, faults, verdict, renderWith } from '../core/quality.js';
 import { ZONES, ZONE_KEYS, ZONE_DEF, zoneList, zoneDefaults, zoneCoverage, hasZones, lchHex, hueHistogram, parseLookInput, formatCode, fullGrade, makePixelFn, bakeCube, lookToEngineParams, shareLink, computeMatch, matchStats, hasCurves, GRADE0 } from '../core/look.js';
 import { GENRES, FEELINGS, ROLES, KIND_LABEL, pickDirections, describeEffect, whyFor, frameSummary, answers, isDark, continuity, pictureOf, directionsFromPicks } from '../core/directions.js';
@@ -184,7 +185,7 @@ export async function startApp(host, root) {
     if (!S.frame || !S.base) return;
     try {
       const b = S.base, L = await lutsFor(b.look);
-      const build = k => { const { look, extra } = scaleLook(b.look, b.extra, k, GRADE0, fullGrade);
+      const build = k => { const { look, extra } = scaleLook(b.look, b.extra, k, GRADE0, fullGrade, { keepZones: true });
         return makePixelFn(look, cat(), L, { input: S.input, keepExposure: true, extra }); };
       const small = downsample(S.frame, 240);
       // Milky blacks are answered by setting the black point back first; only what is still wrong dials the look down.
@@ -195,19 +196,18 @@ export async function startApp(host, root) {
       if (hold.d) b.look = withLift(hold.d);
       const fit = fitStrength(small, build, { skin: S.skin, allows });
       S.fit = fit;
-      if (fit.k >= 1) setStrength(1);
-      if (fit.k < 1) setStrength(fit.k);
+      setStrength(Math.min(1, fit.k), { keepZones: fit.k < 1 });
     } catch (e) { console.warn('fit', e); S.fit = null; }
   }
   /**
    * Scales a whole direction up or down in one move: how much of the film look is mixed in, how far the grade is
    * pushed from neutral, and how strongly the colour zones move. 1 = as suggested.
    */
-  function setStrength(k) {
+  function setStrength(k, opts = {}) {
     const b = S.base; if (!b) return; S.strength = k;
     // One definition of strength, shared with the fitter. This used to be a copy that scaled zones 1–4 only and never
     // the face lift, so the slider showed one thing and the fitter had measured another.
-    const { look, extra } = scaleLook(b.look, b.extra, k, GRADE0, fullGrade);
+    const { look, extra } = scaleLook(b.look, b.extra, k, GRADE0, fullGrade, opts);
     S.look = look; S.extra = extra;
   }
 
@@ -236,7 +236,7 @@ export async function startApp(host, root) {
     const rest = `${S.view === 'split' ? sliderHTML({ id: 'wipe', label: 'Wipe', min: 0, max: 1, step: 0.01, value: S.wipe, def: 0.5 }) : ''}
       ${d && S.base ? sliderHTML({ id: 'strength', label: 'Strength', min: 0, max: 1.5, step: 0.05, value: S.strength == null ? 1 : S.strength, def: 1 }) : ''}
       ${(d || S.suggOn >= 0) && S.fit && S.fit.fitted ? `<div class="small ${S.fit.suits ? 'dim' : 'warn'}">${S.fit.suits
-        ? `Brought down to ${Math.round(S.fit.k * 100)}% to fit this shot — at full strength it ${esc(saysOf(S.fit.full || S.fit.faults) || 'damaged the picture')}. Drag Strength back up if you want it anyway.`
+        ? `Brought down to ${Math.round(S.fit.k * 100)}% to fit this shot${hasZones(S.extra) ? ' (the item colours stay at full)' : ''} — at full strength it ${esc(saysOf(S.fit.full || S.fit.faults) || 'damaged the picture')}. Drag Strength back up if you want it anyway.`
         : `<b>This look does not suit this shot.</b> Even at ${Math.round(S.fit.k * 100)}% it ${esc(saysOf(S.fit.faults) || 'damages the picture')}. Shown so you can judge it yourself.`}</div>` : ''}
       ${(d || S.suggOn >= 0) && S.blackHold ? `<div class="small dim">Black point set back (Lift ${S.blackHold.toFixed(2)}): at its own setting this look lifted the blacks to a milky grey.</div>` : ''}
       ${S.suggOn >= 0 && (S.suggNotes || []).length ? `<div class="small dim">${S.suggNotes.map(esc).join(' ')}</div>` : ''}
@@ -385,6 +385,36 @@ export async function startApp(host, root) {
     toast(ok ? `Followed ${ok} of ${placed.length} placed colour${placed.length > 1 ? 's' : ''} through ${fmtSecs(times[0])}–${fmtSecs(times[times.length - 1])}. Apply keyframes them.` : 'Could not follow the placed colours: they change too much between frames. They stay where they are in this frame.', 7000);
   }
   const fmtSecs = s => { const m = Math.floor(s / 60), x = s - m * 60; return `${m}:${x.toFixed(1).padStart(4, '0')}`; };
+  // ---------- AI masks: an outline of each placed item, so a jacket's colour stops at the jacket ----------
+  const placedItems = () => (S.suggZ ? S.suggZ.mapped : []).filter(m => m.zone > 0 && m.placed && (S.extra[`z${m.zone}Amt`] || 0) > 0).slice(0, 4);
+  function maskHTML() {
+    const items = placedItems(); if (!items.length) return '';
+    const M = S.masks || {}, done = items.filter(m => M[m.zone]), canSee = S.ai.vision !== false && /gemini/i.test(S.smart.using || '');
+    if (M.busy) return `<p class="small">Asking the AI to outline ${items.length} item${items.length > 1 ? 's' : ''}…</p>`;
+    return `<div class="row wrap"><button id="maskGo">${done.length ? 'Outline the items again' : 'Outline the items with AI masks'}</button></div>
+      <p class="small dim">${done.length ? `Outlined: ${done.map(m => esc(m.item)).join(', ')}. Each colour now stops at its item's edge, on the preview and on the clip, and the outline moves with the place when it is followed.${items.length > done.length ? ` Not outlined: ${items.filter(m => !M[m.zone]).map(m => esc(m.item)).join(', ')} (the AI gave no usable mask).` : ''}`
+        : `A place is a box, so everything of a similar colour inside it changes too (hair over a jacket, a shirt under it). An AI mask outlines the item itself.${canSee ? '' : ' This needs Gemini (AI settings).'}`}</p>`;
+  }
+  async function maskPlaces() {
+    const items = placedItems(); if (!items.length) return;
+    const real = await resolveProvider(await smartCfg(), httpGet, host.bridge);
+    if (!real || real.provider !== 'gemini') return toast('Outlining needs Gemini: choose it under AI settings', 6000);
+    S.masks = { busy: true }; render();
+    try {
+      const text = await ask(real, { prompt: buildSegment(items.map(m => m.item)), system: SEGMENT_SYSTEM, imageB64: toBase64(encodeJPEG(downsample(S.frame, 1024), 88)), mime: 'image/jpeg', history: [] }, httpPost, host.bridge);
+      const masks = parseSegments(text), got = {}; let slot = 0;
+      for (const o of [S.extra, S.base && S.base.extra].filter(Boolean)) for (let sl = 1; sl <= 4; sl++) { o[`o${sl}Zone`] = 0; o[`o${sl}N`] = 0; }
+      for (const m of items) { const mk = matchMask(masks, m.item); if (!mk) continue;
+        const poly = maskOutline(mk, 24); if (poly.length < 3) continue; slot++;
+        const cx = S.extra[`z${m.zone}X`], cy = S.extra[`z${m.zone}Y`];
+        for (const o of [S.extra, S.base && S.base.extra].filter(Boolean)) { o[`o${slot}Zone`] = m.zone; o[`o${slot}N`] = poly.length;
+          poly.forEach((p, k) => { o[`o${slot}x${k + 1}`] = +(p.x - cx).toFixed(4); o[`o${slot}y${k + 1}`] = +(p.y - cy).toFixed(4); }); }
+        got[m.zone] = true; }
+      S.masks = got;
+      toast(Object.keys(got).length ? `Outlined ${Object.keys(got).length} of ${items.length} item${items.length > 1 ? 's' : ''}` : 'The AI did not return a usable outline for these items', 6000);
+    } catch (e) { S.masks = null; toast(e.message || String(e), 7000); }
+    stageCache.key = ''; render();
+  }
   function trackHTML() {
     const placed = zoneList().filter(n => (S.extra[`z${n}Amt`] || 0) > 0 && (S.extra[`z${n}BW`] || 0) > 0);
     if (!placed.length || !S.frame) return '';
@@ -397,6 +427,7 @@ export async function startApp(host, root) {
     return `<div class="row wrap"><button id="trackGo">${T && T.zones ? 'Follow again' : 'Follow the placed colours through the shot'}</button></div>
       ${rows.length ? `<p class="small dim">${rows.join(' ')} ${ae ? 'Apply puts these places on the effect as keyframes.' : 'Following is applied as keyframes in After Effects; in this version Premiere keeps each place where it is in the frame you read.'}</p>` : `<p class="small dim">A placed colour only acts where its item is in this frame. This reads a few frames either side and moves each place with its item.</p>`}`;
   }
+  function wireMask(el) { if ($('#maskGo', el)) $('#maskGo', el).onclick = () => maskPlaces(); }
   function wireTrack(el) {
     if ($('#trackGo', el)) $('#trackGo', el).onclick = () => followPlaces().catch(e => { if (S.track) S.track.busy = false; toast(e.message || String(e), 6000); render(); });
     if ($('#trackStop', el)) $('#trackStop', el).onclick = () => { S.track = null; render(); };
@@ -816,10 +847,10 @@ export async function startApp(host, root) {
     for (const m of z.mapped) { const c = cov.find(x => x.zone === m.zone), amt = S.extra[`z${m.zone}Amt`] || 0, it = g.items.find(x => x.item === m.item) || {};
       rows.push(`<div class="it">${sw(it.hex)}<span><b>${esc(m.item)}</b> → ${esc(m.to)}: ${amt <= 0 ? '<span class="warn">switched off</span>' : !c || c.share < 0.004 ? '<span class="warn">this zone is finding almost nothing in your frame. Open Tweak › Colour zones and drag “Zone ' + m.zone + ' pick hue” until it changes.</span>' : `changing about ${Math.max(1, Math.round(c.share * 100))}% of the picture`}${m.placed ? `<span class="dim"> · only where it is in this frame (its colour is in ${Math.round((m.wholeShare || 0) * 100)}% of the picture)${m.placed === 'rough' ? ', placed from the AI\'s description, so check the edges' : ''}. If it moves out of that place during the shot, it needs a mask.</span>` : ''}${m.except ? `<span class="dim"> · everywhere except where the ${[].concat(m.except).map(esc).join(' and the ')} ${[].concat(m.except).length > 1 ? 'are' : 'is'}, since they share a colour</span>` : ''}</span></div>`); }
     return `<div class="k">On your preview now</div>${rows.join('') || '<p class="small">Only the overall look.</p>'}
-      ${z.skipped.length ? `<p class="small dim">Not changed: ${esc(z.skipped.map(x => `${x.item} (${x.why})`).join('; '))}.</p>` : ''}${trackHTML()}<p class="small dim">Measured from your frame; it updates as you tweak. Drag across the picture to compare.</p>`;
+      ${z.skipped.length ? `<p class="small dim">Not changed: ${esc(z.skipped.map(x => `${x.item} (${x.why})`).join('; '))}.</p>` : ''}${maskHTML()}${trackHTML()}<p class="small dim">Measured from your frame; it updates as you tweak. Drag across the picture to compare.</p>`;
   }
   function wireAI(body) {
-    wireTrack(body);
+    wireTrack(body); wireMask(body);
     wireSmart(body);
     body.querySelectorAll('[data-lay]').forEach(b => b.onclick = () => { const t = +b.dataset.lay; S.layerOff = S.layerOff.includes(t) ? S.layerOff.filter(x => x !== t) : [...S.layerOff, t]; render(); });
     body.querySelectorAll('[data-range]').forEach(b => b.onclick = () => { S.range = b.dataset.range; settings.set('range', S.range); S.rangeInfo = null; render(); });
@@ -858,7 +889,7 @@ export async function startApp(host, root) {
       S.extra = { ...S.extra, ...zoneDefaults(), ...z.params, skinLift: lift, skinGuard: Math.max(S.extra.skinGuard || 0, 0.7) };
       S.base = { look: clone(S.look), extra: { ...S.extra } }; S.strength = 1; S.fit = null; S.blackHold = 0;
       await fitToShot(di >= 0 ? (S.smartDirs[di] || {}).allows : null);
-      S.recipe = { name: g.title, presetId: null }; S.suggOn = i; S.suggZ = z; S.track = null; S.view = 'split'; S.dockHidden = false; stageCache.key = ''; S.focusSg = i; render();
+      S.recipe = { name: g.title, presetId: null }; S.suggOn = i; S.suggZ = z; S.track = null; S.masks = null; S.view = 'split'; S.dockHidden = false; stageCache.key = ''; S.focusSg = i; render();
       toast(z.mapped.length || z.params.ambAmt ? `“${g.title}” is on your preview: drag across the picture to compare` : 'Only the overall look could be previewed for this one; see “What is left to do by hand”'); }));
   }
   // What the timeline says about this shot. Context proposes; the editor decides.
@@ -1050,6 +1081,7 @@ export async function startApp(host, root) {
     S.zoneOpen = n; return n;
   }
   function clearZone(n) { ZONE_KEYS.forEach((k, j) => { S.extra[`z${n}${k}`] = ZONE_DEF[j]; if (S.base) S.base.extra[`z${n}${k}`] = ZONE_DEF[j]; });
+    for (let sl = 1; sl <= 4; sl++) if (Math.round(S.extra[`o${sl}Zone`] || 0) === n) for (const o of [S.extra, S.base && S.base.extra].filter(Boolean)) { o[`o${sl}Zone`] = 0; o[`o${sl}N`] = 0; }
     if (S.suggZ) S.suggZ.mapped = S.suggZ.mapped.filter(m => m.zone !== n); if (S.zoneOpen === n) S.zoneOpen = 0; }
 
   function renderTweak(body) {

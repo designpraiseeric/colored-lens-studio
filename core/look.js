@@ -240,11 +240,37 @@ export function boxInside(z, u, v) {
  * zone's values (zs[0] = zone 1). In a LUT (no position) a zone that keeps out of others does nothing, as a boxed one.
  * Mirrors zoneAvoid in the C++ engine.
  */
-export function zoneAvoid(zs, i, u, v) {
+export function zoneAvoid(zs, i, u, v, ol = {}) {
   const m = Math.round(zs[i - 1][15] || 0); if (!m) return 1;
   if (u == null || u < 0) return u === FAR ? 1 : 0;
-  let f = 1; for (let j = 1; j <= ZONES; j++) { const o = zs[j - 1]; if (j !== i && (m >> (j - 1) & 1) && o[0] > 0 && zoneBoxed(o)) f *= 1 - boxInside(o, u, v); }
+  let f = 1; for (let j = 1; j <= ZONES; j++) { const o = zs[j - 1]; if (j !== i && (m >> (j - 1) & 1) && o[0] > 0 && zoneBoxed(o)) f *= 1 - (ol[j] ? outlineInside(ol[j].pts, o[10], o[11], u, v) : boxInside(o, u, v)); }
   return f;
+}
+/** Outlines (appended 19 Nov): up to four slots of up to 24 points, each relative to its zone's centre. */
+export const OUTLINE_SLOTS = 4, OUTLINE_POINTS = 24;
+/** zone (1-based) -> { pts: [[dx, dy]...] } for every live outline in a parameter set. */
+export function outlinesOf(p) {
+  const out = {};
+  for (let sl = 1; sl <= OUTLINE_SLOTS; sl++) { const z = Math.round(p[`o${sl}Zone`] || 0), n = Math.min(OUTLINE_POINTS, Math.round(p[`o${sl}N`] || 0));
+    if (z < 1 || z > 8 || n < 3) continue; out[z] = { pts: [...Array(n)].map((_, k) => [p[`o${sl}x${k + 1}`] || 0, p[`o${sl}y${k + 1}`] || 0]) }; }
+  return out;
+}
+/** How much of an outline (points relative to cx, cy) covers (u, v), with a soft edge. Mirrors the C++ engine. */
+export function outlineInside(pts, cx, cy, u, v) {
+  let inside = false, dmin = 1e9; const n = pts.length;
+  for (let i = 0, j = n - 1; i < n; j = i++) {
+    const xi = cx + pts[i][0], yi = cy + pts[i][1], xj = cx + pts[j][0], yj = cy + pts[j][1];
+    if ((yi > v) !== (yj > v) && u < (xj - xi) * (v - yi) / (yj - yi) + xi) inside = !inside;
+    const ex = xj - xi, ey = yj - yi, L = ex * ex + ey * ey, t = L > 0 ? Math.min(1, Math.max(0, ((u - xi) * ex + (v - yi) * ey) / L)) : 0;
+    const dx = u - (xi + t * ex), dy = v - (yi + t * ey); dmin = Math.min(dmin, dx * dx + dy * dy);
+  }
+  return smooth(-0.005, 0.005, Math.sqrt(dmin) * (inside ? 1 : -1));
+}
+/** Where zone i (1-based) acts: its outline if it has one, else its box (or everywhere). */
+export function zoneReach(zs, ol, i, u, v) {
+  const o = ol[i]; if (!o) return zonePlace(zs[i - 1], u, v);
+  if (u == null || u < 0) return 0;
+  return outlineInside(o.pts, zs[i - 1][10], zs[i - 1][11], u, v);
 }
 /** Every zone's values from a parameter set, zone 1 first. */
 export const zoneArrays = p => zoneList().map(i => ZONE_KEYS.map((k, j) => p[`z${i}${k}`] ?? ZONE_DEF[j]));
@@ -265,7 +291,9 @@ export function hueHistogram(frame, bins = 36) {
     out[Math.min(bins - 1, Math.floor(h / (360 / bins)))] += C; }
   const max = Math.max(1e-6, ...out); return out.map(v => v / max);
 }
-export const zoneDefaults = () => { const o = { ambHue: 0, ambAmt: 0 }; for (let i = 1; i <= ZONES; i++) ZONE_KEYS.forEach((k, j) => { o[`z${i}${k}`] = ZONE_DEF[j]; }); return o; };
+export const zoneDefaults = () => { const o = { ambHue: 0, ambAmt: 0 }; for (let i = 1; i <= ZONES; i++) ZONE_KEYS.forEach((k, j) => { o[`z${i}${k}`] = ZONE_DEF[j]; });
+  for (let sl = 1; sl <= 4; sl++) { o[`o${sl}Zone`] = 0; o[`o${sl}N`] = 0; for (let k = 1; k <= 24; k++) { o[`o${sl}x${k}`] = 0; o[`o${sl}y${k}`] = 0; } }
+  return o; };
 export const zoneList = () => [1, 2, 3, 4, 5, 6, 7, 8];
 export const hasZones = p => !!p && ((p.ambAmt || 0) > 0 || zoneList().some(i => (p[`z${i}Amt`] || 0) > 0));
 export function applyZones(src, out, p, u, v) {
@@ -280,10 +308,10 @@ export function applyZones(src, out, p, u, v) {
   // Skin Guard holds faces back from the zones too. Without this a zone aimed at a wall paints the shadows on a face,
   // and the guard afterwards cannot see it: the guard only ever puts colour back, never takes away colour something added.
   const keep = p.skinGuard > 0 ? 1 - skinWeight([so[0], sC, sh], 0.017) * p.skinGuard : 1;
-  const zs = zoneArrays(p);
+  const zs = zoneArrays(p), ol = outlinesOf(p);
   for (let i = 1; i <= ZONES; i++) { const z = zs[i - 1]; if (!(z[0] > 0)) continue;
     let dh = Math.abs(sh - z[1]); if (dh > 180) dh = 360 - dh;
-    const wh = z[4] <= 0.03 ? 1 : 1 - smooth(z[2] * 0.6, z[2] * 1.2, dh), w = keep * z[0] * wh * soft(sC, z[3], z[4], 0.012) * soft(so[0], z[5], z[6], 0.05) * zonePlace(z, u, v) * zoneAvoid(zs, i, u, v); if (w <= 0.001) continue;
+    const wh = z[4] <= 0.03 ? 1 : 1 - smooth(z[2] * 0.6, z[2] * 1.2, dh), w = keep * z[0] * wh * soft(sC, z[3], z[4], 0.012) * soft(so[0], z[5], z[6], 0.05) * zoneReach(zs, ol, i, u, v) * zoneAvoid(zs, i, u, v, ol); if (w <= 0.001) continue;
     const ref = Math.max(0.02, (z[3] + z[4]) * 0.5), k = z[4] <= 0.03 ? 1 : Math.min(1.5, Math.max(0.5, sC / ref)), th = z[7] * 0.01745329, tc = z[8] * k;
     // Skin Guard holds a zone off a face's COLOUR. It does not hold it off a face's exposure: lifting an
     // underexposed face is the most ordinary thing a colourist does, and refusing it was why the plugin could
@@ -303,9 +331,9 @@ export function applyZones(src, out, p, u, v) {
 /** How much of a frame each colour zone actually reaches: [{zone, share}] (share of pixels moved at least a quarter of the way). */
 export function zoneCoverage(frame, p) {
   const out = [], n = frame.w * frame.h, step = Math.max(1, Math.floor(n / 6000)), soft = (x, lo, hi, e) => smooth(lo - e, lo + e, x) * (1 - smooth(hi - e, hi + e, x));
-  const zs = zoneArrays(p);
+  const zs = zoneArrays(p), ol = outlinesOf(p);
   for (let i = 1; i <= ZONES; i++) { const z = zs[i - 1]; if (!(z[0] > 0)) continue; let hit = 0, tot = 0;
-    for (let q = 0; q < n; q += step) { const u = ((q % frame.w) + 0.5) / frame.w, v = (Math.floor(q / frame.w) + 0.5) / frame.h, pl = zonePlace(z, u, v) * zoneAvoid(zs, i, u, v); if (pl <= 0.25) { tot++; continue; }
+    for (let q = 0; q < n; q += step) { const u = ((q % frame.w) + 0.5) / frame.w, v = (Math.floor(q / frame.w) + 0.5) / frame.h, pl = zoneReach(zs, ol, i, u, v) * zoneAvoid(zs, i, u, v, ol); if (pl <= 0.25) { tot++; continue; }
       const so = srgbToOklab(frame.data[q * 4] / 255, frame.data[q * 4 + 1] / 255, frame.data[q * 4 + 2] / 255), sC = Math.hypot(so[1], so[2]); let sh = Math.atan2(so[2], so[1]) * 57.29578; if (sh < 0) sh += 360;
       let dh = Math.abs(sh - z[1]); if (dh > 180) dh = 360 - dh; const wh = z[4] <= 0.03 ? 1 : 1 - smooth(z[2] * 0.6, z[2] * 1.2, dh);
       const keep = p.skinGuard > 0 ? 1 - skinWeight([so[0], sC, sh], 0.017) * p.skinGuard : 1;
