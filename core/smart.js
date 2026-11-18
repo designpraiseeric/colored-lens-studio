@@ -46,6 +46,8 @@ export function appleReason(r) {
   if (/NotReady/i.test(s)) return 'Apple Intelligence is still downloading its model. Leave the Mac on Wi-Fi and power for a while, then try again.';
   if (/needsNewerMacOS/i.test(s)) return 'Apple Intelligence in Colored Lens needs a newer macOS. Update macOS in System Settings › General › Software Update.';
   if (/notInThisBuild/i.test(s)) return 'This Mac (or this build of the helper) has no Apple Intelligence. Use Ollama or a Gemini key instead.';
+  // Not "unavailable": it is there and working, the request was simply too long for its window.
+  if (/context size|exceeds the maximum/i.test(s)) return 'That was more than Apple Intelligence can read at once (its window holds the question and the answer together). Try again; if it keeps happening, ask for fewer suggestions or use Gemini in AI settings.';
   return 'Apple Intelligence is not available on this Mac right now' + (s ? ` (${s}).` : '.');
 }
 /** Asks the helper whether Apple Intelligence is ready. bridge(req, ms) is supplied by the host; absent off the Mac. */
@@ -107,13 +109,23 @@ async function postJSON(post, url, headers, body, ms = 120000) {
 }
 const trim = u => String(u || '').replace(/\/+$/, '');
 
+/** Characters of system + prompt that leave Apple's 4,096-token window room for an answer (~3.6 characters a token). */
+export const APPLE_BUDGET = 10000;
+/** Shorten a prompt to n characters, keeping its opening (the frame) and its closing lines (what is being asked). */
+export function squeeze(text, n) { const s = String(text); if (s.length <= n) return s; const tail = Math.min(900, Math.floor(n / 3)); return s.slice(0, n - tail - 3) + '\n…\n' + s.slice(-tail); }
 /** One request to the chosen provider. history = [{role:'user'|'assistant', text}] from earlier turns. */
 export async function ask(cfg, { prompt, imageB64, images = [], history = [], system = null, lite = false, mime = 'image/png' }, post, bridge) {
   const hist = history.slice(-6), SYS = system || SYSTEM, more = images.filter(Boolean);
   if (cfg.provider === 'apple') {
     if (!bridge) throw new Error(appleReason('notInThisBuild'));
-    const past = hist.length ? '\nEARLIER IN THIS CONVERSATION: ' + hist.map(h => `${h.role === 'user' ? 'Editor' : 'You'}: ${h.text.slice(0, 300)}`).join(' | ') : '';
-    let r; try { r = await bridge(system ? { type: 'apple', plain: true, system, prompt: prompt + past, imageB64 } : { type: 'apple', system: SYSTEM_PLAIN, prompt: prompt + past, imageB64 }, 240000); } catch { throw new Error(appleReason('helper')); }
+    const sys = system || SYSTEM_PLAIN;
+    let past = hist.length ? '\nEARLIER IN THIS CONVERSATION: ' + hist.map(h => `${h.role === 'user' ? 'Editor' : 'You'}: ${h.text.slice(0, 300)}`).join(' | ') : '';
+    // The conversation is the first thing to go when the request would not leave the model room to answer.
+    if (sys.length + prompt.length + past.length > APPLE_BUDGET) past = '';
+    const send = body => bridge(system ? { type: 'apple', plain: true, system, prompt: body, imageB64 } : { type: 'apple', system: SYSTEM_PLAIN, prompt: body, imageB64 }, 240000);
+    let r; try { r = await send(prompt + past); } catch { throw new Error(appleReason('helper')); }
+    if (r.error && /context size|exceeds the maximum/i.test(r.error)) { // estimate missed: once more, shortened
+      try { r = await send(squeeze(prompt, Math.max(2000, APPLE_BUDGET - sys.length - 1500))); } catch { throw new Error(appleReason('helper')); } }
     if (r.error) throw new Error(appleReason(r.error));
     return r.text || '';
   }
@@ -321,10 +333,14 @@ export function buildTell(a) {
 }
 export function buildSuggest(a) {
   const cat = catalogue(a.enc, a.lite), u = a.understanding || {};
+  // Apple's on-device model has a 4,096-token window for the question AND the answer. The full suggest request was
+  // ~3,200 tokens before any conversation, so the first reply to the AI pushed it over (seen 18 Nov: "4098 tokens").
+  // The lite form keeps every id the model may answer with and drops the descriptions it can do without.
+  const items = (u.items || []).slice(0, a.lite ? 14 : 24).map(i => a.lite ? `${i.name} ${i.hex}` : `${i.name} (${i.where}; ${i.colour} ${i.hex})`);
   return [...common(a),
-    `UNDERSTANDING: ${JSON.stringify({ items: (u.items || []).map(i => `${i.name} (${i.where}; ${i.colour} ${i.hex})`), light: u.light, mood: u.mood, purpose: u.purpose, scene: u.scene })}`,
-    `ENCYCLOPEDIA: ${cat.map(c => `${c.name} [${c.kind}: ${c.line}]`).join(' | ')}`,
-    `RECIPES: ${RECIPES.map(r => `${r.id} (${r.name}; ${r.feel.join('/')}; ${r.line})`).join(' | ')}`,
+    `UNDERSTANDING: ${JSON.stringify({ items, light: u.light, mood: u.mood, purpose: u.purpose, scene: u.scene })}`,
+    `ENCYCLOPEDIA: ${cat.map(c => a.lite ? c.name : `${c.name} [${c.kind}: ${c.line}]`).join(' | ')}`,
+    `RECIPES: ${RECIPES.map(r => a.lite ? `${r.id} (${r.feel.slice(0, 2).join('/')})` : `${r.id} (${r.name}; ${r.feel.join('/')}; ${r.line})`).join(' | ')}`,
     `TWEAKS: ${Object.entries(TWEAKS).map(([k, [x, y]]) => `${k} ${x}..${y}`).join(', ')}`,
     `HOW MANY: ${a.count || 8} directions${a.lite ? '' : ' (do not give fewer than ' + Math.max(4, (a.count || 8) - 2) + ')'}.`,
     `EDITOR'S MESSAGE: ${a.message || '(none)'}`].join('\n');

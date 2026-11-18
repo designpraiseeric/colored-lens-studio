@@ -143,7 +143,7 @@ void LookFactory::describeInContext(OFX::ImageEffectDescriptor& desc, OFX::Conte
       std::string gid = "grp_" + lastGroup; for (auto& ch : gid) if (ch == ' ') ch = '_';
       group = desc.defineGroupParam(gid);
       group->setLabel(pi.group);
-      group->setOpen(lastGroup == "Look" || lastGroup == "Skin Guard");
+      group->setOpen(lastGroup == "Look" || lastGroup == "Skin Guard" || lastGroup == "Lift the face");
       page->addChild(*group);
     }
     if (pi.kind == 'F') {

@@ -75,7 +75,7 @@
   /* Appended 17 Nov 2026. A dark face's shadows carry the least colour, so a colour-qualified zone grabs them
      least — exactly the pixels that need lifting when the reading says "the face is underexposed". This lifts by
      skin weight instead of by hue and colourfulness, so it reaches them. */ \
-  X(skinLift, F, "Lift the face", -0.3, 0.3, 0, "Skin Guard")
+  X(skinLift, F, "Lift the face", -0.3, 0.3, 0, "Lift the face")
 
 namespace lukuluku {
 enum ParamId {

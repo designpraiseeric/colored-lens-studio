@@ -58,7 +58,10 @@ export async function startApp(host, root) {
   const status = t => { const c = up.content && up.content.manifest; $('#status', root).textContent = t || `v${host.version}${c ? ' · content ' + c.contentVersion.slice(0, 7) : ''}`; };
   const SIDE = ['enc', 'smart', 'guide'];
   const go = tab => { if (SIDE.includes(tab) && !SIDE.includes(S.tab)) S.back = S.tab; S.tab = tab; render(); };
-  root.addEventListener('click', e => { const b = e.target.closest('[data-tab]'); if (b) go(b.dataset.tab); });
+  // UXP can hand a listener a target with no .closest (a text node inside a button). Five root listeners called
+  // e.target.closest directly; on 18 Nov every click in the founder's panel logged four uncaught exceptions.
+  const near = (e, sel) => { let n = e && e.target; while (n && typeof n.closest !== 'function') n = n.parentNode; return n ? n.closest(sel) : null; };
+  root.addEventListener('click', e => { const b = near(e, '[data-tab]'); if (b) go(b.dataset.tab); });
   $('#encBtn', root).onclick = () => { S.encQ = ''; go('enc'); };
   $('#smartBtn', root).onclick = () => go('smart');
   const chrome = () => { const cl = root.querySelector('.cl'); if (cl) cl.classList.toggle('dark', S.theme === 'dark');
@@ -103,12 +106,12 @@ export async function startApp(host, root) {
   const shortName = id => { const t = axisTable(id); return t && t[id] ? t[id].short : ''; };
   const lookChips = ids => ids.length ? `<div class="chips">${ids.map(id => `<button class="chip" data-look="${id}" title="${esc(lookName(id))}">${id} ${esc(shortName(id))}</button>`).join('')}</div>` : '';
   root.addEventListener('click', e => {
-    const c = e.target.closest('[data-look]'); if (!c) return; const id = c.dataset.look;
+    const c = near(e, '[data-look]'); if (!c) return; const id = c.dataset.look;
     if ('KDCM'.includes(id[0])) { S.look[id[0]] = id; S.recipe = { name: S.recipe.name || lookName(id), presetId: S.recipe.presetId }; go('tweak'); toast(`${id} ${shortName(id)} set in Tweak`); }
     else toast(`${id} ${lookName(id)} is an in-camera choice (lighting / lens / atmosphere): see it in Lukuluku`);
   });
-  root.addEventListener('click', e => { const a = e.target.closest('[data-url]'); if (a) { e.preventDefault(); host.openUrl(a.dataset.url); } });
-  root.addEventListener('click', e => { const a = e.target.closest('[data-more]'); if (a) { e.preventDefault(); S.encQ = a.dataset.more; go('enc'); } });
+  root.addEventListener('click', e => { const a = near(e, '[data-url]'); if (a) { e.preventDefault(); host.openUrl(a.dataset.url); } });
+  root.addEventListener('click', e => { const a = near(e, '[data-more]'); if (a) { e.preventDefault(); S.encQ = a.dataset.more; go('enc'); } });
 
   // ---------- reading ----------
   // answers are remembered per sequence: switching sequences brings back that sequence's answers
@@ -341,7 +344,32 @@ export async function startApp(host, root) {
   }
 
   // ---------- tabs ----------
+  /**
+   * A redraw that throws used to leave the panel frozen with nothing on screen to say why (UXP logs the exception
+   * without its message). Now the message and stack go to the log, and the panel says what broke and offers a way out.
+   */
   function render() {
+    try { renderUnsafe(); S.crash = null; }
+    catch (e) { reportCrash('drawing the panel', e);
+      try { const body = $('#body', root); if (body) body.innerHTML = crashCard(); wireCrash(); } catch (e2) { console.error('[Colored Lens] could not show the error card', e2 && e2.stack || e2); } }
+  }
+  function reportCrash(where, e) {
+    const msg = (e && (e.message || String(e))) || 'unknown error', stack = (e && e.stack) || '';
+    console.error(`[Colored Lens] error while ${where}: ${msg}\n${stack}`); S.crash = { where, msg, stack: String(stack).split('\n').slice(0, 6).join('\n') };
+  }
+  const crashCard = () => `<div class="card alert"><div class="k">Something in the panel broke while ${esc(S.crash.where)}</div>
+    <p class="small">${esc(S.crash.msg)}</p><details><summary class="small">Technical detail (for the developer)</summary><pre class="small">${esc(S.crash.stack)}</pre></details>
+    <div class="row wrap"><button id="crashBack">Go back to the Shot tab</button><button id="crashReset">Clear the preview and try again</button></div></div>`;
+  function wireCrash() {
+    const b = $('#crashBack', root), r = $('#crashReset', root);
+    if (b) b.onclick = () => { S.tab = 'shot'; S.crash = null; render(); };
+    if (r) r.onclick = () => { S.suggOn = -1; S.suggZ = null; S.fit = null; S.chosen = -1; S.pickZone = 0; S.crash = null; render(); };
+  }
+  try { // anything thrown outside a redraw (a listener, a timer) is reported the same way
+    window.addEventListener && window.addEventListener('error', ev => reportCrash('handling a click or a timer', ev && (ev.error || ev)));
+    window.addEventListener && window.addEventListener('unhandledrejection', ev => reportCrash('waiting for Premiere or the AI', ev && ev.reason));
+  } catch { /* not every host has window events */ }
+  function renderUnsafe() {
     root.querySelectorAll('.tab').forEach(b => { const on = b.dataset.tab === S.tab; b.classList.toggle('on', on); b.setAttribute('aria-selected', on ? 'true' : 'false'); });
     // Same tab: keep the reader where they were (re-drawing must never throw them to the top or bottom of the page).
     const body = $('#body', root), same = body && render.lastTab === S.tab, keep = same ? body.scrollTop : 0; render.lastTab = S.tab;
@@ -576,7 +604,7 @@ export async function startApp(host, root) {
       <div class="row wrap"><button id="aiSetup" class="primary">Set it up now</button><button id="aiRetry">Try again</button></div><p class="small dim">Until then you still get the quick looks below.</p></div>`;
     return `<div class="card smart" id="aicard"><div class="row tight"><div class="k grow">What the AI sees <span class="dim">· ${esc(c.provider === 'auto' ? (S.smart.using || 'Automatic') : provName(c.provider))}</span></div><button id="smSetup" class="small">AI settings</button></div>
       ${u && ['ollama', 'openai'].includes(c.provider) ? '<p class="small dim">A small AI on this computer is doing this. It is private, but its colour suggestions are simpler and it can make mistakes; Gemini gives fuller ones.</p>' : ''}
-      ${u ? `${S.ai.vision === false ? '<p class="small warn">This AI cannot look at the picture yet, so this is built from measurements. For item-by-item detail, set up Gemini or Ollama in AI settings.</p>' : ''}
+      ${u ? `${S.ai.vision === false ? '<p class="small warn">This AI does not see the picture itself: it is given Colored Lens’s measurements and a list of what your Mac recognises in it (“camera”, “jacket”…). So where each thing is, and its exact colour, are its best guesses. For a reading of the actual picture, set up Gemini or Ollama in AI settings.</p>' : ''}
         ${u.caveat ? `<p class="small dim">${esc(u.caveat)}</p>` : ''}
         ${u.items.length ? `<div class="items">${u.items.map(i => `<div class="it">${sw(i.hex)}<span><b>${esc(i.name)}</b> <span class="dim">${esc([i.colour, i.where].filter(Boolean).join(' · '))}</span></span></div>`).join('')}</div>` : ''}
         ${u.light ? `<p class="small"><b>Light:</b> ${esc(u.light)}</p>` : ''}${u.mood ? `<p class="small"><b>Feels like:</b> ${esc(u.mood)}</p>` : ''}
@@ -776,7 +804,7 @@ export async function startApp(host, root) {
     if (!opts.find(o => o[0] === S.scope && o[2])) S.scope = 'clip';
     return `<div class="applyto"><span class="small dim">Apply to</span>${opts.map(([id, n, k]) => `<div role="button" tabindex="0" class="chip ${S.scope === id ? 'on' : ''} ${k ? '' : 'off'}" data-scope="${id}" title="${k ? '' : id === 'scene' ? 'Mark scenes with range markers or markers named “Scene …”' : id === 'adjust' ? 'Put an adjustment layer over the shot' : 'Nothing to apply to'}">${S.scope === id ? '✓ ' : ''}${esc(n)}</div>`).join('')}</div>`;
   }
-  root.addEventListener('click', e => { const b = e.target.closest('[data-scope]'); if (!b || b.classList.contains('off')) return; S.scope = b.dataset.scope; settings.set('scope', S.scope); render(); });
+  root.addEventListener('click', e => { const b = near(e, '[data-scope]'); if (!b || b.classList.contains('off')) return; S.scope = b.dataset.scope; settings.set('scope', S.scope); render(); });
   function readingCard(r, k) {
     const e = enc(), named = r.hues.filter(h => h.entry && h.share >= 0.03).slice(0, 5), lead = r.lead;
     const skinLine = !k ? '' : k.mode === 'sampled' && k.found ? `<b>Face (sampled):</b> about ${k.ire} IRE${k.ire < 40 ? ', dark for a key-lit face (40–75)' : k.ire > 80 ? ', hot for a face (40–75)' : ', inside the usual 40–75'}.`
@@ -822,7 +850,7 @@ export async function startApp(host, root) {
       ${S.simple && !S.moreD && allDirs().length > Math.max(3, S.smartDirs.length + 2) ? `<div class="more" id="moreD">Show ${allDirs().length - Math.max(3, S.smartDirs.length + 2)} more directions ›</div>` : ''}`;
   }
   function wireDirections(body) {
-    body.querySelectorAll('[data-dir]').forEach(el => el.onclick = e => { if (e.target.closest('button')) return; const i = +el.dataset.dir; if (S.chosen === i) return; const top = body.scrollTop; choose(i); S.view = 'split'; render(); body.scrollTop = top; });
+    body.querySelectorAll('[data-dir]').forEach(el => el.onclick = e => { if (near(e, 'button')) return; const i = +el.dataset.dir; if (S.chosen === i) return; const top = body.scrollTop; choose(i); S.view = 'split'; render(); body.scrollTop = top; });
     wireActions(body);
   }
   function wireActions(body) {
@@ -850,9 +878,6 @@ export async function startApp(host, root) {
           ${!answers(S.intent.genre).length ? '<p class="small dim">Set what the project is in Shot to get story-level readings (motifs, leitmotifs) for narrative work.</p>' : ''}</div>
         <div class="shots">${sh.map((s, i) => `<div class="shot">${s.thumb ? `<img class="sthumb" src="${s.thumb}">` : ''}<span class="tc">${esc(s.tc)}</span>${swatchBar(s.sw)}<span class="small">${esc(cap(s.hue))} · ${esc((enc().PALS.find(p => p.id === s.pal) || {}).n || '')}${s.tags.length ? ' · ' + esc(s.tags.join(', ')) : ''}</span><button data-del="${i}">✕</button></div>`).join('')}</div>`
         : '<p class="dim">Build a colour script as you edit: add shots (saved as markers in your sequence, so they travel with the project) or scan the whole sequence, then see how colour moves across it and whether it matches the feeling you set.</p>'}`;
-    const addShot = async (g, tags) => { const rd = readFrame(g.frame, enc(), null); const rec = shotRecord(rd, { seconds: g.seconds, timecode: g.timecode, name: g.clipName, tags });
-      try { rec.thumb = pngDataUrl(downsample(g.frame, 72)); } catch { /* a thumbnail is a nicety */ }
-      S.shots.push(rec); S.shots.sort((a, b) => a.t - b.t); return rec; };
     $('#add', body).onclick = () => busy('Adding shot', async () => {
       const g = await host.grabFrame(), tags = $('#tags', body).value.split(',').map(t => t.trim()).filter(Boolean), rec = await addShot(g, tags);
       await host.addMarker({ seconds: g.seconds, name: 'Colored Lens: ' + cap(rec.hue), note: encodeShot(rec), color: 'purple' }).catch(e => toast('Shot added (marker not saved: ' + e.message + ')'));
@@ -875,6 +900,11 @@ export async function startApp(host, root) {
    * Scans the sequence into a colour script. The first frame is read on its own to learn how slow this timeline
    * is: a heavy sequence can take 45 s a frame, so an unwarned scan could run for an hour.
    */
+  /** One shot into the colour script. Lives out here because the scan needs it too: it used to be defined inside the
+   *  Scene tab's wiring, so "Scan the sequence" died with "addShot is not defined" (founder's log, 18 Nov 00:20). */
+  async function addShot(g, tags) { const rd = readFrame(g.frame, enc(), null); const rec = shotRecord(rd, { seconds: g.seconds, timecode: g.timecode, name: g.clipName, tags });
+    try { rec.thumb = pngDataUrl(downsample(g.frame, 72)); } catch { /* a thumbnail is a nicety */ }
+    S.shots.push(rec); S.shots.sort((a, b) => a.t - b.t); return rec; }
   function startScan(from) {
     busy('Scanning', async () => {
       const every = S.scanEvery, dur = await host.sequenceDuration(), n = Math.max(1, Math.ceil(dur / every));
@@ -1192,7 +1222,7 @@ export async function startApp(host, root) {
       ${c.provider === 'gemini' || c.provider === 'auto' ? `<div class="card"><div class="k">Google Gemini</div>${field('gmKey', 'Your API key (from aistudio.google.com)', '', S.smart.hasGemini ? 'saved: paste to replace' : 'paste your key', 'password')}
         ${field('gmModel', 'Model', c.geminiModel, SMART0.geminiModel)}<p class="small dim">Your key stays on this computer. Check Google's pricing page for which models are free on your account.</p><button id="gmSave" class="small">Save key</button></div>` : ''}
       ${c.provider === 'apple' || (c.provider === 'auto' && host.bridge) ? `<div class="card"><div class="k">Apple Intelligence</div>
-        ${d.apple ? (d.apple.ok ? `<p class="small okmsg">Ready on this Mac.${d.apple.image ? '' : ' This version reads Colored Lens\'s measurements of the frame; it cannot look at the picture itself yet.'}</p>` : `<p class="small warn">${esc(appleReason(d.apple.reason))}</p>`) : ''}
+        ${d.apple ? (d.apple.ok ? `<p class="small okmsg">Ready on this Mac.${d.apple.image ? '' : ' This version does not see the picture itself: it gets Colored Lens\'s measurements and the names of things your Mac recognises in it.'}</p>` : `<p class="small warn">${esc(appleReason(d.apple.reason))}</p>`) : ''}
         <button id="apTest" class="small">Check Apple Intelligence</button></div>` : ''}
       ${host.os === 'win' ? '<div class="card"><div class="k">Windows built-in AI</div><p class="small">The AI built into Copilot+ PCs will be supported through a small helper in a later update. Until then, Ollama or Microsoft Foundry Local (“Local server”) run on your PC for free.</p></div>' : ''}
       ${c.provider !== 'off' ? `<div role="button" tabindex="0" class="chip ${c.autoAsk ? 'on' : ''}" id="smAuto">${c.autoAsk ? '✓ ' : ''}Study every frame I read</div>` : ''}`;

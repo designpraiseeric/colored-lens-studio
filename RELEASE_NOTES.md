@@ -1,6 +1,15 @@
 # Release notes
 Each `## <version>` block becomes the text of the in-app update banner and the GitHub Release.
 
+## 0.14.1
+Fixes from going through every tab of 0.14.0 in a real project.
+- **"Scan the sequence" was broken.** It stopped on its first frame with an error. It scans again.
+- **The panel could stop responding to clicks with nothing on screen to say why.** Anything that goes wrong while drawing the panel now shows a card saying what broke, with a button to get back, instead of freezing; and the error is written to Premiere's log in full, so it can be found and fixed.
+- **Apple Intelligence was reported as "not available" when it was simply asked too much at once.** Its window holds about 4,000 tokens for the question and the answer together, and the suggestions request was over 3,000 before any conversation. It is now about half that, the conversation is dropped first if room runs short, and if it still does not fit it says so plainly.
+- **The note under Apple Intelligence's reading was wrong.** It said the AI could not look at the picture and worked only from measurements; in fact it also gets the names of things your Mac recognises in the picture. It now says that, and that positions and exact colours are its best guesses.
+- **"Skin Guard" appeared twice in Effect Controls.** The second one is "Lift the face", and is now labelled that. (In Resolve the same mistake defined one control group twice.)
+- "in a analogous structure" now reads "in an analogous structure".
+
 ## 0.14.0
 Suggestions that brighten a face now brighten the face, and the AI stops making you wait twice.
 - **The AI was brightening dark faces with whole-picture exposure.** Asked to fix an underexposed face, it reached for about +1.2 stops on the whole frame. In front of a bright wall that blew almost a third of the picture to white and lifted the face's highlights five times more than its shadows, which is why the panel refused two suggestions in a row on your shot at any strength. A request like that now goes to "Lift the face", which brightens her shadows and leaves the wall alone, and the panel tells you when it has done so. The AI is also told plainly that exposure moves the whole picture.

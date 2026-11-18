@@ -344,3 +344,13 @@ test('the AI cache knows the same shot from a different one', () => {
   for (let i = 0; i < 20; i++) list = aiRemember(list, fingerprint(mk((x, y) => (i * 37 + x * i) % 255)), 'x|shot', {});
   assert.ok(list.length <= KEEP, 'bounded');
 });
+
+// Every parameter group must be one run with one name. skinLift was appended (params.h is append-only) under the
+// name "Skin Guard", which put a second "Skin Guard" in Effect Controls and defined grp_Skin_Guard twice in OFX.
+test('parameter groups are contiguous and uniquely named', () => {
+  const src = fs.readFileSync(new URL('../engine/src/params.h', import.meta.url), 'utf8');
+  const groups = [...src.matchAll(/X\(\s*\w+\s*,\s*\w\s*,\s*"[^"]*"\s*,[^,]+,[^,]+,[^,]+,\s*"([^"]+)"\)/g)].map(m => m[1]);
+  assert.ok(groups.length > 100, 'read the parameter list');
+  const runs = groups.filter((g, i) => i === 0 || groups[i - 1] !== g);
+  assert.deepEqual(runs, [...new Set(runs)], `a group name appears in two places: ${runs.join(' › ')}`);
+});

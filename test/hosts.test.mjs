@@ -136,6 +136,12 @@ test('Premiere panel: grab, mark, read markers, apply the effect, update', { ski
     await page.click('[data-tab=presets]'); await page.waitForSelector('.preset');
     await page.click('[data-tab=scene]'); await page.fill('#tags', 'Ada'); await page.click('#add'); await page.waitForSelector('.shot');
     await page.click('#clear'); await page.click('#load'); await page.waitForSelector('.shot');
+    // Scan the sequence. It died with "addShot is not defined" in 0.14.0 (founder's log, 18 Nov) and no test pressed it.
+    { await page.fill('#every', '30'); await page.dispatchEvent('#every', 'change'); await page.click('#clear'); await page.click('#scan');
+      await page.waitForFunction(() => document.querySelectorAll('.shot').length >= 1 && !/Scanning/.test(document.querySelector('#status').textContent), null, { timeout: 60000 });
+      assert.ok(!errors.some(m => /addShot/.test(m)), 'the scan runs'); }
+    // Every redraw is guarded: a throw shows a card instead of freezing the panel, and the message reaches the log.
+    assert.equal(await page.locator('text=Something in the panel broke').count(), 0, 'no crash card in normal use');
     // Palette structures: the encyclopedia's structures used as a working surface over the live zones.
     await page.click('[data-tab=tweak]'); await page.waitForSelector('#palCard');
     // give it something to work on: pick two colours out of the picture as zones

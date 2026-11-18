@@ -249,7 +249,8 @@ export function frameSummary(reading, enc) {
   const st = reading.stats, lead = reading.lead, pal = reading.pal.entry;
   const tone = `${st.key}, ${st.warmth === 'balanced' ? 'neutral in temperature' : st.warmth}, ${st.saturation}`;
   const colour = lead ? `${lead.entry.name.split(' / ')[0]} leads (${Math.round(lead.share * 100)}% of the lit picture)` : 'no single colour leads';
-  return `${cap(tone)}; ${colour}${pal ? `, in a ${pal.n.toLowerCase()} structure` : ''}.`;
+  const pn = pal ? pal.n.toLowerCase() : '';
+  return `${cap(tone)}; ${colour}${pal ? `, in ${/^[aeiou]/.test(pn) ? 'an' : 'a'} ${pn} structure` : ''}.`;
 }
 const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
 export { label as intentLabel };

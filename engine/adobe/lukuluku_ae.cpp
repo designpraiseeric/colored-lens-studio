@@ -86,7 +86,7 @@ PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out_data) {
       if ((err = endTopic())) return err;
       lastGroup = pi.group; group++;
       AEFX_CLR_STRUCT(def);
-      const bool open = lastGroup == "Look" || lastGroup == "Skin Guard";
+      const bool open = lastGroup == "Look" || lastGroup == "Skin Guard" || lastGroup == "Lift the face";
       PF_ADD_TOPICX(pi.group, open ? 0 : PF_ParamFlag_START_COLLAPSED, kTopicIdBase + 2 * group);
       index++;
     }
