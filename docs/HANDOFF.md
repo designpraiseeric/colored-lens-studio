@@ -1,6 +1,6 @@
 # Colored Lens Studio — developer handoff
 
-**Purpose of this doc:** everything a new Claude session (or a new account) needs to take over this project with no other context. Keep it updated at every release. Last updated: 18 Nov 2026, 02:10 WAT, at v0.15.0.
+**Purpose of this doc:** everything a new Claude session (or a new account) needs to take over this project with no other context. Keep it updated at every release. Last updated: 18 Nov 2026, 13:10 WAT, at v0.15.0 + the CEP After Effects panel (§11c).
 
 **This file now lives in the repo at `docs/HANDOFF.md`** (and `docs/after-effects-scope.md`), as well as in the claude.ai Project. Before 0.14.0 they existed only as Project uploads; the repo copy is the one to edit.
 
@@ -324,6 +324,29 @@ Claude-Session: https://claude.ai/code/session_...
 | 0.13.0 | **palette structures become a working surface**: `core/palette.js` — give one swatch to one item, or deal a whole structure across every live zone and re-deal it. Constrained (the accent goes to the smallest surface), scored by the quality gate before it is shown, and seeded so a good deal can be asked for again |
 
 ---
+
+## 11c. 18 Nov, 11:20–13:10 — After Effects runs as a CEP panel, tested live
+
+**AE 27.0 (build 78) will not load third-party UXP, so After Effects ships as a CEP panel** (`hosts/cep/`: `manifest.xml` CSXS 9, host AEFT [22,99.9], Node + mixed context; `host/cl.jsx` ExtendScript; `host.js` adapter). Build: `node tools/build_hosts.mjs cep` → `dist/cep`. Installed on his Mac at `~/Library/Application Support/Adobe/CEP/extensions/ColoredLens/` (Window › Extensions › Colored Lens). Earlier panel files are kept in `~/tmp_frames/cl-old/`. **Not yet packaged in a release.**
+
+Verified live in his AE "test" project (comp 1471212_People_Family_3840x2160):
+- frame read (`saveFrameToPng`) about 40 s on 4K; the panel takes about 20 s to paint when it opens and is **black until then** (not a crash);
+- AI study via the helper (Apple Intelligence); cache restore ("read this shot 4 min ago… restored");
+- host wording via `host.words` (text nodes only): "current time", "comp", "precomp", "layer"; the button follows the selection;
+- **Apply → Lukuluku Look on the layer with every setting set** ("added to 1 layer. Edit › Undo removes it in one step.", nothing missing), and Edit › Undo removes it.
+
+Fixed on the way (commits 3b53d4e, 221b863; `test/cep_jsx.test.mjs` runs cl.jsx in Node against a mock effect):
+- **"3 settings were not found"**: "Skin Guard" and "Lift the face" are each a group *and* a setting, so `fx.property(name)` returned the group. `cl_controls` now walks the controls and skips `NO_VALUE` headings. Missing settings are named, with AE's own error text, value and matchName. Sliders are clamped; a setting already right is skipped.
+- The undo group opens only once there is a layer to change.
+- `es()` gives up after 90 s with a plain message (AE stopped answering the panel once, after an Apply/Undo round; **an AE restart cleared it**).
+- Effect matchNames are stable: `DesignPraise Lukuluku Look-NNNN` = param id + 1 (topics 1000+). Addressing by matchName would be sturdier than by label.
+
+Gotchas:
+- **AE's menu bar lags one action when read through accessibility.** "Can't Undo", a missing History entry and an undo that seemed not to take were all stale reads; `computer_app_menu` pressing the top item reports the real title.
+- "Animate grain" failed three times with "Value 2 out of range 0 to 1" while AE accepts 0, 1, true and false on it (probe `~/tmp_frames/cl_probe.jsx`, results in `ColoredLens/probe.txt`). The fourth run was clean and the cause is not pinned. The diagnostic in the message stays.
+- Panel menu › Panel Group Settings has **Undock** right under Close; it floats the panel.
+- The frame timecode reads 00:00:00:00 on a comp whose display start is 0:00:23:03 (use `displayStartTime`).
+- His `aftereffects-local` bridge (MCP Bridge Auto palette) runs only fixed commands; `listLayerEffects` with properties is a good read-only inspector. File › Scripts › Run Script File with ⌘⇧G runs an arbitrary .jsx.
 
 ## 11b. 18 Nov, 00:50–02:10 — the every-tab sweep in his "tests" project, and the AE start
 
