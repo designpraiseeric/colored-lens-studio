@@ -280,7 +280,13 @@ export async function startApp(host, root) {
       return oklabToSrgb(k[0] / keep.length, k[1] / keep.length, k[2] / keep.length); };
     const pick = (x, y) => { const n = addZoneFromColour(colourAt(x, y), S.pickZone > 0 ? S.pickZone : 0);
       S.pickZone = 0; if (!n) return toast(`All ${ZONES} colour zones are in use. Remove one first.`);
-      if (S.tab !== 'tweak') go('tweak'); else render(); drawStage(); toast(`Zone ${n} picked. Drag “New hue” to change that colour.`); };
+      // A colour that is all over the picture (one olive across a whole forest) cannot be picked by colour alone:
+      // keep the zone to the part of the frame that was clicked, and say so, rather than repaint half the shot.
+      let placed = false; const c = liveCoverage().find(z => z.zone === n);
+      if (c && c.share > 0.45) { const set = (k, v) => { S.extra[`z${n}${k}`] = v; if (S.base) S.base.extra[`z${n}${k}`] = v; };
+        set('X', +x.toFixed(3)); set('Y', +y.toFixed(3)); set('BW', 0.14); set('BH', 0.2); placed = Math.round(c.share * 100); }
+      if (S.tab !== 'tweak') go('tweak'); else render(); drawStage();
+      toast(placed ? `Zone ${n} picked. That colour is in about ${placed}% of the picture, so the zone only acts around where you clicked (“Let it act anywhere” undoes that).` : `Zone ${n} picked. Drag “New hue” to change that colour.`); };
     const sample = (x, y) => busy('Checking skin', async () => { S.sample = [x, y]; runSkin(); await suggest(); S.showSkin = true; render(); toast(S.skin.found ? `Skin sampled: about ${S.skin.ire} IRE` : 'No skin there; try the middle of a cheek'); });
     let drag = null;
     const posOf = e => { const r = st.getBoundingClientRect(); return [Math.min(1, Math.max(0, (e.clientX - r.left) / Math.max(1, r.width))), Math.min(1, Math.max(0, (e.clientY - r.top) / Math.max(1, r.height)))]; };
@@ -579,6 +585,8 @@ export async function startApp(host, root) {
     try { let rawS; try { rawS = await aiCall(kind, message); } catch (e) { if (!/^REPEAT/.test(e.message)) throw e; if (!aiLive(gen)) return; rawS = await aiCall(kind, message); }
       if (!aiLive(gen)) return;
       const res = validateStudy(rawS);
+      // An AI that never saw the picture can only invent a box; its "where" words are the honest fallback.
+      if (S.ai.vision === false) res.items.forEach(i => { i.box = null; });
       if (message) S.ai.chat.push({ you: message, ai: res.reply || 'Understood. I have updated my reading of the frame.' });
       S.smart.history.push({ role: 'user', text: message || '(study this frame)' }, { role: 'assistant', text: JSON.stringify({ purpose: res.purpose, mood: res.mood, reply: res.reply }).slice(0, 900) });
       if (res.items.length || !S.study) S.study = res; else S.study = { ...S.study, ...Object.fromEntries(Object.entries(res).filter(([k, v]) => v && v.length && k !== 'items')) };
@@ -595,7 +603,7 @@ export async function startApp(host, root) {
     if (aiBusy) { if (S.ai.prefetch && !opts.prefetch) { // already on its way: let the editor's press take it over
         if (!message) { S.ai.prefetch = false; S.ai.busy = 'Working out colour suggestions…'; render(); return; } aiStop(); } else return; }
     const gen = aiStart(opts.prefetch ? 'Working out colour suggestions while you read…' : 'Working out colour suggestions…', !!opts.prefetch); render();
-    try { if (!S.study) { const st = validateStudy(await aiCall('study', '')); if (!aiLive(gen)) return; S.study = st; }
+    try { if (!S.study) { const st = validateStudy(await aiCall('study', '')); if (!aiLive(gen)) return; if (S.ai.vision === false) st.items.forEach(i => { i.box = null; }); S.study = st; }
       let raw; try { raw = await aiCall('suggest', message); } catch (e) { if (!/^REPEAT/.test(e.message)) throw e; if (!aiLive(gen)) return; S.ai.small = true; status('The AI stumbled; asking for fewer suggestions…'); try { raw = await aiCall('suggest', message); } catch (e2) { throw new Error(/^REPEAT/.test(e2.message) ? 'The AI on this computer keeps getting stuck on this frame. Try again, or switch to Gemini under “AI” for fuller suggestions.' : e2.message); } }
       if (!aiLive(gen)) return;
       const res = validateSuggest(raw, enc(), S.study);
@@ -732,7 +740,7 @@ export async function startApp(host, root) {
     const z = S.suggZ, cov = liveCoverage(), rows = [];
     if ((S.extra.ambAmt || 0) > 0 && g.ambience.colour) rows.push(`<div class="it">${sw(g.ambience.hex)}<span><b>Ambience</b> → ${esc(g.ambience.colour)}: on, at ${Math.round(S.extra.ambAmt * 100)}%</span></div>`);
     for (const m of z.mapped) { const c = cov.find(x => x.zone === m.zone), amt = S.extra[`z${m.zone}Amt`] || 0, it = g.items.find(x => x.item === m.item) || {};
-      rows.push(`<div class="it">${sw(it.hex)}<span><b>${esc(m.item)}</b> → ${esc(m.to)}: ${amt <= 0 ? '<span class="warn">switched off</span>' : !c || c.share < 0.004 ? '<span class="warn">this zone is finding almost nothing in your frame. Open Tweak › Colour zones and drag “Zone ' + m.zone + ' pick hue” until it changes.</span>' : `changing about ${Math.max(1, Math.round(c.share * 100))}% of the picture`}</span></div>`); }
+      rows.push(`<div class="it">${sw(it.hex)}<span><b>${esc(m.item)}</b> → ${esc(m.to)}: ${amt <= 0 ? '<span class="warn">switched off</span>' : !c || c.share < 0.004 ? '<span class="warn">this zone is finding almost nothing in your frame. Open Tweak › Colour zones and drag “Zone ' + m.zone + ' pick hue” until it changes.</span>' : `changing about ${Math.max(1, Math.round(c.share * 100))}% of the picture`}${m.placed ? `<span class="dim"> · only where it is in this frame (its colour is in ${Math.round((m.wholeShare || 0) * 100)}% of the picture)${m.placed === 'rough' ? ', placed from the AI\'s description, so check the edges' : ''}. If it moves out of that place during the shot, it needs a mask.</span>` : ''}</span></div>`); }
     return `<div class="k">On your preview now</div>${rows.join('') || '<p class="small">Only the overall look.</p>'}
       ${z.skipped.length ? `<p class="small dim">Not changed: ${esc(z.skipped.map(x => `${x.item} (${x.why})`).join('; '))}.</p>` : ''}<p class="small dim">Measured from your frame; it updates as you tweak. Drag across the picture to compare.</p>`;
   }
@@ -1003,7 +1011,8 @@ export async function startApp(host, root) {
           ${grey ? zoneSlider(n, 'ToC', 'How colourful', 0, 0.4, 0.005, { band: satBand(to) }) + zoneSlider(n, 'ToHue', 'New hue', 0, 360, 1, { band: HUE_BAND, thumbColor: lchHex(to, 0.22) })
             : zoneSlider(n, 'ToHue', 'New hue', 0, 360, 1, { band: HUE_BAND, thumbColor: lchHex(to, 0.22) }) + zoneSlider(n, 'ToC', 'How colourful', 0, 0.4, 0.005, { band: satBand(to) })}
           ${zoneSlider(n, 'dL', 'Lighter / darker', -0.3, 0.3, 0.005, { band: lightBand(to) })}
-          <div class="row wrap"><button data-zpick="${n}">Re-pick from the picture</button><button data-zdel="${n}">Remove this zone</button></div>` : ''}</div>`;
+          ${(S.extra[`z${n}BW`] || 0) > 0 && (S.extra[`z${n}BH`] || 0) > 0 ? `<p class="small dim">Placed: this zone only acts in one part of the frame (${Math.round((S.extra[`z${n}X`] || 0.5) * 100)}% across, ${Math.round((S.extra[`z${n}Y`] || 0.5) * 100)}% down), because its colour is all over the picture. If the item moves out of that place during the shot, it needs a mask.</p>` : ''}
+          <div class="row wrap"><button data-zpick="${n}">Re-pick from the picture</button>${(S.extra[`z${n}BW`] || 0) > 0 ? `<button data-zanywhere="${n}">Let it act anywhere</button>` : ''}<button data-zdel="${n}">Remove this zone</button></div>` : ''}</div>`;
     };
     const zonesHTML = (full) => `${S.pickZone ? '<p class="small todo">Now click that colour in the picture above.</p>' : ''}
       <div class="row wrap"><button id="zadd" class="${S.pickZone ? '' : 'primary'}">${S.pickZone ? 'Cancel picking' : 'Pick a colour from the picture'}</button><span class="small dim">${zoneRows.length} of ${ZONES} in use</span></div>
@@ -1060,6 +1069,7 @@ export async function startApp(host, root) {
     if ($('#zadd', body)) $('#zadd', body).onclick = () => { S.pickZone = S.pickZone ? 0 : -1; if (S.pickZone) { S.dockHidden = false; toast('Now click that colour in the picture'); } render(); };
     body.querySelectorAll('[data-zone]').forEach(el => el.onclick = () => { const n = +el.dataset.zone; S.zoneOpen = S.zoneOpen === n ? 0 : n; render(); });
     body.querySelectorAll('[data-zdel]').forEach(b2 => b2.onclick = () => { clearZone(+b2.dataset.zdel); drawStage(); render(); });
+    body.querySelectorAll('[data-zanywhere]').forEach(b2 => b2.onclick = () => { const n = +b2.dataset.zanywhere; for (const k of ['BW', 'BH']) { S.extra[`z${n}${k}`] = 0; if (S.base) S.base.extra[`z${n}${k}`] = 0; } drawStage(); render(); });
     body.querySelectorAll('[data-zpick]').forEach(b2 => b2.onclick = () => { S.pickZone = +b2.dataset.zpick; S.dockHidden = false; toast('Now click that colour in the picture'); render(); });
     ['#tglAll', '#tglAll2', '#tglAll3'].forEach(id => { const el = $(id, body); if (el) el.onclick = () => { S.tweakAll = !S.tweakAll; render(); }; });
     if ($('#toshot', body)) $('#toshot', body).onclick = () => go('shot');

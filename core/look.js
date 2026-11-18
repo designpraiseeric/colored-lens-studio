@@ -207,7 +207,26 @@ export function applySkinGuard(src, out, p) {
 }
 
 /** Colour zones (mirrors applyZones in the C++ engine): pixels picked by their original colour move to a new colour. */
-export const ZONE_KEYS = ['Amt', 'Hue', 'Wid', 'Cmin', 'Cmax', 'Lmin', 'Lmax', 'ToHue', 'ToC', 'dL'], ZONE_DEF = [0, 0, 25, 0.03, 0.4, 0, 1, 0, 0.1, 0];
+// The last four (appended 18 Nov 2026) are the zone's place in the frame: centre across/down and half-width/height,
+// as fractions of the frame; a size of 0 means anywhere. See zonePlace.
+export const ZONE_KEYS = ['Amt', 'Hue', 'Wid', 'Cmin', 'Cmax', 'Lmin', 'Lmax', 'ToHue', 'ToC', 'dL', 'X', 'Y', 'BW', 'BH'], ZONE_DEF = [0, 0, 25, 0.03, 0.4, 0, 1, 0, 0.1, 0, 0.5, 0.5, 0, 0];
+/** Does this zone have a place in the frame (a box), rather than acting wherever its colour is? */
+export const zoneBoxed = z => z[12] > 0 && z[13] > 0;
+/**
+ * How much of a zone reaches the point (u, v) of the frame (0..1, top-left origin). Without a box: everywhere.
+ * With one: fully in its core, fading to nothing AT the box's edge, never beyond it. (The first version faded out
+ * beyond the edge, and on a forest the jacket's new green landed on the leaves beside her as a teal patch.) Without a position (u undefined: a baked
+ * LUT, which cannot know where a pixel is) a boxed zone reaches nothing, so a LUT never paints one item's colour
+ * across the whole frame. Mirrors zonePlace in the C++ engine.
+ */
+export function zonePlace(z, u, v) {
+  if (!zoneBoxed(z)) return 1; if (u == null || u < 0) return 0;
+  // a rounded box (superellipse, power 4): an item rarely fills its box's corners, the background does
+  const ax = Math.abs(u - z[10]) / z[12], ay = Math.abs(v - z[11]) / z[13], d = Math.sqrt(Math.sqrt(ax * ax * ax * ax + ay * ay * ay * ay));
+  return 1 - smooth(0.7, 1, d);
+}
+/** Is any live zone boxed? (Then a frame must be rendered with positions, not through a baked table.) */
+export const hasBoxedZones = p => !!p && zoneList().some(i => (p[`z${i}Amt`] || 0) > 0 && (p[`z${i}BW`] || 0) > 0 && (p[`z${i}BH`] || 0) > 0);
 export const ZONES = 8;
 /** An sRGB hex for an OkLCh colour, so a control can show the colour it is about to pick or make. */
 export function lchHex(h, C = 0.13, L = 0.72) {
@@ -226,7 +245,7 @@ export function hueHistogram(frame, bins = 36) {
 export const zoneDefaults = () => { const o = { ambHue: 0, ambAmt: 0 }; for (let i = 1; i <= ZONES; i++) ZONE_KEYS.forEach((k, j) => { o[`z${i}${k}`] = ZONE_DEF[j]; }); return o; };
 export const zoneList = () => [1, 2, 3, 4, 5, 6, 7, 8];
 export const hasZones = p => !!p && ((p.ambAmt || 0) > 0 || zoneList().some(i => (p[`z${i}Amt`] || 0) > 0));
-export function applyZones(src, out, p) {
+export function applyZones(src, out, p, u, v) {
   if (!hasZones(p)) return out;
   const so = srgbToOklab(...src), go = srgbToOklab(...out), sC = Math.hypot(so[1], so[2]); let sh = Math.atan2(so[2], so[1]) * 57.29578; if (sh < 0) sh += 360;
   const oL = go[0];   // what the look left, before any zone moves it: the zones' own headroom is measured from here
@@ -240,7 +259,7 @@ export function applyZones(src, out, p) {
   const keep = p.skinGuard > 0 ? 1 - skinWeight([so[0], sC, sh], 0.017) * p.skinGuard : 1;
   for (let i = 1; i <= ZONES; i++) { const z = ZONE_KEYS.map((k, j) => p[`z${i}${k}`] ?? ZONE_DEF[j]); if (!(z[0] > 0)) continue;
     let dh = Math.abs(sh - z[1]); if (dh > 180) dh = 360 - dh;
-    const wh = z[4] <= 0.03 ? 1 : 1 - smooth(z[2] * 0.6, z[2] * 1.2, dh), w = keep * z[0] * wh * soft(sC, z[3], z[4], 0.012) * soft(so[0], z[5], z[6], 0.05); if (w <= 0.001) continue;
+    const wh = z[4] <= 0.03 ? 1 : 1 - smooth(z[2] * 0.6, z[2] * 1.2, dh), w = keep * z[0] * wh * soft(sC, z[3], z[4], 0.012) * soft(so[0], z[5], z[6], 0.05) * zonePlace(z, u, v); if (w <= 0.001) continue;
     const ref = Math.max(0.02, (z[3] + z[4]) * 0.5), k = z[4] <= 0.03 ? 1 : Math.min(1.5, Math.max(0.5, sC / ref)), th = z[7] * 0.01745329, tc = z[8] * k;
     // Skin Guard holds a zone off a face's COLOUR. It does not hold it off a face's exposure: lifting an
     // underexposed face is the most ordinary thing a colourist does, and refusing it was why the plugin could
@@ -261,10 +280,11 @@ export function applyZones(src, out, p) {
 export function zoneCoverage(frame, p) {
   const out = [], n = frame.w * frame.h, step = Math.max(1, Math.floor(n / 6000)), soft = (x, lo, hi, e) => smooth(lo - e, lo + e, x) * (1 - smooth(hi - e, hi + e, x));
   for (let i = 1; i <= ZONES; i++) { const z = ZONE_KEYS.map((k, j) => p[`z${i}${k}`] ?? ZONE_DEF[j]); if (!(z[0] > 0)) continue; let hit = 0, tot = 0;
-    for (let q = 0; q < n; q += step) { const so = srgbToOklab(frame.data[q * 4] / 255, frame.data[q * 4 + 1] / 255, frame.data[q * 4 + 2] / 255), sC = Math.hypot(so[1], so[2]); let sh = Math.atan2(so[2], so[1]) * 57.29578; if (sh < 0) sh += 360;
+    for (let q = 0; q < n; q += step) { const pl = zonePlace(z, ((q % frame.w) + 0.5) / frame.w, (Math.floor(q / frame.w) + 0.5) / frame.h); if (pl <= 0.25) { tot++; continue; }
+      const so = srgbToOklab(frame.data[q * 4] / 255, frame.data[q * 4 + 1] / 255, frame.data[q * 4 + 2] / 255), sC = Math.hypot(so[1], so[2]); let sh = Math.atan2(so[2], so[1]) * 57.29578; if (sh < 0) sh += 360;
       let dh = Math.abs(sh - z[1]); if (dh > 180) dh = 360 - dh; const wh = z[4] <= 0.03 ? 1 : 1 - smooth(z[2] * 0.6, z[2] * 1.2, dh);
       const keep = p.skinGuard > 0 ? 1 - skinWeight([so[0], sC, sh], 0.017) * p.skinGuard : 1;
-      if (keep * wh * soft(sC, z[3], z[4], 0.012) * soft(so[0], z[5], z[6], 0.05) > 0.25) hit++; tot++; }
+      if (pl * keep * wh * soft(sC, z[3], z[4], 0.012) * soft(so[0], z[5], z[6], 0.05) > 0.25) hit++; tot++; }
     out.push({ zone: i, share: tot ? hit / tot : 0 }); }
   return out;
 }
@@ -273,7 +293,8 @@ export function zoneCoverage(frame, p) {
 /**
  * Build an evaluator for one look. `cat` = Lukuluku catalog, `luts` = { C0: lut, Cn: lut }.
  * opts.input: 'rec709' (normal video) | 'logc3'. opts.extra: match / skin parameters.
- * The returned function maps one display/log RGB triplet (0..1) to display RGB (0..1).
+ * The returned function maps one display/log RGB triplet (0..1) to display RGB (0..1). (u, v), when given, is
+ * where the pixel sits in the frame (0..1, top-left), for colour zones that have a place.
  */
 export function makePixelFn(look, cat, luts, opts = {}) {
   const G = fullGrade(look.G), M = cat.medium[look.M].fx, Dd = cat.diffusion[look.D].fx, K = cat.lens[look.K].fx, dk = G.diffK;
@@ -283,7 +304,7 @@ export function makePixelFn(look, cat, luts, opts = {}) {
   const expK = Math.pow(2, in709 && !opts.keepExposure ? 0 : G.exp);
   const lift = (Dd.lift || 0) * dk + (K.lift || 0), flatten = (Dd.flatten || 0) * dk + (K.veil || 0), con = M.con || 0, msat = M.sat != null ? M.sat : 1, clipv = M.clip || 0, warm = M.warm || [1, 1, 1];
   const uSat = G.sat * (G.pw && G.pw.offset ? G.pw.offset[3] : 1), uHue = G.hue * Math.PI / 180, cs = Math.cos(uHue), sn = Math.sin(uHue);
-  return function (rgbIn) {
+  return function (rgbIn, u, v) {
     let src = rgbIn, inp = in709 ? applyMatch(rgbIn, x) : rgbIn;
     let c = (in709 ? inp.map(srgb2lin) : inp.map(log2lin)).map((v, i) => Math.max(v, 0) * expK * wb[i]);
     c = c.map((v, i) => v * warm[i] + lift);
@@ -305,7 +326,7 @@ export function makePixelFn(look, cat, luts, opts = {}) {
     col = col.map(v => Math.pow(Math.min(1, Math.max(0, v + G.bri * 0.2)), 1 / G.gam));
     if (W.post) col = wheels(col, W, G.con).map(v => Math.min(1, Math.max(0, v)));
     col = col.map((v, i) => tex1D(CT.rgb[i], v * 0.996 + 0.002));
-    if (in709 && hasZones(x)) col = applyZones(src, col, x);
+    if (in709 && hasZones(x)) col = applyZones(src, col, x, u, v);
     if (in709 && (x.skinGuard || x.skinLift)) col = applySkinGuard(src, col, x);
     return col;
   };

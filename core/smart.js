@@ -279,14 +279,14 @@ export function nearestHue(enc, hex) {
 const JSON_ONLY = 'Reply with JSON only (no markdown, no text around it), in exactly this shape:';
 export const SYSTEM_STUDY = `You are the colourist's eye inside Colored Lens, a colour panel in a video editor. You are shown one frame of a shot (first image). A second image, when present, is a contact sheet of other moments from the surrounding scene or sequence, in time order.
 Your job is to understand this frame before any colour is suggested.
-1. ITEMS: list every distinct thing you can see IN THE FIRST IMAGE ONLY (the frame), however small. Never list anything that appears only in the contact sheet or that you merely expect in such a scene: people (and what each wears, piece by piece), skin, hair, props, furniture, lamps and other light sources, walls, floor, sky, vegetation, vehicles, screens, text and graphics, background areas. For each: where it is in the frame, and its colour now as a plain name and a hex code. Aim for 8 to 20 items. Never invent items you cannot see. If you were not given the picture itself, list only what the measurements and descriptions support and say so in "caveat".
+1. ITEMS: list every distinct thing you can see IN THE FIRST IMAGE ONLY (the frame), however small. Never list anything that appears only in the contact sheet or that you merely expect in such a scene: people (and what each wears, piece by piece), skin, hair, props, furniture, lamps and other light sources, walls, floor, sky, vegetation, vehicles, screens, text and graphics, background areas. For each: where it is in the frame, its box in the frame as "box": [ymin, xmin, ymax, xmax] on a 0–1000 scale (top-left is 0,0; a tight box around that item only), and its colour now as a plain name and a hex code. Aim for 8 to 20 items. Never invent items you cannot see. If you were not given the picture itself, list only what the measurements and descriptions support and say so in "caveat".
 2. LIGHT: where the light comes from, its quality and colour, time of day if it shows.
 3. PURPOSE: what this shot is doing in its scene, inferred from the frame, the contact sheet, the timeline notes and what the editor said. Say what you are unsure of.
 4. Ask at most two short questions only if the answer would change the colour advice.
 Only the layers listed under LAYERS IN SCOPE matter: ignore anything that belongs to an excluded layer (for example a title the editor unticked).
 If the editor wrote a message, answer it in "reply" and update your understanding with what they told you.
 ${JSON_ONLY}
-{"items":[{"name":"","where":"","colour":"","hex":"#000000"}],"light":"","mood":"what the picture feels like now","purpose":"","scene":"what the surrounding scene seems to be","caveat":"","reply":"","questions":[""],"answers":{"genre":[],"feeling":[],"role":[]}}`;
+{"items":[{"name":"","where":"","box":[0,0,1000,1000],"colour":"","hex":"#000000"}],"light":"","mood":"what the picture feels like now","purpose":"","scene":"what the surrounding scene seems to be","caveat":"","reply":"","questions":[""],"answers":{"genre":[],"feeling":[],"role":[]}}`;
 
 export const SYSTEM_TELL = `You are the colourist's eye inside Colored Lens. You have already studied this frame: UNDERSTANDING SO FAR is your own reading of it, and the picture is attached again for reference.
 The editor has now told you something, or answered a question you asked. Answer them in "reply", in two or three sentences, as a colourist would.
@@ -361,7 +361,7 @@ export function buildSuggest(a) {
 const S_ = (v, n = 500) => (typeof v === 'string' ? v.trim().slice(0, n) : '');
 export function validateStudy(o) {
   const okIds = (list, v) => (Array.isArray(v) ? v : v ? [v] : []).filter(x => list.some(y => y.id === x)).slice(0, 2), ans = o.answers || {};
-  const items = (Array.isArray(o.items) ? o.items : []).map(i => ({ name: S_(i && i.name, 80), where: S_(i && i.where, 80), colour: S_(i && i.colour, 40), hex: hexOk(i && i.hex) })).filter(i => i.name).slice(0, 24);
+  const items = (Array.isArray(o.items) ? o.items : []).map(i => ({ name: S_(i && i.name, 80), where: S_(i && i.where, 80), box: boxOk(i && (i.box || i.box_2d)), colour: S_(i && i.colour, 40), hex: hexOk(i && i.hex) })).filter(i => i.name).slice(0, 24);
   // an older helper answers in the old shape: keep what it said
   return { items, light: S_(o.light, 300), mood: S_(o.mood || o.reading, 300), purpose: S_(o.purpose, 500), scene: S_(o.scene, 400), caveat: S_(o.caveat || (!items.length ? o.sees : ''), 400), reply: S_(o.reply, 900),
     questions: (Array.isArray(o.questions) ? o.questions : []).map(q => S_(q, 200)).filter(Boolean).slice(0, 2), answers: { genre: okIds(GENRES, ans.genre), feeling: okIds(FEELINGS, ans.feeling), role: okIds(ROLES, ans.role) } };
@@ -393,6 +393,33 @@ const lchOf = hex => { const h = hexOk(hex); if (!h) return null; const [r, g, b
  * (from the AI's study, snapped to the nearest real colour measured in the frame) and moved to its proposed colour.
  * Up to four zones; skin is left to Skin Guard. Returns { params, mapped:[{item,from,to}], skipped:[{item,why}] }.
  */
+/**
+ * An item's place in the frame as {x0, y0, x1, y1} fractions (top-left origin), from the AI's [ymin, xmin, ymax, xmax]
+ * box on a 0–1000 scale (Gemini's native format; a 0–1 box is accepted too). Null when missing or nonsense.
+ */
+export function boxOk(b) {
+  if (!Array.isArray(b) || b.length !== 4 || !b.every(v => typeof v === 'number' && isFinite(v))) return null;
+  const sc = Math.max(...b) > 1.5 ? 1000 : 1, [y0, x0, y1, x1] = b.map(v => Math.min(1, Math.max(0, v / sc)));
+  if (x1 - x0 < 0.01 || y1 - y0 < 0.01) return null;
+  if (x1 - x0 > 0.98 && y1 - y0 > 0.98) return null;   // "the whole frame" is no place at all
+  return { x0: +x0.toFixed(3), y0: +y0.toFixed(3), x1: +x1.toFixed(3), y1: +y1.toFixed(3) };
+}
+/**
+ * A rough place from the AI's words when it gave no box ("center-left torso", "top right", "foreground"): the
+ * matching third of the frame across and down. Coarse on purpose; zonesFor only uses it when it still isolates
+ * the item's colour. Null when the words name no place.
+ */
+export function boxFromWords(where) {
+  const w = String(where || '').toLowerCase(); if (!w) return null;
+  const has = re => re.test(w);
+  const across = has(/\bleft\b/) && !has(/\bright\b/) ? (has(/cent(er|re)|middle/) ? [0.15, 0.5] : [0, 0.4]) : has(/\bright\b/) && !has(/\bleft\b/) ? (has(/cent(er|re)|middle/) ? [0.5, 0.85] : [0.6, 1]) : has(/cent(er|re)|middle/) ? [0.3, 0.7] : null;
+  const down = has(/\b(top|upper|above|sky|overhead)\b/) ? [0, 0.4] : has(/\b(bottom|lower|floor|ground|feet|foreground)\b/) ? [0.6, 1] : has(/\b(torso|chest|middle|mid|cent(er|re))\b/) ? [0.3, 0.7] : null;
+  if (!across && !down) return null;
+  const [x0, x1] = across || [0, 1], [y0, y1] = down || [0, 1];
+  if ((x1 - x0) * (y1 - y0) > 0.45) return null;   // a strip that wide isolates nothing
+  return { x0, y0, x1, y1, rough: true };
+}
+
 export function zonesFor(sg, study, swatches = [], frame = null) {
   const params = {}, mapped = [], skipped = [], sw = swatches.map(x => (typeof x === 'string' ? x : x && (x.hex || x[0]))).map(lchOf).filter(Boolean);
   const amb = lchOf(sg.ambience && sg.ambience.hex); if (amb && amb.C > 0.02) { params.ambHue = +amb.h.toFixed(1); params.ambAmt = 0.5; }
@@ -419,12 +446,14 @@ export function zonesFor(sg, study, swatches = [], frame = null) {
     let best = null, bd = 0.12; for (const c of sw) { const d = Math.hypot(c.lab[0] - from.lab[0], (c.lab[1] - from.lab[1]) * 2, (c.lab[2] - from.lab[2]) * 2); if (d < bd) { bd = d; best = c; } } if (best) from = best;
     let dh = Math.abs(from.h - to.h); if (dh > 180) dh = 360 - dh; const change = Math.hypot(to.lab[1] - from.lab[1], to.lab[2] - from.lab[2]) + Math.abs(to.L - from.L) * 0.5;
     if (change < 0.025) { skipped.push({ item: it.item, why: 'it is already about this colour' }); continue; }
-    cands.push({ it, from, to, change });
+    cands.push({ it, from, to, change, place: (st && (st.box || boxFromWords(st.where))) || boxFromWords(it.where) || null });
   }
   // two items that have the same colour now cannot be told apart by colour alone
   cands.sort((a, b) => b.change - a.change); const used = [];
   for (const c of cands) {
-    const clash = used.find(u => (u.from.C < 0.035) === (c.from.C < 0.035) && (c.from.C < 0.035 ? Math.abs(u.from.L - c.from.L) < 0.12 : Math.min(Math.abs(u.from.h - c.from.h), 360 - Math.abs(u.from.h - c.from.h)) < 18 && Math.abs(u.from.L - c.from.L) < 0.25));
+    // ...unless each has its own place in the frame and the two places do not overlap
+    const apart = (a, b) => a && b && (a.x1 <= b.x0 || b.x1 <= a.x0 || a.y1 <= b.y0 || b.y1 <= a.y0);
+    const clash = used.find(u => !apart(u.box, c.place) && (u.from.C < 0.035) === (c.from.C < 0.035) && (c.from.C < 0.035 ? Math.abs(u.from.L - c.from.L) < 0.12 : Math.min(Math.abs(u.from.h - c.from.h), 360 - Math.abs(u.from.h - c.from.h)) < 18 && Math.abs(u.from.L - c.from.L) < 0.25));
     if (clash) { skipped.push({ item: c.it.item, why: `it is the same colour as the ${clash.it.item} now, so it needs a mask` }); continue; }
     if (used.length >= 8) { skipped.push({ item: c.it.item, why: 'all eight colour zones are already in use' }); continue; }
     // A mint shirt sits at about 0.02 colourfulness: pale, but with a hue anyone can name. Treating anything under
@@ -439,7 +468,20 @@ export function zonesFor(sg, study, swatches = [], frame = null) {
         if (n ? C < 0.015 && Math.abs(lab[0] - c.from.L) < 0.14 : dh < wid && C > Math.max(0.010, c.from.C * 0.45) && Math.abs(lab[0] - c.from.L) < 0.32) hit++; tot++; }
       const share = hit / Math.max(1, tot), small = /\b(glare|reflection|stud|earring|button|trim|frame|frames|text|logo|subtitle|ring|watch|lip|eye)/i.test(c.it.item);
       // skin is exempt: a face is meant to be a large part of the frame, and its zone only moves exposure
-      if (!c.skin && (share > (n ? 0.12 : 0.5) || (small && share > 0.08))) { skipped.push({ item: c.it.item, why: `about ${Math.round(share * 100)}% of the picture has that same colour, so it needs a mask` }); continue; }
+      if (!c.skin && (share > (n ? 0.12 : 0.5) || (small && share > 0.08))) {
+        // Colour alone cannot pick it out: on a muted frame one olive covers most of a forest. But the item has a
+        // place, and inside that place its colour may well be the thing. Give the zone a box (padded a little) if
+        // the box is a modest part of the frame and the colour really is there inside it.
+        const pl = c.place, pad = pl && (pl.rough ? 0 : 0.015);   // a little room: the zone fades out inside its box
+        const bx = pl && { x0: Math.max(0, pl.x0 - pad), y0: Math.max(0, pl.y0 - pad), x1: Math.min(1, pl.x1 + pad), y1: Math.min(1, pl.y1 + pad) };
+        const area = bx ? (bx.x1 - bx.x0) * (bx.y1 - bx.y0) : 1; let inHit = 0, inTot = 0;
+        if (bx && area <= (pl.rough ? 0.2 : 0.45)) for (let q = 0; q < N; q += step) { const u = ((q % frame.w) + 0.5) / frame.w, v = (Math.floor(q / frame.w) + 0.5) / frame.h; if (u < bx.x0 || u > bx.x1 || v < bx.y0 || v > bx.y1) continue;
+          const lab = srgbToOklab(frame.data[q * 4] / 255, frame.data[q * 4 + 1] / 255, frame.data[q * 4 + 2] / 255), C = Math.hypot(lab[1], lab[2]); let h = Math.atan2(lab[2], lab[1]) * 57.29578; if (h < 0) h += 360; let dh = Math.abs(h - c.from.h); if (dh > 180) dh = 360 - dh;
+          if (n ? C < 0.015 && Math.abs(lab[0] - c.from.L) < 0.14 : dh < (c.from.C < 0.035 ? 34 : 24) && C > Math.max(0.010, c.from.C * 0.45) && Math.abs(lab[0] - c.from.L) < 0.32) inHit++; inTot++; }
+        const inShare = inHit / Math.max(1, inTot);
+        if (!bx || area > (pl.rough ? 0.2 : 0.45) || inShare < 0.08) { skipped.push({ item: c.it.item, why: `about ${Math.round(share * 100)}% of the picture has that same colour${bx ? ', and its place in the frame is too large or too vague to isolate it' : ''}, so it needs a mask` }); continue; }
+        c.box = bx; c.boxShare = inShare; c.wholeShare = share;
+      }
       if (share < 0.002) { skipped.push({ item: c.it.item, why: 'that colour could not be found in the frame' }); continue; } }
     used.push(c); const i = used.length, P = (k, v) => { params[`z${i}${k}`] = +(+v).toFixed(4); };
     P('Amt', 0.85); P('Hue', c.from.h); P('Wid', c.from.C < 0.035 ? 34 : 24);
@@ -448,7 +490,9 @@ export function zonesFor(sg, study, swatches = [], frame = null) {
     P('ToHue', c.to.h); P('ToC', Math.min(0.4, c.to.C));
     // A skin zone exists to answer "the face is underexposed", so it carries the whole move rather than half of it.
     P('dL', Math.max(-0.18, Math.min(0.18, (c.to.L - c.from.L) * (c.skin ? 1 : 0.5))));
-    mapped.push({ item: c.it.item, to: c.it.colour, zone: i });
+    // its place: centre and half-size of the box (the zone fades to nothing at the box's edge)
+    if (c.box) { P('X', (c.box.x0 + c.box.x1) / 2); P('Y', (c.box.y0 + c.box.y1) / 2); P('BW', (c.box.x1 - c.box.x0) / 2); P('BH', (c.box.y1 - c.box.y0) / 2); }
+    mapped.push({ item: c.it.item, to: c.it.colour, zone: i, ...(c.box ? { placed: c.place.rough ? 'rough' : 'box', wholeShare: c.wholeShare } : {}) });
   }
   return { params, mapped, skipped };
 }

@@ -26,7 +26,9 @@ struct RenderInfo {
 void render(const ImageView& src, const ImageView& dst, const Params& p, const RenderInfo& info);
 
 /** The per-pixel part only (no blur, grain, vignette): what a .cube LUT of this look contains. */
-void pixelOnly(const float in[3], float out[3], const Params& p);
+/** One pixel through the per-pixel stages. (u, v) is where it sits in the frame (0..1, top-left); without it
+    (u < 0, a baked LUT) colour zones that have a place are left out. */
+void pixelOnly(const float in[3], float out[3], const Params& p, float u = -1, float v = -1);
 
 const char* versionString();
 } // namespace lukuluku

@@ -2,7 +2,7 @@
 // The exact per-pixel pipeline (core/look.js) is baked into a small 3D LUT once per look, then applied to a
 // preview-sized frame. Grain and vignette are approximated so their sliders visibly do something; halation and
 // diffusion glow are spatial effects that only the real effect renders ("Try on clip").
-import { makePixelFn } from './look.js';
+import { makePixelFn, hasBoxedZones, zonePlace, ZONE_KEYS, ZONE_DEF, zoneList } from './look.js';
 import { makeFrame, downsample } from './image.js';
 
 const N = 25;
@@ -33,11 +33,15 @@ export function textureOf(look, cat) {
 }
 
 /** Applies a baked table (+ approximate texture) to a frame. */
-export function applyTable(frame, tab, tex = { grain: 0, vig: 0, gsize: 1 }, fullWidth = 1920) {
+export function applyTable(frame, tab, tex = { grain: 0, vig: 0, gsize: 1 }, fullWidth = 1920, exact = null) {
   const out = makeFrame(frame.w, frame.h), d = frame.data, o = out.data, c = [0, 0, 0];
   const scale = frame.w / fullWidth, gAmp = tex.grain * 2.2 * Math.sqrt(Math.min(1, tex.gsize * 0.6 / Math.max(scale, 0.05))) * 255; // grain averages out at preview size
   for (let y = 0; y < frame.h; y++) for (let x = 0; x < frame.w; x++) {
-    const i = (y * frame.w + x) * 4; sample(tab, d[i] / 255, d[i + 1] / 255, d[i + 2] / 255, c);
+    const i = (y * frame.w + x) * 4, u = (x + 0.5) / frame.w, v = (y + 0.5) / frame.h;
+    // A colour zone with a place in the frame cannot live in a table (a table has no idea where a pixel is), so
+    // pixels a boxed zone can reach go through the exact pipeline with their position; everything else uses the table.
+    if (exact && exact.boxes.some(z => zonePlace(z, u, v) > 0)) { const r = exact.fn([d[i] / 255, d[i + 1] / 255, d[i + 2] / 255], u, v); c[0] = r[0]; c[1] = r[1]; c[2] = r[2]; }
+    else sample(tab, d[i] / 255, d[i + 1] / 255, d[i + 2] / 255, c);
     let k = 1;
     if (tex.vig > 0) { const dx = (x + 0.5) / frame.w - 0.5, dy = ((y + 0.5) / frame.h - 0.5) * 0.8, v = Math.hypot(dx, dy) / 0.62, t = Math.min(1, Math.max(0, (v - 0.55) / 0.45)); k = 1 - tex.vig * t * t * (3 - 2 * t); }
     let gr = 0; if (gAmp > 0) { const Y = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]; gr = (hash(x, y) - 0.5) * gAmp * (0.55 + 1.6 * Y * (1 - Y)); }
@@ -73,7 +77,12 @@ export function previewer(frame, cat, getLuts) {
       t = bakeTable(fn); if (cache.size > 40) cache.delete(cache.keys().next().value); cache.set(key, t); return t;
     },
     async render(look, extra, input, size = 640) {
-      return applyTable(base(size), await this.table(look, extra, input), textureOf(look, cat), frame.w);
+      let exact = null;
+      if (hasBoxedZones(extra)) {
+        const boxes = zoneList().map(i => ZONE_KEYS.map((k, j) => extra[`z${i}${k}`] ?? ZONE_DEF[j])).filter(z => z[0] > 0 && z[12] > 0 && z[13] > 0);
+        exact = { boxes, fn: makePixelFn(look, cat, await getLuts(look), { input, keepExposure: true, extra }) };
+      }
+      return applyTable(base(size), await this.table(look, extra, input), textureOf(look, cat), frame.w, exact);
     },
   };
 }

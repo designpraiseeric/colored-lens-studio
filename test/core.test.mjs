@@ -418,3 +418,63 @@ test('Gemini moves on to the next saved key when one reaches its limit, and says
   await assert.rejects(askAI({ provider: 'gemini', geminiKeys: ['KEY-A', 'KEY-B'] }, { prompt: 'hi', imageB64: 'AAAA' }, async (...a) => { n++; return bad(...a); }), /not valid/);
   assert.equal(n, 1, 'a bad key is reported, not silently skipped');
 });
+
+// ---------- zones with a place in the frame (18 Nov: on a muted forest one olive covered 61% of the picture) ----------
+import { boxOk, boxFromWords } from '../core/smart.js';
+import { zonePlace, ZONE_KEYS as ZK, ZONE_DEF as ZD, hasBoxedZones, zoneDefaults as zDefs, zoneCoverage as zCov, lookToEngineParams as toParams } from '../core/look.js';
+import { previewer } from '../core/preview.js';
+
+test('a place in the frame: Gemini boxes, rough boxes from words, and how far a zone reaches', () => {
+  assert.deepEqual(boxOk([305, 395, 650, 500]), { x0: 0.395, y0: 0.305, x1: 0.5, y1: 0.65 });
+  assert.deepEqual(boxOk([0.1, 0.2, 0.3, 0.4]), { x0: 0.2, y0: 0.1, x1: 0.4, y1: 0.3 }, 'a 0–1 box is accepted too');
+  assert.equal(boxOk([0, 0, 1000, 1000]), null, 'the whole frame is no place');
+  assert.equal(boxOk([10, 10, 10, 500]), null); assert.equal(boxOk('left'), null);
+  assert.deepEqual(boxFromWords('center-left torso'), { x0: 0.15, y0: 0.3, x1: 0.5, y1: 0.7, rough: true });
+  assert.equal(boxFromWords('everywhere'), null);
+  assert.equal(boxFromWords('background'), null, 'no side and no height: no place');
+  const z = ZK.map((k, j) => ({ X: 0.3, Y: 0.6, BW: 0.1, BH: 0.2 })[k] ?? ZD[j]);
+  assert.equal(zonePlace(z, 0.3, 0.6), 1, 'full strength at the centre');
+  assert.equal(zonePlace(z, 0.41, 0.6), 0, 'nothing beyond the edge');
+  assert.ok(zonePlace(z, 0.385, 0.6) > 0 && zonePlace(z, 0.385, 0.6) < 1, 'fading inside the edge');
+  assert.equal(zonePlace(z, undefined, undefined), 0, 'no position (a LUT): a boxed zone does nothing');
+  assert.equal(zonePlace(ZD, undefined, undefined), 1, 'an unboxed zone reaches everywhere, as before');
+});
+
+test('an item whose colour fills most of the frame gets a zone limited to its place', () => {
+  // a 200×100 "forest": olive everywhere, with a slightly different olive vest at the left and a jacket at the right
+  const f = makeFrame(200, 100), put = (x, y, c) => { const i = (y * 200 + x) * 4; f.data[i] = c[0]; f.data[i + 1] = c[1]; f.data[i + 2] = c[2]; f.data[i + 3] = 255; };
+  for (let y = 0; y < 100; y++) for (let x = 0; x < 200; x++) put(x, y, [92 + (x * 7 + y * 3) % 9, 96 + (x * 3 + y * 5) % 7, 56]);
+  for (let y = 30; y < 70; y++) for (let x = 40; x < 70; x++) put(x, y, [93, 97, 54]);
+  const sw = ['#5d6136', '#5c6037'];
+  const study = items => ({ items });
+  const vest = { name: "boy's vest", where: 'center-left torso', hex: '#5d6136' }, jacket = { name: "woman's jacket", where: 'right torso', hex: '#5c6037' };
+  const sg = { items: [{ item: "boy's vest", colour: 'vivid olive', hex: '#7f9a1f' }, { item: "woman's jacket", colour: 'forest green', hex: '#2e5a33' }] };
+  const none = zonesFor(sg, study([{ ...vest, where: '' }, { ...jacket, where: '' }]), sw, f);
+  assert.equal(none.mapped.length, 0, 'colour alone cannot pick them out');
+  assert.match(none.skipped.map(x => x.why).join(' '), /needs a mask/);
+  const boxed = zonesFor(sg, study([{ ...vest, box: { x0: 0.2, y0: 0.3, x1: 0.35, y1: 0.7 } }, { ...jacket, box: { x0: 0.6, y0: 0.25, x1: 0.8, y1: 0.7 } }]), sw, f);
+  assert.equal(boxed.mapped.length, 2, 'both items get a zone, even though they are the same colour, because their places do not overlap');
+  assert.ok(boxed.mapped.every(m => m.placed === 'box' && m.wholeShare > 0.5));
+  const p = boxed.params; assert.ok(p.z1BW > 0 && p.z1BH > 0 && p.z2BW > 0, 'each zone carries its box');
+  const cov = zCov(f, { ...zDefs(), ...p }); assert.ok(cov.every(c => c.share < 0.2), `each zone reaches only its own place: ${JSON.stringify(cov)}`);
+  const words = zonesFor(sg, study([vest, jacket]), sw, f);
+  assert.ok(words.mapped.some(m => m.placed === 'rough'), 'the AI\'s words alone place it roughly');
+  const huge = zonesFor({ items: [sg.items[0]] }, study([{ ...vest, box: { x0: 0, y0: 0, x1: 0.9, y1: 0.9 } }]), sw, f);
+  assert.equal(huge.mapped.length, 0, 'a box that is most of the frame isolates nothing');
+});
+
+test('a baked LUT leaves boxed zones out, while the preview and the effect keep them in their place', async () => {
+  const looks = JSON.parse(fs.readFileSync(new URL('../site/content/looks.json', import.meta.url))), cat = looks.catalog;
+  const luts = {}; for (const id of ['C0', 'C1']) luts[id] = lutFromBin(fs.readFileSync(new URL(`../site/content/luts/${id}.bin`, import.meta.url)));
+  const look = parseCode('C1', cat), boxedZone = { z1Amt: 1, z1Hue: 110, z1Wid: 40, z1Cmin: 0.02, z1ToHue: 250, z1ToC: 0.15, z1X: 0.25, z1Y: 0.5, z1BW: 0.2, z1BH: 0.4 };
+  assert.ok(hasBoxedZones(boxedZone));
+  const nums = o => bakeCube(look, cat, luts, { size: 9, extra: o }).text.split('\n').filter(l => /^[\d.]+ [\d.]+ [\d.]+$/.test(l)).flatMap(l => l.split(' ').map(Number));
+  const a = nums(undefined), b = nums(boxedZone); assert.equal(a.length, b.length);
+  assert.ok(a.every((v, i) => Math.abs(v - b[i]) < 1e-5), 'a LUT cannot know where a pixel is, so it must not paint the item colour everywhere');
+  const f = makeFrame(80, 40); for (let i = 0; i < 80 * 40; i++) { f.data[i * 4] = 100; f.data[i * 4 + 1] = 104; f.data[i * 4 + 2] = 60; f.data[i * 4 + 3] = 255; }
+  const pv = previewer(f, cat, async () => luts), out = await pv.render(look, { ...zDefs(), ...boxedZone }, 'rec709', 80), ref = await pv.render(look, zDefs(), 'rec709', 80);
+  const px = (fr, x, y) => [...fr.data.slice((y * fr.w + x) * 4, (y * fr.w + x) * 4 + 3)];
+  assert.notDeepEqual(px(out, 20, 20), px(ref, 20, 20), 'inside the box the preview shows the zone');
+  assert.deepEqual(px(out, 70, 20), px(ref, 70, 20), 'outside it, nothing changes');
+  const params = toParams(look, cat, { params: boxedZone }); assert.equal(params.z1BW, 0.2, 'the effect receives the box');
+});

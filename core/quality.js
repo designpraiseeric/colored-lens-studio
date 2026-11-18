@@ -296,7 +296,7 @@ export function fitStrength(src, build, opts = {}) {
 export function renderWith(frame, fn) {
   const out = { w: frame.w, h: frame.h, data: new Uint8ClampedArray(frame.w * frame.h * 4) };
   for (let p = 0; p < frame.w * frame.h; p++) { const i = p * 4;
-    const c = fn([frame.data[i] / 255, frame.data[i + 1] / 255, frame.data[i + 2] / 255]);
+    const c = fn([frame.data[i] / 255, frame.data[i + 1] / 255, frame.data[i + 2] / 255], ((p % frame.w) + 0.5) / frame.w, (Math.floor(p / frame.w) + 0.5) / frame.h);
     out.data[i] = Math.round(Math.max(0, Math.min(1, c[0])) * 255);
     out.data[i + 1] = Math.round(Math.max(0, Math.min(1, c[1])) * 255);
     out.data[i + 2] = Math.round(Math.max(0, Math.min(1, c[2])) * 255);

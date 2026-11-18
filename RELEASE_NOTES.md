@@ -1,5 +1,16 @@
 # Release notes
-Each `## 0.16.0
+Each `## 0.17.0
+
+**Per-item colour now works on muted footage.** On a forest shot every colour suggestion used to collapse to "Only the overall look": the boy's olive vest shares its colour with most of a forest, so a colour zone could not pick it out. Now each colour zone can also have a place in the frame.
+- Gemini gives a box for each thing it names, and a zone acts only inside that box (softly, fading out before the box's edge). Two items of the same colour in different places, like an olive vest and an olive jacket, each get their own zone.
+- With an AI that does not see the picture, or a reading saved earlier, the place comes from the AI's own words ("centre-left, torso"), more roughly.
+- On the forest test shot, suggestion 1 went from changing only the sky to changing the vest, the jacket, the path and the sky, with nothing clipped and the faces untouched.
+- The panel says when a zone has a place, and that a subject moving out of it during the shot needs a mask. The Tweak tab shows where it is and has "Let it act anywhere".
+- Picking a colour from the picture: if that colour is in nearly half the frame or more, the zone stays around where you clicked, and the panel tells you.
+- A .cube LUT cannot know where a pixel is, so a zone that has a place is left out of exported LUTs rather than painted over the whole frame.
+- Update the effect too: the places are new settings on the Lukuluku Look effect (the installer does this).
+
+## 0.16.0
 
 **Several Gemini keys, used in turn.** Saving a Gemini key under “AI” now adds it to your saved keys instead of replacing the last one. When Google says a key has reached its free limit, Colored Lens moves on to the next saved key by itself and lets the tired one rest: about a minute for a per-minute limit, until midnight Pacific time for the daily one. The AI settings list your keys (shown as AIza…1234) with when each is ready again, and each can be removed. Your current key is kept as the first one.
 

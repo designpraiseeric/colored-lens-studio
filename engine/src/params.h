@@ -75,7 +75,18 @@
   /* Appended 17 Nov 2026. A dark face's shadows carry the least colour, so a colour-qualified zone grabs them
      least — exactly the pixels that need lifting when the reading says "the face is underexposed". This lifts by
      skin weight instead of by hue and colourfulness, so it reaches them. */ \
-  X(skinLift, F, "Lift the face", -0.3, 0.3, 0, "Lift the face")
+  X(skinLift, F, "Lift the face", -0.3, 0.3, 0, "Lift the face") \
+  /* Appended 18 Nov 2026. On a muted frame one colour can cover most of the picture (a boy's olive vest shares its
+     colour with 61% of a forest), so colour alone cannot isolate an item. Each zone may also be given a place: a
+     soft-edged box (centre across/down, half-width/height, all as fractions of the frame; size 0 = anywhere). */ \
+  X(z1X, F, "Zone 1 place across", 0, 1, 0.5, "Zone places") X(z1Y, F, "Zone 1 place down", 0, 1, 0.5, "Zone places") X(z1BW, F, "Zone 1 place width", 0, 1, 0, "Zone places") X(z1BH, F, "Zone 1 place height", 0, 1, 0, "Zone places") \
+  X(z2X, F, "Zone 2 place across", 0, 1, 0.5, "Zone places") X(z2Y, F, "Zone 2 place down", 0, 1, 0.5, "Zone places") X(z2BW, F, "Zone 2 place width", 0, 1, 0, "Zone places") X(z2BH, F, "Zone 2 place height", 0, 1, 0, "Zone places") \
+  X(z3X, F, "Zone 3 place across", 0, 1, 0.5, "Zone places") X(z3Y, F, "Zone 3 place down", 0, 1, 0.5, "Zone places") X(z3BW, F, "Zone 3 place width", 0, 1, 0, "Zone places") X(z3BH, F, "Zone 3 place height", 0, 1, 0, "Zone places") \
+  X(z4X, F, "Zone 4 place across", 0, 1, 0.5, "Zone places") X(z4Y, F, "Zone 4 place down", 0, 1, 0.5, "Zone places") X(z4BW, F, "Zone 4 place width", 0, 1, 0, "Zone places") X(z4BH, F, "Zone 4 place height", 0, 1, 0, "Zone places") \
+  X(z5X, F, "Zone 5 place across", 0, 1, 0.5, "Zone places") X(z5Y, F, "Zone 5 place down", 0, 1, 0.5, "Zone places") X(z5BW, F, "Zone 5 place width", 0, 1, 0, "Zone places") X(z5BH, F, "Zone 5 place height", 0, 1, 0, "Zone places") \
+  X(z6X, F, "Zone 6 place across", 0, 1, 0.5, "Zone places") X(z6Y, F, "Zone 6 place down", 0, 1, 0.5, "Zone places") X(z6BW, F, "Zone 6 place width", 0, 1, 0, "Zone places") X(z6BH, F, "Zone 6 place height", 0, 1, 0, "Zone places") \
+  X(z7X, F, "Zone 7 place across", 0, 1, 0.5, "Zone places") X(z7Y, F, "Zone 7 place down", 0, 1, 0.5, "Zone places") X(z7BW, F, "Zone 7 place width", 0, 1, 0, "Zone places") X(z7BH, F, "Zone 7 place height", 0, 1, 0, "Zone places") \
+  X(z8X, F, "Zone 8 place across", 0, 1, 0.5, "Zone places") X(z8Y, F, "Zone 8 place down", 0, 1, 0.5, "Zone places") X(z8BW, F, "Zone 8 place width", 0, 1, 0, "Zone places") X(z8BH, F, "Zone 8 place height", 0, 1, 0, "Zone places")
 
 namespace lukuluku {
 enum ParamId {

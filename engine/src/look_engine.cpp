@@ -171,7 +171,7 @@ struct Setup {
   V3 wLift, wGamE, wGainM, wOff, satR, LS, LM, LH, LSat; float lowR, highR, pivot, ucon; bool wpost;
   float hi, sh, wh, bk, bri, gam, lutMix, sharpU;
   float matchAmt, mLg, mLo, mA, mB, mCg; float skinGuard, skinHue, skinDensity, skinLight, skinLift;
-  float z[8][10]; bool zones; float ambHue, ambAmt;
+  float z[8][10]; float zb[8][4]; bool boxed; bool zones; float ambHue, ambAmt;
 };
 inline V3 puck(float x, float y) { return {1.14f * y, -0.395f * x - 0.581f * y, 2.032f * x}; }
 
@@ -201,7 +201,10 @@ Setup makeSetup(const Params& p) {
   s.zones = false;
   // zones 1-4 sit together in params.h; 5-8 were appended later, after the ambience pair
   for (int i = 0; i < 8; i++) { const int base = i < 4 ? P_z1Amt + i * 10 : P_z5Amt + (i - 4) * 10;
-    for (int k = 0; k < 10; k++) s.z[i][k] = float(p.v[base + k]); if (s.z[i][0] > 0) s.zones = true; }
+    for (int k = 0; k < 10; k++) s.z[i][k] = float(p.v[base + k]); if (s.z[i][0] > 0) s.zones = true;
+    // where the zone may act (appended 18 Nov): centre across/down, half-width/height; size 0 = anywhere
+    for (int k = 0; k < 4; k++) s.zb[i][k] = float(p.v[P_z1X + i * 4 + k]); }
+  s.boxed = false; for (int i = 0; i < 8; i++) if (s.z[i][0] > 0 && s.zb[i][2] > 0 && s.zb[i][3] > 0) s.boxed = true;
   s.ambHue = float(p[P_ambHue]); s.ambAmt = float(p[P_ambAmt]); if (s.ambAmt > 0) s.zones = true;
   s.skinGuard = float(p[P_skinGuard]); s.skinHue = float(p[P_skinHue]); s.skinDensity = float(p[P_skinDensity]); s.skinLight = float(p[P_skinLight]); s.skinLift = float(p[P_skinLift]);
   return s;
@@ -261,7 +264,17 @@ V3 applySkinGuard(V3 src, V3 out, const Setup& s) {
 
 /** Colour zones: pixels picked by their ORIGINAL colour (hue, colourfulness, lightness) are moved to a new colour
     after the look; plus an overall ambience tint in the mids and highs. Mirrors applyZones in core/look.js. */
-V3 applyZones(V3 src, V3 out, const Setup& s) {
+/** How much of a zone reaches the point (u, v) of the frame (0..1, top-left origin). A zone without a box reaches
+    everywhere. With a box it reaches fully in its core and fades to nothing at the box's edge, never beyond it. Without a
+    position (u < 0: a baked LUT, which has no idea where a pixel is) a boxed zone reaches nothing, so a LUT never
+    paints an item's colour across the whole frame. Mirrors zonePlace in core/look.js. */
+inline float zonePlace(const float* b, float u, float v) {
+  if (!(b[2] > 0 && b[3] > 0)) return 1.f; if (u < 0) return 0.f;
+  // a rounded box (superellipse, power 4), fading to nothing at its edge, never beyond it
+  float ax = std::fabs(u - b[0]) / b[2], ay = std::fabs(v - b[1]) / b[3], d = std::sqrt(std::sqrt(ax * ax * ax * ax + ay * ay * ay * ay));
+  return 1 - smoothstepf(0.7f, 1.f, d);
+}
+V3 applyZones(V3 src, V3 out, const Setup& s, float u = -1, float v = -1) {
   if (!s.zones) return out;
   V3 so = srgbToOklab(src), go = srgbToOklab(out);
   const float oL = go.r;   // what the look left, before any zone moves it: the zones' headroom is measured from here
@@ -275,7 +288,7 @@ V3 applyZones(V3 src, V3 out, const Setup& s) {
   for (int i = 0; i < 8; i++) { const float* z = s.z[i]; if (z[0] <= 0) continue;
     float dh = std::fabs(sh - z[1]); if (dh > 180) dh = 360 - dh;
     float wh = z[4] <= 0.03f ? 1.f : 1 - smoothstepf(z[2] * 0.6f, z[2] * 1.2f, dh);
-    float w = keep * z[0] * wh * soft(sC, z[3], z[4], 0.012f) * soft(so.r, z[5], z[6], 0.05f); if (w <= 0.001f) continue;
+    float w = keep * z[0] * wh * soft(sC, z[3], z[4], 0.012f) * soft(so.r, z[5], z[6], 0.05f) * zonePlace(s.zb[i], u, v); if (w <= 0.001f) continue;
     float ref = std::max(0.02f, (z[3] + z[4]) * 0.5f), k = z[4] <= 0.03f ? 1.f : std::clamp(sC / ref, 0.5f, 1.5f), th = z[7] * 0.01745329f, tc = z[8] * k;
     // Skin Guard holds a zone off a face's COLOUR, not off its exposure: lifting an underexposed face is ordinary
     // grading, and refusing it left the plugin able to diagnose a dark face with no way to act on it.
@@ -323,13 +336,13 @@ V3 finish(V3 c, const Setup& s, float grainVal3[3], bool useGrain, float gAmp, f
 }
 } // namespace
 
-void pixelOnly(const float in[3], float out[3], const Params& p) {
+void pixelOnly(const float in[3], float out[3], const Params& p, float u, float v) {
   Setup s = makeSetup(p); V3 src = {in[0], in[1], in[2]};
   V3 inp = s.in709 ? applyMatch(src, s) : src;
   V3 lin = s.in709 ? V3{srgb2lin(inp.r), srgb2lin(inp.g), srgb2lin(inp.b)} : V3{log2lin(inp.r), log2lin(inp.g), log2lin(inp.b)};
   lin = vmax0(lin) * s.expK * s.wb;
   float g3[3] = {0, 0, 0}; V3 col = finish(lin, s, g3, false, 0, 0, 0, 0);
-  if (s.in709) { col = applyZones(src, col, s); col = applySkinGuard(src, col, s); }
+  if (s.in709) { col = applyZones(src, col, s, u, v); col = applySkinGuard(src, col, s); }
   out[0] = col.r; out[1] = col.g; out[2] = col.b;
 }
 
@@ -395,7 +408,7 @@ void render(const ImageView& src, const ImageView& dst, const Params& p, const R
       if (vig > 0) { float vv = std::hypot(relx, rely * 0.8f), t = std::clamp((vv - 1.55f) / (0.35f - 1.55f), 0.f, 1.f), sm = t * t * (3 - 2 * t); col = col * (1 + (sm - 1) * vig); }
       if (M.gate) { float ax = std::fabs(relx), ay = std::fabs(rely), rx = 0.10f * hvy / hvx, ry = 0.10f;
         float kx = std::max(ax - (1 - rx), 0.f) / rx, ky = std::max(ay - (1 - ry), 0.f) / ry; col = col * (1 - smoothstepf(0.9f, 1, std::hypot(kx, ky))); }
-      if (!orig.px.empty()) { const float* o = orig.at(x, y); col = applyZones({o[0], o[1], o[2]}, col, s); col = applySkinGuard({o[0], o[1], o[2]}, col, s); }
+      if (!orig.px.empty()) { const float* o = orig.at(x, y); col = applyZones({o[0], o[1], o[2]}, col, s, uvx, uvy); col = applySkinGuard({o[0], o[1], o[2]}, col, s); }
       col = mixv(V3{0.035f, 0.035f, 0.035f}, col, inside);
       drow[x * 4] = col.r; drow[x * 4 + 1] = col.g; drow[x * 4 + 2] = col.b; drow[x * 4 + 3] = srow[x * 4 + 3];
     }
