@@ -36,6 +36,8 @@ const normIntent = i => ({ genre: answers(i.genre), feeling: answers(i.feeling),
 const lookCode = (l, matte) => { const c = formatCode(l); return matte ? c : c.replace(/·[\d.]+$/, ''); };
 
 export async function startApp(host, root) {
+  const mark = l => { try { host.mark && host.mark(l); } catch {} };   // startup timing, where a host records it
+  mark('startApp');
   const S = { tab: 'shot', back: 'shot', frame: null, meta: null, reading: null, skin: null, sample: null, shots: [],
     intent: normIntent(settings.get('intent', {})), seqId: '', ctx: null, lead: 0, neigh: [], scope: settings.get('scope', 'clip'), input: settings.get('input', 'rec709'),
     directions: [], chosen: -1, look: NEUTRAL_LOOK(), extra: { ...XDEF }, matte: false, recipe: { name: '', presetId: null }, view: 'split', wipe: 0.5,
@@ -73,7 +75,7 @@ export async function startApp(host, root) {
   $('#guideBtn', root).onclick = () => { S.guide = { view: 'home', step: 0, route: '' }; go('guide'); };
 
   // ---------- content + updates (silent) ----------
-  await up.load();
+  mark('shell drawn'); await up.load(); mark('content loaded');
   if (!up.content.encyclopedia) { $('#body', root).innerHTML = '<p class="warn">The encyclopedia could not be loaded. Connect to the internet once so it can be downloaded.</p>'; }
   status();
   up.sync().then(changed => { if (changed) { toast('Encyclopedia updated from GitHub'); render(); } status(); }).catch(() => {});
@@ -1380,6 +1382,6 @@ export async function startApp(host, root) {
   /** Called by the host when the separate Preview panel shows: the preview moves there. */
   function attachPreview(el) { pvEl = el; S.detached = true; render(); }
   if (!settings.get('guideSeen', 0)) S.tour = { i: 0, dir: 1 };
-  render();
+  mark('wired'); render(); mark('first render');
   return { state: S, updater: up, render, attachPreview };
 }

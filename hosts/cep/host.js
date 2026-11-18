@@ -103,4 +103,7 @@ if (OS === 'mac' && fs) host.bridge = async (req, ms = 180000) => {
     try { const out = JSON.parse(txt); try { fs.unlinkSync(dir + 'res-' + id + '.json'); } catch {} return out; } catch {} }
   try { fs.unlinkSync(dir + 'req-' + id + '.json'); } catch {} throw new Error('helper');
 };
+// Startup timing (After Effects took ~20 s to paint the panel): one line per stage, in ColoredLens/cep_timing.log.
+host.mark = label => { try { fs.appendFileSync(frameDir() + '/cep_timing.log', `${new Date().toISOString()} ${Math.round(performance.now())} ms ${label}\n`); } catch {} };
+host.mark('host.js evaluated');
 startApp(host, document.getElementById('root')).catch(e => { document.getElementById('root').textContent = 'Colored Lens could not start: ' + e.message; });
