@@ -194,7 +194,7 @@ export async function ask(cfg, { prompt, imageB64, images = [], history = [], sy
     const contents = [...hist.map(h => ({ role: h.role === 'assistant' ? 'model' : 'user', parts: [{ text: h.text }] })),
       { role: 'user', parts: [{ text: prompt }, ...[imageB64, ...more].map(b => ({ inline_data: { mime_type: mime, data: b } }))] }];
     const call = (model, key) => postJSON(post, `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, { 'x-goog-api-key': key },
-      { systemInstruction: { parts: [{ text: SYS }] }, contents, generationConfig: { responseMimeType: 'application/json', temperature: 0.4 } }, 90000);
+      { systemInstruction: { parts: [{ text: SYS }] }, contents, generationConfig: { responseMimeType: 'application/json', temperature: cfg.temperature ?? 0.4, ...(cfg.noThinking && /^gemini-2\.5/.test(model) ? { thinkingConfig: { thinkingBudget: 0 } } : {}) } }, cfg.callTimeoutMs || 90000);
     // Google retires model names and its models are sometimes overloaded: wait and retry once, then move down a
     // list of current Flash models until one answers. When a key reaches its free limit, the next saved key takes
     // over (cfg.onKeyLimit lets the panel rest the tired one until its limit resets).
@@ -210,7 +210,8 @@ export async function ask(cfg, { prompt, imageB64, images = [], history = [], sy
         let keyLimited = false;
         for (let i = 0; i < order.length && !j && !keyLimited; i++) {
           for (let attempt = 0; attempt < (i === 0 && round === 0 ? 2 : 1) && !j; attempt++) {
-            if (round > 0 && Date.now() - started > BUDGET) break;   // out of patience: report rather than start another slow call
+            // out of patience: report rather than start another slow call (the very first call always goes)
+            if ((round > 0 || i > 0 || attempt > 0) && Date.now() - started > BUDGET) break;
             try { j = await call(order[i], key); } catch (e) { lastErr = e; const m = String(e.message);
               if (isLimit(m)) { keyLimited = true; limited++; try { cfg.onKeyLimit && cfg.onKeyLimit(key, m); } catch {} break; } // this key is spent: next key
               if (/answered (503|500|502|504)/.test(m) || /took too long/.test(m)) { busy = true; if (i === 0 && attempt === 0 && round === 0) await wait(cfg.busyFirstWaitMs ?? 4000); continue; } // busy: retry, then next model

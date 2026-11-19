@@ -608,4 +608,7 @@ test('an AI mask becomes an outline the zone keeps to, and the background keeps 
   assert.equal(matchMask([m, { ...m, label: 'vest' }], "woman's camouflage jacket"), null, 'not enough shared words');
   assert.equal(matchMask([m, { ...m, label: 'vest' }], 'camo jacket'), m);
   assert.deepEqual(parseSegments('not json'), []);
+  // the other answer some Gemini versions give: the outline as [y, x] points on the 0-1000 scale
+  const pl = parseSegments('[{"box_2d":[300,200,700,600],"mask":[[300,400],[500,600],[700,400],[500,200]],"label":"camo jacket"}]');
+  assert.equal(pl.length, 1); assert.deepEqual(maskOutline(pl[0], 24).map(p => [+p.x.toFixed(2), +p.y.toFixed(2)]), [[0.4, 0.3], [0.6, 0.5], [0.4, 0.7], [0.2, 0.5]]);
 });

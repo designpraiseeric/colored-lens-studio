@@ -25,6 +25,12 @@ export function parseSegments(text) {
       const bx = e && (e.box_2d || e.box); if (!Array.isArray(bx) || bx.length !== 4) continue;
       const [y0, x0, y1, x1] = bx.map(Number), sc = Math.max(...bx.map(Number)) > 1.5 ? 1000 : 1;
       const box = { x0: x0 / sc, y0: y0 / sc, x1: x1 / sc, y1: y1 / sc }; if (!(box.x1 > box.x0 && box.y1 > box.y0)) continue;
+      // Some Gemini versions answer with the outline itself, as [y, x] points on the same 0-1000 scale as the box
+      // (reported on Google's forum), instead of a PNG: take that as the outline directly.
+      const pts = Array.isArray(e.mask) ? e.mask : Array.isArray(e.points) ? e.points : Array.isArray(e.polygon) ? e.polygon : null;
+      if (pts && pts.length >= 3 && pts.every(q => Array.isArray(q) && q.length >= 2)) {
+        const ps = Math.max(...pts.flat().map(Number)) > 1.5 ? 1000 : 1;
+        out.push({ label: String(e.label || ''), box, poly: pts.map(([y, x]) => ({ x: Number(x) / ps, y: Number(y) / ps })) }); continue; }
       const b64 = String(e.mask || '').replace(/^data:image\/\w+;base64,/, ''); if (!b64) continue;
       const img = decodeImage(b64ToBytes(b64)); const n = img.w * img.h, al = new Float32Array(n);
       for (let p = 0; p < n; p++) al[p] = img.data[p * 4] / 255;   // greyscale probability
@@ -66,6 +72,7 @@ export function matchMask(masks, item) {
  * (marching squares at 0.5), simplified. This is what goes to the effect on the clip.
  */
 export function maskOutline(m, max = 32) {
+  if (m.poly) return simplifyPoly(m.poly, max);
   const W = m.w, H = m.h, on = (x, y) => x >= 0 && y >= 0 && x < W && y < H && m.a[y * W + x] >= 0.5;
   // trace the outer boundary of the largest connected region (Moore neighbourhood)
   const seen = new Uint8Array(W * H); let bestStart = -1, bestSize = 0;
@@ -94,4 +101,16 @@ export function maskOutline(m, max = 32) {
   while (true) { const half = Math.floor(pts.length / 2); poly = rdp(pts.slice(0, half + 1), eps).slice(0, -1).concat(rdp(pts.slice(half).concat([pts[0]]), eps).slice(0, -1)); if (poly.length <= max) break; eps *= 1.4; }
   const { box } = m;
   return poly.map(([x, y]) => ({ x: box.x0 + (x + 0.5) / W * (box.x1 - box.x0), y: box.y0 + (y + 0.5) / H * (box.y1 - box.y0) }));
+}
+
+/** A frame-space polygon cut down to at most `max` points (Ramer–Douglas–Peucker on a closed ring). */
+export function simplifyPoly(P, max) {
+  if (P.length <= max) return P.slice();
+  const pts = P.map(p => [p.x, p.y]);
+  const rdp = (Q, e) => { if (Q.length < 3) return Q; const a = Q[0], b = Q[Q.length - 1]; let id = 0, dm = 0;
+    for (let i = 1; i < Q.length - 1; i++) { const d = Math.abs((b[1] - a[1]) * Q[i][0] - (b[0] - a[0]) * Q[i][1] + b[0] * a[1] - b[1] * a[0]) / (Math.hypot(b[0] - a[0], b[1] - a[1]) || 1); if (d > dm) { dm = d; id = i; } }
+    return dm > e ? rdp(Q.slice(0, id + 1), e).slice(0, -1).concat(rdp(Q.slice(id), e)) : [a, b]; };
+  let eps = 0.001, poly = pts;
+  for (let k = 0; k < 40; k++) { const half = Math.floor(pts.length / 2); poly = rdp(pts.slice(0, half + 1), eps).slice(0, -1).concat(rdp(pts.slice(half).concat([pts[0]]), eps).slice(0, -1)); if (poly.length <= max) break; eps *= 1.4; }
+  return poly.map(([x, y]) => ({ x, y }));
 }

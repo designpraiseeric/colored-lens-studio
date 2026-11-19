@@ -204,6 +204,8 @@ const host = {
     try { const items = await (await seq.getSelection()).getTrackItems(); if (items[0] && items[0].getName) clipName = await items[0].getName(); } catch { /* optional */ }
     return { frame, seconds: t.seconds, timecode: timecode(t.seconds, rate), clipName: clipName || seq.name, sequenceId: String(seq.guid || seq.name), sequenceName: seq.name, withoutLook: bypassed.length > 0, hiddenLayers: hidden.length };
   },
+  /** Keeps a piece of diagnostic text (an AI's raw answer) in the ColoredLens folder, for when something needs looking into. */
+  async saveDebug(name, text) { const dir = plainFrameDir(); if (!dir) return; try { await require('fs').writeFile('file:' + dir + '/' + name, String(text), { encoding: 'utf-8' }); } catch (e) { console.warn('saveDebug', e); } },
   async sequenceDuration() { return (await (await sequence()).getEndTime()).seconds; },
 
   /** What is under the playhead: every layer (top first) and the shot the editor most likely means. */

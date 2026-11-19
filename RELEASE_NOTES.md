@@ -1,5 +1,12 @@
 # Release notes
-Each `## 0.21.0
+Each `## 0.21.1
+
+- Outlining asks Gemini 2.5 Flash with thinking off first (Google's own advice for masks), falling back to your model, and reads both mask formats Gemini uses: a PNG, or the outline as a list of points.
+- If outlining fails, the reason stays on the panel instead of a passing message, and the AI's raw answer is kept in the ColoredLens folder (last_masks.json).
+- Waiting on a busy or slow Gemini is now bounded from the first call: a slow first pass could take about seven minutes before.
+- The outline hint no longer says Gemini is needed when Gemini is already chosen.
+
+## 0.21.0
 
 **Outline the items with AI masks.** A place is a box, so everything of a similar colour inside it changed too: on the forest shot, the woman's golden-brown hair and beige shirt went terracotta with her camo jacket. After trying a suggestion, "Outline the items with AI masks" asks Gemini for a segmentation mask of each placed item and turns it into an outline of up to 24 points on the effect.
 - Each colour then stops at its item's edge, in the preview and on the clip (the effect has up to four outlines, in a new "Zone outlines" group).

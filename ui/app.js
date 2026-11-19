@@ -389,11 +389,11 @@ export async function startApp(host, root) {
   const placedItems = () => (S.suggZ ? S.suggZ.mapped : []).filter(m => m.zone > 0 && m.placed && (S.extra[`z${m.zone}Amt`] || 0) > 0).slice(0, 4);
   function maskHTML() {
     const items = placedItems(); if (!items.length) return '';
-    const M = S.masks || {}, done = items.filter(m => M[m.zone]), canSee = S.ai.vision !== false && /gemini/i.test(S.smart.using || '');
+    const M = S.masks || {}, done = items.filter(m => M[m.zone] === true), canSee = /gemini/i.test(S.smart.using || '') || (S.smart.cfg && S.smart.cfg.provider === 'gemini');
     if (M.busy) return `<p class="small">Asking the AI to outline ${items.length} item${items.length > 1 ? 's' : ''}…</p>`;
     return `<div class="row wrap"><button id="maskGo">${done.length ? 'Outline the items again' : 'Outline the items with AI masks'}</button></div>
       <p class="small dim">${done.length ? `Outlined: ${done.map(m => esc(m.item)).join(', ')}. Each colour now stops at its item's edge, on the preview and on the clip, and the outline moves with the place when it is followed.${items.length > done.length ? ` Not outlined: ${items.filter(m => !M[m.zone]).map(m => esc(m.item)).join(', ')} (the AI gave no usable mask).` : ''}`
-        : `A place is a box, so everything of a similar colour inside it changes too (hair over a jacket, a shirt under it). An AI mask outlines the item itself.${canSee ? '' : ' This needs Gemini (AI settings).'}`}</p>`;
+        : `A place is a box, so everything of a similar colour inside it changes too (hair over a jacket, a shirt under it). An AI mask outlines the item itself.${canSee ? '' : ' This needs Gemini (AI settings).'}`}${M.err ? `<br><span class="warn">Last try: ${esc(M.err)}</span>` : ''}${M.labels && items.length > done.length ? `<br>The AI named its masks: ${esc(M.labels.join(', '))}.` : ''}</p>`;
   }
   async function maskPlaces() {
     const items = placedItems(); if (!items.length) return;
@@ -401,8 +401,13 @@ export async function startApp(host, root) {
     if (!real || real.provider !== 'gemini') return toast('Outlining needs Gemini: choose it under AI settings', 6000);
     S.masks = { busy: true }; render();
     try {
-      const text = await ask(real, { prompt: buildSegment(items.map(m => m.item)), system: SEGMENT_SYSTEM, imageB64: toBase64(encodeJPEG(downsample(S.frame, 1024), 88)), mime: 'image/jpeg', history: [] }, httpPost, host.bridge);
+      // a mask answer is long (an image per item), so one call gets longer than the usual 90 seconds
+      // Google's own guidance for masks: Gemini 2.5 Flash with thinking off; the editor's model is the fallback.
+      const text = await ask({ ...real, geminiModel: 'gemini-2.5-flash', noThinking: true, temperature: 0.2, callTimeoutMs: 180000, busyBudgetMs: 240000 }, { prompt: buildSegment(items.map(m => m.item)), system: SEGMENT_SYSTEM, imageB64: toBase64(encodeJPEG(downsample(S.frame, 1024), 88)), mime: 'image/jpeg', history: [] }, httpPost, host.bridge);
       const masks = parseSegments(text), got = {}; let slot = 0;
+      // keep what came back where it can be looked at, whatever happens next (the answer is the AI's, not the editor's)
+      try { if (host.saveDebug) await host.saveDebug('last_masks.json', text); } catch {}
+      if (!masks.length) { S.masks = { err: `The AI answered, but with no mask Colored Lens could read (${String(text).slice(0, 160).replace(/\s+/g, ' ')}…)` }; stageCache.key = ''; render(); return; }
       for (const o of [S.extra, S.base && S.base.extra].filter(Boolean)) for (let sl = 1; sl <= 4; sl++) { o[`o${sl}Zone`] = 0; o[`o${sl}N`] = 0; }
       for (const m of items) { const mk = matchMask(masks, m.item); if (!mk) continue;
         const poly = maskOutline(mk, 24); if (poly.length < 3) continue; slot++;
@@ -410,9 +415,9 @@ export async function startApp(host, root) {
         for (const o of [S.extra, S.base && S.base.extra].filter(Boolean)) { o[`o${slot}Zone`] = m.zone; o[`o${slot}N`] = poly.length;
           poly.forEach((p, k) => { o[`o${slot}x${k + 1}`] = +(p.x - cx).toFixed(4); o[`o${slot}y${k + 1}`] = +(p.y - cy).toFixed(4); }); }
         got[m.zone] = true; }
-      S.masks = got;
+      S.masks = { ...got, labels: masks.map(m => m.label) };
       toast(Object.keys(got).length ? `Outlined ${Object.keys(got).length} of ${items.length} item${items.length > 1 ? 's' : ''}` : 'The AI did not return a usable outline for these items', 6000);
-    } catch (e) { S.masks = null; toast(e.message || String(e), 7000); }
+    } catch (e) { S.masks = { err: e.message || String(e) }; }
     stageCache.key = ''; render();
   }
   function trackHTML() {
